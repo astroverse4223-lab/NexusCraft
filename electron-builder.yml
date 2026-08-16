@@ -1,0 +1,58 @@
+appId: com.nexuscraft.launcher
+productName: NexusCraft Launcher
+copyright: Copyright © 2026 NexusCraft
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the compiled output ships; sources and configs stay out of the package.
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/{.eslintrc,.editorconfig,.prettierrc}'
+
+# Native modules cannot be loaded from inside an asar archive, so better-sqlite3
+# is unpacked next to it. The launcher falls back to its JSON store if the
+# module still fails to load on the target machine.
+asarUnpack:
+  - '**/*.node'
+  - node_modules/better-sqlite3/**/*
+
+# Bundled runtimes and game files live in the user's data directory, never in
+# the install directory, so an uninstall never takes worlds with it.
+win:
+  icon: build/icon.ico
+  artifactName: ${productName}-${version}-Setup.${ext}
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # Set to your signing certificate to produce a signed installer. Leaving these
+  # unset produces an unsigned build, which SmartScreen will warn about.
+  # certificateFile: ./cert.pfx
+  # certificatePassword: ${env.CSC_KEY_PASSWORD}
+
+nsis:
+  # A guided installer rather than a silent one-click, so users can pick a drive
+  # with room for game files.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NexusCraft Launcher
+  uninstallDisplayName: NexusCraft Launcher
+  deleteAppDataOnUninstall: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+
+# Portable build: npx electron-builder --win portable
+portable:
+  artifactName: ${productName}-${version}-Portable.${ext}
+
+# No update feed is configured. Point this at a provider and add
+# electron-updater to the main process to enable auto-updates.
+publish: null
