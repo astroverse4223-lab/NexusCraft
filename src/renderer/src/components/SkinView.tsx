@@ -20,28 +20,46 @@ interface Region {
   dh: number
 }
 
-/** UV regions of the front-facing body parts on a 64x64 skin sheet. */
+/**
+ * UV regions of the front-facing body parts on a 64x64 skin sheet.
+ *
+ * The figure is laid out on a 16 x 32 grid of "skin pixels":
+ *
+ *            0    4        12   16
+ *       0    .  [ head 8w ]  .        head is centred
+ *       8  [L][  torso 8w  ][R]       arms flank the torso
+ *      20    .  [Lg][Rg]  .           legs sit under the torso
+ *      32
+ *
+ * The torso occupies x 4..12, so the arms must butt up against it: the right
+ * arm starts at 12, and the left arm ends at 4 — which for a 3-wide slim arm
+ * means starting at 1, not 0.
+ */
+const FIGURE_WIDTH = 16
+const TORSO_X = 4
+const TORSO_WIDTH = 8
+
 function bodyRegions(slim: boolean): { base: Region[]; overlay: Region[] } {
   const armWidth = slim ? 3 : 4
-  // Layout is 16 units wide, 32 tall, in "skin pixels".
-  const armX = slim ? 4.5 : 4
+  const rightArmX = TORSO_X + TORSO_WIDTH // 12 — immediately right of the torso
+  const leftArmX = TORSO_X - armWidth // 0 for classic, 1 for slim
 
   const base: Region[] = [
-    { sx: 8, sy: 8, sw: 8, sh: 8, dx: 4, dy: 0, dw: 8, dh: 8 }, // head
-    { sx: 20, sy: 20, sw: 8, sh: 12, dx: 4, dy: 8, dw: 8, dh: 12 }, // body
-    { sx: 44, sy: 20, sw: armWidth, sh: 12, dx: 12, dy: 8, dw: armWidth, dh: 12 }, // right arm
-    { sx: 36, sy: 52, sw: armWidth, sh: 12, dx: armX - armWidth + 4 - (slim ? -0.5 : 0), dy: 8, dw: armWidth, dh: 12 }, // left arm
+    { sx: 8, sy: 8, sw: 8, sh: 8, dx: TORSO_X, dy: 0, dw: 8, dh: 8 }, // head
+    { sx: 20, sy: 20, sw: 8, sh: 12, dx: TORSO_X, dy: 8, dw: TORSO_WIDTH, dh: 12 }, // torso
+    { sx: 44, sy: 20, sw: armWidth, sh: 12, dx: rightArmX, dy: 8, dw: armWidth, dh: 12 }, // right arm
+    { sx: 36, sy: 52, sw: armWidth, sh: 12, dx: leftArmX, dy: 8, dw: armWidth, dh: 12 }, // left arm
     { sx: 4, sy: 20, sw: 4, sh: 12, dx: 8, dy: 20, dw: 4, dh: 12 }, // right leg
     { sx: 20, sy: 52, sw: 4, sh: 12, dx: 4, dy: 20, dw: 4, dh: 12 } // left leg
   ]
 
   const overlay: Region[] = [
-    { sx: 40, sy: 8, sw: 8, sh: 8, dx: 4, dy: 0, dw: 8, dh: 8 }, // hat
-    { sx: 20, sy: 36, sw: 8, sh: 12, dx: 4, dy: 8, dw: 8, dh: 12 }, // jacket
-    { sx: 44, sy: 36, sw: armWidth, sh: 12, dx: 12, dy: 8, dw: armWidth, dh: 12 },
-    { sx: 52, sy: 52, sw: armWidth, sh: 12, dx: armX - armWidth + 4 - (slim ? -0.5 : 0), dy: 8, dw: armWidth, dh: 12 },
-    { sx: 4, sy: 36, sw: 4, sh: 12, dx: 8, dy: 20, dw: 4, dh: 12 },
-    { sx: 4, sy: 52, sw: 4, sh: 12, dx: 4, dy: 20, dw: 4, dh: 12 }
+    { sx: 40, sy: 8, sw: 8, sh: 8, dx: TORSO_X, dy: 0, dw: 8, dh: 8 }, // hat
+    { sx: 20, sy: 36, sw: 8, sh: 12, dx: TORSO_X, dy: 8, dw: TORSO_WIDTH, dh: 12 }, // jacket
+    { sx: 44, sy: 36, sw: armWidth, sh: 12, dx: rightArmX, dy: 8, dw: armWidth, dh: 12 }, // right sleeve
+    { sx: 52, sy: 52, sw: armWidth, sh: 12, dx: leftArmX, dy: 8, dw: armWidth, dh: 12 }, // left sleeve
+    { sx: 4, sy: 36, sw: 4, sh: 12, dx: 8, dy: 20, dw: 4, dh: 12 }, // right trouser
+    { sx: 4, sy: 52, sw: 4, sh: 12, dx: 4, dy: 20, dw: 4, dh: 12 } // left trouser
   ]
 
   return { base, overlay }

@@ -17,6 +17,7 @@ export const IPC_CHANNELS = [
   'app:pickFiles',
   'app:window',
   'app:systemMemory',
+  'app:reportError',
 
   /* settings */
   'settings:get',
@@ -80,6 +81,12 @@ export const IPC_CHANNELS = [
   'content:delete',
   'content:openFolder',
   'content:screenshots',
+
+  /* modrinth content browser */
+  'modrinth:search',
+  'modrinth:versions',
+  'modrinth:install',
+  'modrinth:project',
 
   /* worlds */
   'worlds:list',

@@ -8,8 +8,8 @@ import { getJson, getText, getBuffer } from '../../core/http'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { dataRoot, versionsRoot, ensureDir } from '../../core/paths'
-import { listInstalledVersionIds, versionDir } from '../minecraft/versionService'
-import { resolveJavaForVersion } from '../java/javaService'
+import { installVersion, listInstalledVersionIds, versionDir } from '../minecraft/versionService'
+import { componentForMajor, installManagedRuntime, managedRuntimeInstalled } from '../java/javaService'
 import type { DownloadTask } from '../downloads/downloadManager'
 import type { VersionJson } from '../minecraft/versionTypes'
 
@@ -131,8 +131,21 @@ async function installFabricLike(
  * own code knows how to perform, so the launcher runs the official installer in
  * client mode rather than trying to reimplement it.
  */
-async function runInstallerJar(installerUrl: string, label: string, task: DownloadTask): Promise<string> {
+async function runInstallerJar(
+  installerUrl: string,
+  label: string,
+  task: DownloadTask,
+  minecraftVersion: string
+): Promise<string> {
   const before = new Set(await listInstalledVersionIds())
+
+  /*
+   * The installer patches the vanilla client jar and loads vanilla libraries
+   * while doing it, so those have to be on disk first. Assets are skipped —
+   * they are hundreds of megabytes and the installer never touches them.
+   */
+  task.setPhase('libraries', `Preparing Minecraft ${minecraftVersion} for ${label}`)
+  const vanilla = await installVersion(minecraftVersion, { task, skipAssets: true })
 
   task.setPhase('loader', `Downloading the ${label} installer`)
   const jarBytes = await getBuffer(installerUrl, { timeoutMs: 120_000, retries: 2 })
@@ -152,45 +165,78 @@ async function runInstallerJar(installerUrl: string, label: string, task: Downlo
     await writeFile(microsoftStoreFile, JSON.stringify({ profiles: {}, version: 3 }, null, 2), 'utf8')
   }
 
-  // The installer is a Java program, so a runtime is needed before the game's.
-  const java = await resolveJavaForVersion(
-    { id: 'installer', mainClass: '', type: 'release', javaVersion: { component: 'java-runtime-delta', majorVersion: 21 } } as VersionJson,
-    null,
-    null,
-    task
-  )
+  /*
+   * Which JVM runs the installer matters, and it is NOT simply the newest one.
+   *
+   * Both the Forge and NeoForge remapping toolchains abort part-way through on
+   * Mojang's Java 21 runtime. The process dies during "Processing entries" with
+   * exit code 127, no error message and none of the patched jars it should
+   * produce — leaving a version profile that looks installed but cannot launch.
+   * The identical installers complete on Java 17:
+   *
+   *   Forge 1.20.1    Java 21 -> exit 127,  890 lines, no patched jars
+   *                   Java 17 -> exit 0, 13,075 lines, "Successfully installed"
+   *   NeoForge 21.1.248  Java 21 -> exit 127, 1,096 lines
+   *                      Java 17 -> exit 0,  9,794 lines, "Successfully installed"
+   *
+   * So the installer JVM is capped at 17, while never dropping below what the
+   * Minecraft version itself needs (old Forge builds require Java 8). If an
+   * installer genuinely needs something newer it says so, and we retry below.
+   */
+  const requiredMajor = vanilla.javaVersion?.majorVersion ?? 17
+  const installerMajor = Math.min(requiredMajor, 17)
 
-  task.setPhase('loader', `Running the ${label} installer`)
-  log.info(`running ${label} installer with ${java.path}`)
+  const resolveRuntime = async (major: number): Promise<string> => {
+    const component = componentForMajor(major)
+    return managedRuntimeInstalled(component) ?? (await installManagedRuntime(component, task))
+  }
 
-  try {
-    await new Promise<void>((resolve, reject) => {
+  const runInstaller = async (javaPath: string): Promise<{ ok: boolean; output: string }> =>
+    await new Promise((resolve) => {
       const child = execFile(
-        java.path,
+        javaPath,
         ['-jar', jarPath, '--installClient', dataRoot()],
-        { cwd: workDir, timeout: 600_000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+        { cwd: workDir, timeout: 900_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
         (error, stdout, stderr) => {
-          if (error) {
-            // Installer output is verbose; keep only the tail for diagnostics.
-            const tail = `${stdout}\n${stderr}`.trim().split('\n').slice(-15).join('\n')
-            reject(
-              new LauncherError('LOADER_INSTALL_FAILED', `${label} installer exited with an error:\n${tail}`, {
-                title: `The ${label} installer failed`,
-                message: `${label} could not be installed for this Minecraft version. This usually means the loader build does not match the Minecraft version, or Java could not write to the data folder.`,
-                actions: [
-                  `Pick a different ${label} version`,
-                  'Check that the Minecraft version and loader version go together',
-                  'Make sure antivirus is not blocking Java from writing files'
-                ]
-              })
-            )
-            return
-          }
-          resolve()
+          resolve({ ok: !error, output: `${stdout}\n${stderr}` })
         }
       )
-      child.on('error', reject)
+      child.on('error', (err) => resolve({ ok: false, output: String(err) }))
     })
+
+  try {
+    const installerJava = await resolveRuntime(installerMajor)
+    task.setPhase('loader', `Running the ${label} installer`)
+    log.info(`running the ${label} installer on Java ${installerMajor} (${installerJava})`)
+
+    let result = await runInstaller(installerJava)
+
+    // Only a genuinely newer-JVM requirement justifies retrying on the runtime
+    // the game needs; anything else is a real installer failure.
+    if (!result.ok && /UnsupportedClassVersionError|class file version/i.test(result.output)) {
+      const fallback = await resolveRuntime(requiredMajor)
+      log.warn(`${label} installer needs a newer JVM than ${installerMajor}; retrying on Java ${requiredMajor}`)
+      result = await runInstaller(fallback)
+    }
+
+    if (!result.ok) {
+      // The output is thousands of lines of remapping chatter, most of it
+      // harmless "Can't Find Class" notes, so pull out the lines that explain
+      // the failure rather than blindly keeping the tail.
+      const lines = result.output.trim().split(/\r?\n/).filter((line) => !/Can.t Find Class/i.test(line))
+      const meaningful = lines.filter((line) => /error|exception|failed|caused by/i.test(line)).slice(-8)
+      const detail = (meaningful.length > 0 ? meaningful : lines.slice(-12)).join('\n')
+
+      throw new LauncherError('LOADER_INSTALL_FAILED', `${label} installer exited with an error:\n${detail}`, {
+        title: `The ${label} installer failed`,
+        message: `${label} could not be installed for Minecraft ${minecraftVersion}. This usually means the loader build does not match the Minecraft version, or the installer could not write to the data folder.`,
+        actions: [
+          `Pick a different ${label} version`,
+          'Check that the Minecraft version and loader version go together',
+          'Make sure antivirus is not blocking Java from writing files'
+        ]
+      })
+    }
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -244,13 +290,13 @@ export async function installLoader(
       return await installFabricLike(QUILT_META, minecraftVersion, loaderVersion)
     case 'neoforge': {
       const url = `${NEOFORGE_MAVEN}/net/neoforged/neoforge/${loaderVersion}/neoforge-${loaderVersion}-installer.jar`
-      return await runInstallerJar(url, 'NeoForge', task)
+      return await runInstallerJar(url, 'NeoForge', task, minecraftVersion)
     }
     case 'forge': {
       // Forge version strings already carry the Minecraft version prefix.
       const full = loaderVersion.startsWith(`${minecraftVersion}-`) ? loaderVersion : `${minecraftVersion}-${loaderVersion}`
       const url = `${FORGE_MAVEN}/net/minecraftforge/forge/${full}/forge-${full}-installer.jar`
-      return await runInstallerJar(url, 'Forge', task)
+      return await runInstallerJar(url, 'Forge', task, minecraftVersion)
     }
     default:
       return minecraftVersion

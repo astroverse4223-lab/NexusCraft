@@ -43,6 +43,13 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     .optional(),
   'app:window': z.object({ action: z.enum(['minimize', 'maximize', 'close']) }),
   'app:systemMemory': z.void(),
+  /** Renderer-side crash reporting, so a UI failure reaches the log file. */
+  'app:reportError': z.object({
+    source: z.string().max(64),
+    message: z.string().max(2000),
+    stack: z.string().max(8000).optional(),
+    componentStack: z.string().max(8000).optional()
+  }),
 
   /* -------------------------------------------------------------- settings */
   'settings:get': z.void(),
@@ -129,6 +136,29 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     kind: z.enum(['resourcepacks', 'shaderpacks', 'screenshots'])
   }),
   'content:screenshots': z.object({ instanceId: id }),
+
+  /* ------------------------------------------------- modrinth browser */
+  'modrinth:search': z.object({
+    query: z.string().max(120),
+    kind: z.enum(['mod', 'resourcepack', 'shader', 'modpack']),
+    gameVersion: z.string().max(64).nullable().optional(),
+    loader: z.string().max(32).nullable().optional(),
+    offset: z.number().int().min(0).max(5000).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+    instanceId: id.nullable().optional()
+  }),
+  'modrinth:versions': z.object({
+    projectId: z.string().min(1).max(64),
+    kind: z.enum(['mod', 'resourcepack', 'shader', 'modpack']),
+    gameVersion: z.string().max(64).nullable().optional(),
+    loader: z.string().max(32).nullable().optional()
+  }),
+  'modrinth:install': z.object({
+    instanceId: id,
+    versionId: z.string().min(1).max(64),
+    kind: z.enum(['mod', 'resourcepack', 'shader', 'modpack'])
+  }),
+  'modrinth:project': z.object({ projectId: z.string().min(1).max(64) }),
 
   /* --------------------------------------------------------------- worlds */
   'worlds:list': z.object({ instanceId: id }),

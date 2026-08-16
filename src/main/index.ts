@@ -10,6 +10,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { trustWebContents } from './ipc/registry'
 import { stopAll } from './services/launch/launchService'
 import { cancelAll } from './services/downloads/downloadManager'
+import { initAutoUpdate } from './services/update/updateService'
 
 const log = createLogger('main')
 
@@ -122,6 +123,20 @@ function createWindow(): BrowserWindow {
 
   trustWebContents(window.webContents)
 
+  // A renderer that dies takes the UI with it and leaves an empty window. These
+  // handlers make sure that never happens silently.
+  window.webContents.on('render-process-gone', (_event, details) => {
+    log.error(`the renderer process stopped: reason=${details.reason} exitCode=${details.exitCode}`)
+  })
+  window.webContents.on('unresponsive', () => log.warn('the renderer stopped responding'))
+  window.webContents.on('preload-error', (_event, preloadPath, error) => {
+    log.error(`the preload script failed to load (${preloadPath})`, error)
+  })
+  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    // Only surface real errors; routine console noise stays in DevTools.
+    if (level >= 3) log.error(`renderer console: ${message} (${sourceId}:${line})`)
+  })
+
   window.once('ready-to-show', () => {
     window.show()
     if (isDev) window.webContents.openDevTools({ mode: 'detach' })
@@ -178,6 +193,9 @@ if (!gotLock) {
     // Renewing the session in the background means the Play button is usable
     // immediately instead of after a sign-in round trip.
     void restoreSession()
+
+    // Checked a few seconds in so it never competes with startup work.
+    setTimeout(() => void initAutoUpdate(), 8000)
   })
 
   app.on('window-all-closed', () => {

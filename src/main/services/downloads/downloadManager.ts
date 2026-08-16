@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { mkdir, stat, unlink, rename, chmod } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { randomUUID } from 'node:crypto'
 import type { DownloadError, DownloadPhase, DownloadProgress } from '@shared/types'
@@ -234,20 +234,29 @@ export class DownloadTask {
     // Write to a temp file first so an interrupted download never leaves a
     // half-written file that later looks valid by size.
     const tempPath = `${item.destination}.part`
-    const hash = item.sha1 ? createHash('sha1') : null
     let written = 0
 
     const source = Readable.fromWeb(response.body as never)
-    source.on('data', (chunk: Buffer) => {
-      written += chunk.length
-      this.downloadedBytes += chunk.length
-      hash?.update(chunk)
-      this.sampleSpeed()
-      this.emitProgress()
+
+    /*
+     * Progress is measured by a Transform inside the pipeline rather than a
+     * `source.on('data')` listener. Attaching a data listener switches the
+     * stream into flowing mode before `pipeline()` attaches its own consumer,
+     * which lets the bytes that get counted diverge from the bytes that get
+     * written. Counting in-line makes the two the same stream of chunks.
+     */
+    const meter = new Transform({
+      transform: (chunk: Buffer, _encoding, callback) => {
+        written += chunk.length
+        this.downloadedBytes += chunk.length
+        this.sampleSpeed()
+        this.emitProgress()
+        callback(null, chunk)
+      }
     })
 
     try {
-      await pipeline(source, createWriteStream(tempPath), { signal: this.abort.signal })
+      await pipeline(source, meter, createWriteStream(tempPath), { signal: this.abort.signal })
     } catch (err) {
       await unlink(tempPath).catch(() => undefined)
       // Roll the progress counter back so a retry does not double count.
@@ -255,13 +264,29 @@ export class DownloadTask {
       throw err
     }
 
-    if (hash) {
-      const digest = hash.digest('hex')
-      if (digest.toLowerCase() !== item.sha1!.toLowerCase()) {
-        await unlink(tempPath).catch(() => undefined)
-        this.downloadedBytes -= written
-        throw new Error(`checksum mismatch for ${basename(item.destination)}`)
+    /*
+     * Verify what actually landed on disk, not what went past in flight.
+     * Hashing the stream proves only that the right bytes were received — it
+     * says nothing about what the write stream committed, so a file damaged
+     * on the way to disk would pass and be trusted forever after.
+     */
+    try {
+      const info = await stat(tempPath)
+      if (item.size != null && info.size !== item.size) {
+        throw new Error(
+          `size mismatch for ${basename(item.destination)}: expected ${item.size} bytes, wrote ${info.size}`
+        )
       }
+      if (item.sha1) {
+        const digest = await sha1OfFile(tempPath)
+        if (digest.toLowerCase() !== item.sha1.toLowerCase()) {
+          throw new Error(`checksum mismatch for ${basename(item.destination)}`)
+        }
+      }
+    } catch (err) {
+      await unlink(tempPath).catch(() => undefined)
+      this.downloadedBytes -= written
+      throw err
     }
 
     await unlink(item.destination).catch(() => undefined)

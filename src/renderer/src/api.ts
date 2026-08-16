@@ -15,6 +15,10 @@ import type {
   LoaderId,
   LoaderVersion,
   ModInfo,
+  ContentKindId,
+  ModrinthSearchResult,
+  ModrinthVersion,
+  ModrinthInstallResult,
   Result,
   SavedServer,
   SavedSkin,
@@ -201,6 +205,23 @@ export const api = {
     openFolder: (instanceId: string, kind: 'resourcepacks' | 'shaderpacks' | 'screenshots') =>
       call<boolean>('content:openFolder', { instanceId, kind }),
     screenshots: (instanceId: string) => call<Screenshot[]>('content:screenshots', { instanceId })
+  },
+
+  modrinth: {
+    search: (input: {
+      query: string
+      kind: ContentKindId
+      gameVersion?: string | null
+      loader?: string | null
+      offset?: number
+      limit?: number
+      instanceId?: string | null
+    }) => call<ModrinthSearchResult>('modrinth:search', input),
+    versions: (projectId: string, kind: ContentKindId, gameVersion?: string | null, loader?: string | null) =>
+      call<ModrinthVersion[]>('modrinth:versions', { projectId, kind, gameVersion, loader }),
+    install: (instanceId: string, versionId: string, kind: ContentKindId) =>
+      call<ModrinthInstallResult>('modrinth:install', { instanceId, versionId, kind }),
+    project: (projectId: string) => call<{ body: string; title: string }>('modrinth:project', { projectId })
   },
 
   worlds: {

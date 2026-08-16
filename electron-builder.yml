@@ -53,6 +53,14 @@ nsis:
 portable:
   artifactName: ${productName}-${version}-Portable.${ext}
 
-# No update feed is configured. Point this at a provider and add
-# electron-updater to the main process to enable auto-updates.
+# No update feed is configured, so the launcher never checks for updates and
+# `initAutoUpdate()` exits quietly. To turn self-updating on, replace this with
+# a provider and publish a release — no code changes are needed:
+#
+#   publish:
+#     provider: github
+#     owner: your-github-username
+#     repo: your-repo-name
+#
+# then build with `GH_TOKEN=... npx electron-builder --win --publish always`.
 publish: null

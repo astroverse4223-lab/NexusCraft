@@ -24,6 +24,7 @@ export const INSTANCE_SUBDIRS = [
   'saves',
   'screenshots',
   'config',
+  'crash-reports',
   'logs'
 ] as const
 

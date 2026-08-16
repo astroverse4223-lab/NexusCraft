@@ -304,3 +304,38 @@ NexusCraft is an independent project. It is **not affiliated with, endorsed by, 
 Game files are downloaded from Mojang's official servers, and authentication uses Microsoft's official identity platform. You must own Minecraft: Java Edition to play.
 
 Licensed under the MIT Licence.
+
+---
+
+## Content browser (Modrinth)
+
+The **Mods & packs → Discover** tab searches [Modrinth](https://modrinth.com) directly from the launcher.
+
+- Results are filtered to the selected instance's Minecraft version and mod loader, so anything you can see will actually run. Toggle the version chip to widen the search.
+- Installing a mod also pulls in its **required dependencies** automatically.
+- Files are downloaded through the same hash-verified download manager as game files, and land in the instance's own `mods/`, `resourcepacks/` or `shaderpacks/` folder.
+- Project icons are fetched by the main process and passed to the interface as data URLs, so the renderer still makes no network requests of its own.
+
+## Notes on mod loaders
+
+All four loaders are installed from their official sources:
+
+| Loader | How it is installed | Verified |
+|---|---|---|
+| Fabric | Version profile from `meta.fabricmc.net` | ✅ 1.20.1, 26.2 |
+| Quilt | Version profile from `meta.quiltmc.org` | ✅ 1.20.1 |
+| Forge | Official installer jar, run in client mode | ✅ 1.20.1 |
+| NeoForge | Official installer jar, run in client mode | ✅ 1.21.1 |
+
+Forge and NeoForge patch the vanilla client jar, so NexusCraft downloads the vanilla version first and then runs their installer.
+
+**The installer JVM is capped at Java 17.** Both the Forge and NeoForge remapping toolchains abort part-way through on Mojang's Java 21 runtime — the process dies with exit code 127, no error message, and none of the patched jars it should produce, leaving a profile that looks installed but cannot launch. The same installers complete on Java 17:
+
+```
+Forge 1.20.1        Java 21 -> exit 127,   890 lines, no patched jars
+                    Java 17 -> exit 0,  13,075 lines, "Successfully installed"
+NeoForge 21.1.248   Java 21 -> exit 127, 1,096 lines, no patched jars
+                    Java 17 -> exit 0,   9,794 lines, "Successfully installed"
+```
+
+The cap never drops below what the Minecraft version itself requires (old Forge builds need Java 8), and if an installer genuinely needs a newer JVM it is retried on the version's own runtime. This affects only the installer — the game always launches on the runtime Mojang specifies for that version.

@@ -9,7 +9,7 @@ import { LauncherError } from '../../core/errors'
 import { createLogger, redact } from '../../core/logger'
 import { getSettings } from '../settings/settingsService'
 import { getActiveAccount, getValidMinecraftToken } from '../auth/accountService'
-import { ensureInstanceLayout, getInstance, recordPlaySession, updateInstance } from '../instances/instanceService'
+import { ensureInstanceLayout, findInstance, getInstance, recordPlaySession, updateInstance } from '../instances/instanceService'
 import { installLoader, loaderProfileInstalled } from '../loaders/loaderService'
 import {
   buildClasspath,
@@ -23,6 +23,7 @@ import { buildLaunchArguments } from '../minecraft/argumentBuilder'
 import { preferWindowless, resolveJavaForVersion } from '../java/javaService'
 import { createTask } from '../downloads/downloadManager'
 import { analyseMods } from '../mods/modService'
+import { diagnoseCrash } from './crashReport'
 
 const log = createLogger('launch')
 
@@ -49,6 +50,7 @@ function setState(instanceId: string, stage: LaunchStage, message: string, extra
     startedAt: null,
     exitCode: null,
     crashReport: null,
+    crash: null,
     ...states.get(instanceId),
     ...extra
   }
@@ -279,6 +281,26 @@ function handleExit(game: RunningGame, code: number | null, signal: NodeJS.Signa
     exitCode: code,
     crashReport
   })
+
+  // Minecraft explains its own failures far better than an exit code does, so
+  // read the report it just wrote and republish the state with the real cause.
+  if (!clean) {
+    const instance = findInstance(instanceId)
+    if (instance) {
+      void diagnoseCrash(instance, game.startedAt)
+        .then((crash) => {
+          if (!crash.reportPath) return
+          pushLog(game, 'launcher', `Crash report: ${crash.description ?? crash.cause ?? 'see crash-reports'}`)
+          setState(instanceId, 'exited', 'Minecraft closed unexpectedly', {
+            pid: null,
+            exitCode: code,
+            crashReport,
+            crash
+          })
+        })
+        .catch((err) => log.warn('could not read the crash report:', (err as Error).message))
+    }
+  }
 
   const settings = getSettings()
   if (settings.restoreOnGameExit) {

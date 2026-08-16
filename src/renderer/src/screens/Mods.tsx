@@ -16,14 +16,15 @@ import { api, toPayload, type Screenshot } from '../api'
 import { useStore, focusedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Spinner, Toggle } from '../components/ui'
 import { formatBytes, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
+import { BrowseTab } from './Browse'
 
-type Tab = 'mods' | 'resourcepacks' | 'shaderpacks' | 'screenshots'
+type Tab = 'browse' | 'mods' | 'resourcepacks' | 'shaderpacks' | 'screenshots'
 
 export function ModsScreen(): JSX.Element {
   const instance = useStore(focusedInstance)
   const instances = useStore((s) => s.instances)
   const navigate = useStore((s) => s.navigate)
-  const [tab, setTab] = useState<Tab>('mods')
+  const [tab, setTab] = useState<Tab>('browse')
 
   if (!instance) {
     return (
@@ -68,8 +69,11 @@ export function ModsScreen(): JSX.Element {
       </div>
 
       <div className="tabs mb-24">
+        <button className={`tab ${tab === 'browse' ? 'active' : ''}`} onClick={() => setTab('browse')}>
+          Discover
+        </button>
         <button className={`tab ${tab === 'mods' ? 'active' : ''}`} onClick={() => setTab('mods')}>
-          Mods
+          Installed
         </button>
         <button className={`tab ${tab === 'resourcepacks' ? 'active' : ''}`} onClick={() => setTab('resourcepacks')}>
           Resource packs
@@ -82,6 +86,7 @@ export function ModsScreen(): JSX.Element {
         </button>
       </div>
 
+      {tab === 'browse' && <BrowseTab instance={instance} />}
       {tab === 'mods' && <ModsTab instance={instance} />}
       {tab === 'resourcepacks' && <ContentTab instance={instance} kind="resourcepacks" />}
       {tab === 'shaderpacks' && <ContentTab instance={instance} kind="shaderpacks" />}

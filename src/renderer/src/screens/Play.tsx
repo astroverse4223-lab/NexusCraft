@@ -17,7 +17,7 @@ import {
   Wrench,
   X
 } from 'lucide-react'
-import type { LauncherErrorPayload, SavedServer } from '@shared/types'
+import type { GameLogLine, LauncherErrorPayload, SavedServer } from '@shared/types'
 import { api, isCancellation, toPayload } from '../api'
 import { useStore, activeAccount, selectedInstance } from '../store/useStore'
 import { ErrorView, Modal, ProgressBar, Spinner, useAutoScroll } from '../components/ui'
@@ -286,25 +286,48 @@ export function PlayScreen(): JSX.Element {
         </div>
       )}
 
-      {/* crash notice */}
+      {/* crash notice — driven by Minecraft's own report when it wrote one */}
       {state?.stage === 'exited' && state.exitCode !== 0 && state.exitCode !== null && (
         <div className="mb-16">
           <ErrorView
             error={{
               code: 'GAME_CRASHED',
-              title: 'Minecraft closed unexpectedly',
-              message: `The game exited with code ${state.exitCode}. Mods are the most common cause, followed by not enough memory.`,
-              actions: [
-                'Open the log to read the final lines',
-                'Disable recently added mods on the Mods screen',
-                'Try increasing the memory for this instance'
-              ],
-              detail: state.crashReport
+              title: state.crash?.description
+                ? `Minecraft crashed: ${state.crash.description}`
+                : 'Minecraft closed unexpectedly',
+              message:
+                state.crash?.explanation ??
+                (state.crash?.cause
+                  ? `Minecraft reported: ${state.crash.cause}`
+                  : `The game exited with code ${state.exitCode}. Mods are the most common cause, followed by not enough memory.`),
+              actions:
+                state.crash?.actions.length
+                  ? state.crash.actions
+                  : [
+                      'Open the log to read the final lines',
+                      'Disable recently added mods on the Mods screen',
+                      'Try increasing the memory for this instance'
+                    ],
+              detail: state.crash?.excerpt ?? state.crashReport
             }}
-            onDismiss={() => useStore.setState((prev) => ({
-              launches: { ...prev.launches, [instance.id]: { ...state, stage: 'preparing', exitCode: null } }
-            }))}
+            onRetry={() => void handlePlay()}
+            onDismiss={() =>
+              useStore.setState((prev) => ({
+                launches: {
+                  ...prev.launches,
+                  [instance.id]: { ...state, stage: 'preparing', exitCode: null, crash: null }
+                }
+              }))
+            }
           />
+          {state.crash?.reportPath && (
+            <button
+              className="btn btn-ghost btn-sm mt-8"
+              onClick={() => void api.instances.openFolder(instance.id, 'crash-reports')}
+            >
+              <FolderOpen size={14} /> Open the crash report folder
+            </button>
+          )}
         </div>
       )}
 
@@ -562,8 +585,13 @@ function LogModal({
   instanceId: string
   onClose: () => void
 }): JSX.Element {
-  const logs = useStore((s) => s.logs.filter((line) => line.instanceId === instanceId))
-  const [initial, setInitial] = useState<typeof logs>([])
+  // Select the array itself and filter in a memo. Filtering inside the selector
+  // returns a new array on every read, and zustand reads through
+  // useSyncExternalStore — an unstable snapshot makes React re-render forever
+  // ("Maximum update depth exceeded") the moment the store starts changing.
+  const allLogs = useStore((s) => s.logs)
+  const logs = useMemo(() => allLogs.filter((line) => line.instanceId === instanceId), [allLogs, instanceId])
+  const [initial, setInitial] = useState<GameLogLine[]>([])
   const scrollRef = useAutoScroll(logs.length)
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir, readdir, stat, copyFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, normalize } from 'node:path'
 import AdmZip from 'adm-zip'
 import type { VersionManifestInfo, VersionSummary } from '@shared/types'
 import type { AssetIndex, Library, VersionJson, VersionManifest } from './versionTypes'
@@ -326,7 +326,7 @@ export async function installVersion(versionId: string, options: InstallOptions)
 
   /* natives */
   task.setPhase('natives', 'Unpacking native libraries')
-  await extractNatives(versionId, libraries)
+  await extractNatives(nativesLibraryPath(versionId, version), libraries)
 
   return version
 }
@@ -369,9 +369,34 @@ async function installAssets(version: VersionJson, task: DownloadTask): Promise<
   }
 }
 
-/** Extracts native .dll/.so/.dylib payloads into a per-version natives folder. */
-export async function extractNatives(versionId: string, libraries: ResolvedLibrary[]): Promise<string> {
-  const target = join(nativesRoot(), versionId)
+/**
+ * Where a version expects its native libraries to sit.
+ *
+ * This is not fixed across versions. Modern metadata asks for a subfolder:
+ *
+ *     -Djava.library.path=${natives_directory}/java
+ *
+ * while older versions point straight at the natives directory. Rather than
+ * guessing, the location is read back out of the version's own JVM arguments,
+ * so the launcher follows whatever Mojang specifies.
+ */
+export function nativesLibraryPath(versionId: string, version: VersionJson): string {
+  const base = nativesDir(versionId)
+  const PREFIX = '-Djava.library.path='
+
+  for (const entry of version.arguments?.jvm ?? []) {
+    const values = typeof entry === 'string' ? [entry] : Array.isArray(entry.value) ? entry.value : [entry.value]
+    for (const value of values) {
+      if (typeof value !== 'string' || !value.startsWith(PREFIX)) continue
+      const template = value.slice(PREFIX.length)
+      return normalize(template.split('${natives_directory}').join(base))
+    }
+  }
+  return base
+}
+
+/** Extracts native .dll/.so/.dylib payloads into the given directory. */
+export async function extractNatives(target: string, libraries: ResolvedLibrary[]): Promise<string> {
   ensureDir(target)
 
   for (const library of libraries) {
@@ -409,7 +434,7 @@ export function nativesDir(versionId: string): string {
  * the install being touched. Re-running is cheap — existing files are skipped.
  */
 export async function ensureNativesExtracted(versionId: string, version: VersionJson): Promise<string> {
-  return await extractNatives(versionId, resolveLibraries(version))
+  return await extractNatives(nativesLibraryPath(versionId, version), resolveLibraries(version))
 }
 
 /**

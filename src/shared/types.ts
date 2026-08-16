@@ -340,6 +340,55 @@ export interface SavedSkin {
   addedAt: number
 }
 
+/* ---------------------------------------------------------------- modrinth */
+
+export type ContentKindId = 'mod' | 'resourcepack' | 'shader' | 'modpack'
+
+/** A search result from Modrinth. */
+export interface ModrinthProject {
+  projectId: string
+  slug: string
+  title: string
+  description: string
+  author: string
+  downloads: number
+  follows: number
+  /** Resolved in the main process so the renderer loads nothing remotely. */
+  iconDataUrl: string | null
+  categories: string[]
+  projectType: string
+  /** True when this project is already present in the target instance. */
+  installed: boolean
+}
+
+export interface ModrinthVersion {
+  versionId: string
+  name: string
+  versionNumber: string
+  gameVersions: string[]
+  loaders: string[]
+  versionType: 'release' | 'beta' | 'alpha'
+  datePublished: string
+  downloads: number
+  fileName: string
+  fileSizeBytes: number
+  /** Projects this version needs; required ones are installed alongside it. */
+  requiredDependencies: number
+}
+
+export interface ModrinthSearchResult {
+  projects: ModrinthProject[]
+  total: number
+  offset: number
+}
+
+export interface ModrinthInstallResult {
+  installed: string[]
+  /** Required dependencies pulled in automatically. */
+  dependencies: string[]
+  skipped: string[]
+}
+
 /* ------------------------------------------------------------------ launch */
 
 export type LaunchStage =
@@ -362,6 +411,21 @@ export interface LaunchState {
   exitCode: number | null
   /** Populated when the game exits abnormally. */
   crashReport: string | null
+  /** Minecraft's own crash report, parsed into something actionable. */
+  crash: CrashDiagnosis | null
+}
+
+/** A parsed Minecraft crash report. */
+export interface CrashDiagnosis {
+  reportPath: string | null
+  /** The exception Minecraft blamed. */
+  cause: string | null
+  /** Minecraft's one-line description of what it was doing. */
+  description: string | null
+  /** Plain-language explanation, when the cause is recognised. */
+  explanation: string | null
+  actions: string[]
+  excerpt: string | null
 }
 
 export interface GameLogLine {

@@ -31,6 +31,7 @@ import {
   createInstance,
   deleteInstance,
   duplicateInstance,
+  findInstance,
   getInstance,
   instanceStats,
   listInstances,
@@ -80,6 +81,13 @@ import {
 import { applySkin, deleteSkin, favoriteSkin, importSkin, listSkins, resetSkin } from '../services/skins/skinService'
 import { instanceSubdir } from '../services/instances/instanceService'
 import { splitAddress } from '../services/minecraft/argumentBuilder'
+import {
+  searchProjects,
+  listVersions,
+  installVersionToInstance,
+  getProjectBody
+} from '../services/content/modrinthService'
+import type { ContentKindId } from '@shared/types'
 
 const log = createLogger('handlers')
 
@@ -214,6 +222,20 @@ export function registerIpcHandlers(): void {
     }
     return true
   })
+
+  handle(
+    'app:reportError',
+    (payload: { source: string; message: string; stack?: string; componentStack?: string }) => {
+      // A crash in the UI used to leave nothing but a blank window. Routing it
+      // into the same log as everything else makes it diagnosable.
+      log.error(
+        `renderer failure [${payload.source}]: ${payload.message}` +
+          (payload.stack ? `\n  stack: ${payload.stack}` : '') +
+          (payload.componentStack ? `\n  components: ${payload.componentStack}` : '')
+      )
+      return true
+    }
+  )
 
   handle('app:systemMemory', () => {
     const recommended = recommendedRamMb()
@@ -477,6 +499,57 @@ export function registerIpcHandlers(): void {
   handle('content:screenshots', async (payload: { instanceId: string }) =>
     await listScreenshots(getInstance(payload.instanceId))
   )
+
+  /* ----------------------------------------------------------- modrinth */
+
+  handle(
+    'modrinth:search',
+    async (payload: {
+      query: string
+      kind: ContentKindId
+      gameVersion?: string | null
+      loader?: string | null
+      offset?: number
+      limit?: number
+      instanceId?: string | null
+    }) =>
+      await searchProjects({
+        query: payload.query,
+        kind: payload.kind,
+        gameVersion: payload.gameVersion,
+        loader: payload.loader,
+        offset: payload.offset,
+        limit: payload.limit,
+        instance: payload.instanceId ? findInstance(payload.instanceId) : null
+      })
+  )
+
+  handle(
+    'modrinth:versions',
+    async (payload: { projectId: string; kind: ContentKindId; gameVersion?: string | null; loader?: string | null }) =>
+      await listVersions(payload.projectId, payload.kind, payload.gameVersion, payload.loader)
+  )
+
+  handle('modrinth:install', async (payload: { instanceId: string; versionId: string; kind: ContentKindId }) => {
+    const instance = getInstance(payload.instanceId)
+    const result = await installVersionToInstance(instance, payload.versionId, payload.kind)
+
+    const total = result.installed.length + result.dependencies.length
+    if (total === 0 && result.skipped.length > 0) {
+      toast('info', 'Already installed', `${result.skipped[0]} is already in this instance.`)
+    } else {
+      toast(
+        'success',
+        `Added to ${instance.name}`,
+        result.dependencies.length > 0
+          ? `${result.installed.join(', ')} plus ${result.dependencies.length} required dependenc${result.dependencies.length === 1 ? 'y' : 'ies'}.`
+          : result.installed.join(', ')
+      )
+    }
+    return result
+  })
+
+  handle('modrinth:project', async (payload: { projectId: string }) => await getProjectBody(payload.projectId))
 
   /* ------------------------------------------------------------- worlds */
 
