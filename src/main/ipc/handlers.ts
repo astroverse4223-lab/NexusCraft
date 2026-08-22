@@ -39,6 +39,12 @@ import {
   ensureInstanceLayout
 } from '../services/instances/instanceService'
 import { installInstance, repairInstance } from '../services/instances/installService'
+import {
+  exportInstance,
+  importInstance,
+  inspectInstanceArchive,
+  suggestedExportName
+} from '../services/instances/transferService'
 import { launchInstance, launchStates, recentLogs, stopInstance, isRunning } from '../services/launch/launchService'
 import { activeTasks, getTask } from '../services/downloads/downloadManager'
 import {
@@ -80,14 +86,87 @@ import {
 } from '../services/servers/serverService'
 import { applySkin, deleteSkin, favoriteSkin, importSkin, listSkins, resetSkin } from '../services/skins/skinService'
 import { instanceSubdir } from '../services/instances/instanceService'
+import {
+  MINECRAFT_EULA_URL,
+  acceptEula,
+  allHostedServerStates,
+  deleteHostedServer,
+  getHostedServerConsole,
+  installHostedServer,
+  listHostedServers,
+  listServerSoftware,
+  listServerMods,
+  importServerMods,
+  setServerModEnabled,
+  deleteServerMod,
+  installServerModFromModrinth,
+  instancesThatCanJoin,
+  isHostedServerRunning,
+  getHostedServer,
+  hostedServerDir,
+  serverAddress,
+  syncServerModsToInstance,
+  saveHostedServer,
+  sendHostedServerCommand,
+  startHostedServer,
+  stopHostedServer
+} from '../services/servers/hostService'
 import { splitAddress } from '../services/minecraft/argumentBuilder'
+import {
+  listCompanions,
+  allCompanionStates,
+  createCompanion,
+  deleteCompanion,
+  getCompanion,
+  updateCompanion,
+  startCompanion,
+  stopCompanion,
+  instructCompanion,
+  getCompanionState,
+  clearCompanionMemory
+} from '../services/companion/companionService'
+import { chat as llmChat, listModels, LlmError } from '../companion/llm'
+import { getSecret } from '../services/auth/secureStore'
 import {
   searchProjects,
   listVersions,
   installVersionToInstance,
   getProjectBody
 } from '../services/content/modrinthService'
-import type { ContentKindId } from '@shared/types'
+import {
+  inspectModpack,
+  installModpackFromFile,
+  installModpackFromModrinth,
+  installCurseForgeModpack
+} from '../services/content/modpackService'
+import {
+  searchCurseForge,
+  listCurseForgeFiles,
+  installCurseForgeFile,
+  isConfigured as curseForgeConfigured
+} from '../services/content/curseforgeService'
+import { checkModUpdates, applyModUpdate } from '../services/content/modrinthService'
+import {
+  listDataPacks,
+  buildDataPack,
+  installDataPack,
+  listInstalledDataPacks,
+  removeDataPack,
+  exportDataPack
+} from '../services/content/datapackService'
+import type { ModUpdate, DataPackOptionValues } from '@shared/types'
+import type { ContentKindId, ModpackInstallResult } from '@shared/types'
+import type { SaveHostedServerInput } from '@shared/types'
+
+/** Announces a finished modpack install, including anything it had to skip. */
+function reportModpack(result: ModpackInstallResult): void {
+  toast(
+    'success',
+    `${result.instance.name} is ready`,
+    `${result.installedFiles} files and ${result.overrides} config files installed.` +
+      (result.skipped.length > 0 ? ` ${result.skipped.length} were skipped as untrusted downloads.` : '')
+  )
+}
 
 const log = createLogger('handlers')
 
@@ -202,6 +281,22 @@ export function registerIpcHandlers(): void {
           : undefined
       })
       return result.canceled ? [] : result.filePaths
+    }
+  )
+
+  handle(
+    'app:pickSavePath',
+    async (payload: { title?: string; defaultName?: string; extensions?: string[] }) => {
+      const window = mainWindow()
+      if (!window) return null
+      const result = await dialog.showSaveDialog(window, {
+        title: payload.title ?? 'Save as',
+        defaultPath: payload.defaultName,
+        filters: payload.extensions?.length
+          ? [{ name: 'Supported files', extensions: payload.extensions }]
+          : undefined
+      })
+      return result.canceled ? null : (result.filePath ?? null)
     }
   )
 
@@ -351,6 +446,27 @@ export function registerIpcHandlers(): void {
 
   handle('instances:install', async (payload: { id: string }) => await installInstance(payload.id))
   handle('instances:repair', async (payload: { id: string }) => await repairInstance(payload.id))
+
+  handle(
+    'instances:export',
+    async (payload: { id: string; outputPath: string; includeWorlds: boolean; includeScreenshots: boolean }) => {
+      const instance = getInstance(payload.id)
+      const exported = await exportInstance(payload.id, payload.outputPath, {
+        includeWorlds: payload.includeWorlds,
+        includeScreenshots: payload.includeScreenshots
+      })
+      toast('success', `${instance.name} exported`, `${exported.entries} files written.`)
+      return exported
+    }
+  )
+
+  handle('instances:inspectArchive', async (payload: { filePath: string }) =>
+    await inspectInstanceArchive(payload.filePath)
+  )
+
+  handle('instances:import', async (payload: { filePath: string; name?: string }) =>
+    await importInstance(payload.filePath, payload.name)
+  )
 
   /* ------------------------------------------------------------- launch */
 
@@ -551,6 +667,152 @@ export function registerIpcHandlers(): void {
 
   handle('modrinth:project', async (payload: { projectId: string }) => await getProjectBody(payload.projectId))
 
+  handle('modpack:inspect', async (payload: { filePath: string }) => await inspectModpack(payload.filePath))
+
+  handle('modpack:installFile', async (payload: { filePath: string; name?: string }) => {
+    const result = await installModpackFromFile(payload.filePath, payload.name)
+    reportModpack(result)
+    return result
+  })
+
+  handle('modpack:installModrinth', async (payload: { versionId: string; name?: string }) => {
+    const result = await installModpackFromModrinth(payload.versionId, payload.name)
+    reportModpack(result)
+    return result
+  })
+
+  /* ------------------------------------------------------- mod updates */
+
+  handle('mods:checkUpdates', async (payload: { instanceId: string }) =>
+    await checkModUpdates(getInstance(payload.instanceId))
+  )
+
+  handle('mods:applyUpdate', async (payload: { instanceId: string; update: Record<string, unknown> }) => {
+    const instance = getInstance(payload.instanceId)
+    // The renderer echoes back an update it was given, so re-validate the
+    // fields that actually drive a download rather than trusting the shape.
+    const update = payload.update as unknown as ModUpdate
+    if (typeof update?.newVersionId !== 'string' || typeof update?.fileName !== 'string') {
+      throw new LauncherError('INVALID_INPUT', 'malformed update payload')
+    }
+    await applyModUpdate(instance, update)
+    toast('success', `${update.modName} updated`, `Now on ${update.newVersion}.`)
+    return true
+  })
+
+  /* -------------------------------------------------------- curseforge */
+
+  handle('curseforge:status', () => ({ configured: curseForgeConfigured() }))
+
+  /* --------------------------------------------------------- data packs */
+
+  handle('datapacks:list', () => listDataPacks())
+
+  handle(
+    'datapacks:preview',
+    async (payload: { instanceId: string; packId: string; options: DataPackOptionValues }) => {
+      const built = await buildDataPack(getInstance(payload.instanceId), payload.packId, payload.options)
+      // The generated files are returned verbatim so the user can read exactly
+      // what will be written before installing it.
+      return {
+        fileName: built.fileName,
+        packFormat: built.packFormat,
+        formatSource: built.formatSource,
+        files: built.files
+      }
+    }
+  )
+
+  handle(
+    'datapacks:install',
+    async (payload: { instanceId: string; worldFolder: string; packId: string; options: DataPackOptionValues }) => {
+      const instance = getInstance(payload.instanceId)
+      const result = await installDataPack(instance, payload.worldFolder, payload.packId, payload.options)
+      toast(
+        'success',
+        'Data pack installed',
+        `${result.fileName} added to ${result.world}. Reload or reopen the world to activate it.`
+      )
+      return result
+    }
+  )
+
+  handle('datapacks:installed', async (payload: { instanceId: string; worldFolder: string }) =>
+    await listInstalledDataPacks(getInstance(payload.instanceId), payload.worldFolder)
+  )
+
+  handle('datapacks:remove', async (payload: { instanceId: string; worldFolder: string; fileName: string }) => {
+    await removeDataPack(getInstance(payload.instanceId), payload.worldFolder, payload.fileName)
+    return true
+  })
+
+  handle(
+    'datapacks:export',
+    async (payload: {
+      instanceId: string
+      packId: string
+      options: DataPackOptionValues
+      outputPath: string
+    }) => {
+      const result = await exportDataPack(
+        getInstance(payload.instanceId),
+        payload.packId,
+        payload.options,
+        payload.outputPath
+      )
+      toast('success', 'Data pack exported', payload.outputPath)
+      return result
+    }
+  )
+
+  handle(
+    'curseforge:search',
+    async (payload: {
+      query: string
+      kind: ContentKindId
+      gameVersion?: string | null
+      loader?: string | null
+      offset?: number
+      limit?: number
+      instanceId?: string | null
+    }) =>
+      await searchCurseForge({
+        query: payload.query,
+        kind: payload.kind,
+        gameVersion: payload.gameVersion,
+        loader: payload.loader,
+        offset: payload.offset,
+        limit: payload.limit,
+        instance: payload.instanceId ? findInstance(payload.instanceId) : null
+      })
+  )
+
+  handle(
+    'curseforge:files',
+    async (payload: { projectId: string; kind: ContentKindId; gameVersion?: string | null; loader?: string | null }) =>
+      await listCurseForgeFiles(payload.projectId, payload.kind, payload.gameVersion, payload.loader)
+  )
+
+  handle(
+    'curseforge:install',
+    async (payload: { instanceId: string; projectId: string; fileId: string; kind: ContentKindId }) => {
+      const instance = getInstance(payload.instanceId)
+      const result = await installCurseForgeFile(instance, payload.projectId, payload.fileId, payload.kind)
+      if (result.installed.length > 0) {
+        toast('success', `Added to ${instance.name}`, result.installed.join(', '))
+      } else if (result.skipped.length > 0) {
+        toast('info', 'Already installed', result.skipped.join(', '))
+      }
+      return result
+    }
+  )
+
+  handle('modpack:installCurseForge', async (payload: { projectId: string; fileId: string; name?: string }) => {
+    const result = await installCurseForgeModpack(payload.projectId, payload.fileId, payload.name)
+    reportModpack(result)
+    return result
+  })
+
   /* ------------------------------------------------------------- worlds */
 
   handle('worlds:list', async (payload: { instanceId: string }) => await listWorlds(getInstance(payload.instanceId)))
@@ -646,8 +908,226 @@ export function registerIpcHandlers(): void {
     return updated
   })
 
+  /* ---------------------------------------------------------- companion */
+
+  handle('companion:list', () => listCompanions())
+  handle('companion:states', () => allCompanionStates())
+  handle('companion:create', (payload: { name?: string }) => createCompanion(payload.name))
+
+  handle('companion:delete', (payload: { id: string }) => {
+    deleteCompanion(payload.id)
+    toast('info', 'Companion removed')
+    return true
+  })
+
+  handle('companion:settings', (payload: { id: string }) => getCompanion(payload.id))
+
+  handle('companion:updateSettings', (payload: { id: string; patch: Record<string, unknown> }) =>
+    updateCompanion(payload.id, payload.patch as never)
+  )
+
+  handle('companion:start', (payload: { id: string }) => startCompanion(payload.id))
+  handle('companion:stop', (payload: { id: string }) => stopCompanion(payload.id))
+  handle('companion:state', (payload: { id: string }) => getCompanionState(payload.id))
+
+  handle('companion:instruct', (payload: { id: string; text: string }) => {
+    instructCompanion(payload.id, payload.text)
+    return true
+  })
+
+  handle('companion:clearMemory', (payload: { id: string }) => {
+    clearCompanionMemory(payload.id)
+    toast('info', 'Companion memory cleared')
+    return true
+  })
+
+  handle('companion:listModels', async (payload: { id: string }) => {
+    const settings = getCompanion(payload.id)
+    const apiKey = getSecret(`companion-llm-key-${payload.id}`) ?? ''
+    try {
+      return await listModels({ baseUrl: settings.baseUrl, apiKey, model: settings.model, timeoutMs: 20_000 })
+    } catch (err) {
+      llmFailure(err)
+    }
+  })
+
+  handle('companion:testModel', async (payload: { id: string }) => {
+    // A single cheap round trip, so configuration problems surface here rather
+    // than halfway through a Minecraft session.
+    const settings = getCompanion(payload.id)
+    const apiKey = getSecret(`companion-llm-key-${payload.id}`) ?? ''
+    const started = Date.now()
+
+    let reply
+    try {
+      reply = await llmChat(
+        { baseUrl: settings.baseUrl, apiKey, model: settings.model, timeoutMs: 30_000 },
+        [
+          { role: 'system', content: 'Reply with exactly the word: ready' },
+          { role: 'user', content: 'Are you there?' }
+        ],
+        []
+      )
+    } catch (err) {
+      llmFailure(err)
+    }
+
+    return {
+      ok: true,
+      ms: Date.now() - started,
+      model: settings.model,
+      reply: (reply.content ?? '').trim().slice(0, 120)
+    }
+  })
+
+  /* ------------------------------------------------------- hosted servers */
+
+  handle('host:list', () => listHostedServers())
+  handle('host:states', () => allHostedServerStates())
+  handle('host:eulaUrl', () => MINECRAFT_EULA_URL)
+  handle('host:software', () => listServerSoftware())
+
+  handle('host:mods', (payload: { id: string }) => listServerMods(payload.id))
+
+  handle('host:importMods', async (payload: { id: string }) => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Add to the server',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Mod or plugin jars', extensions: ['jar'] }]
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return 0
+    const added = await importServerMods(payload.id, picked.filePaths)
+    if (added > 0) toast('success', `Added ${added} file${added === 1 ? '' : 's'}`, 'Restart the server to load them')
+    return added
+  })
+
+  handle('host:toggleMod', async (payload: { id: string; fileName: string; enabled: boolean }) => {
+    await setServerModEnabled(payload.id, payload.fileName, payload.enabled)
+    return true
+  })
+
+  handle('host:deleteMod', async (payload: { id: string; fileName: string }) => {
+    await deleteServerMod(payload.id, payload.fileName)
+    return true
+  })
+
+  handle('host:installMod', async (payload: { id: string; versionId: string }) => {
+    const result = await installServerModFromModrinth(payload.id, payload.versionId)
+    toast('success', 'Installed to the server', 'Restart the server to load it')
+    return result
+  })
+
+  handle('host:openFolder', (payload: { id: string }) => {
+    // Opening the folder is the escape hatch for anything the UI cannot do.
+    void shell.openPath(hostedServerDir(payload.id))
+    return true
+  })
+
+  handle('host:syncMods', async (payload: { id: string; instanceId: string }) => {
+    const result = await syncServerModsToInstance(payload.id, getInstance(payload.instanceId))
+    const message =
+      result.copied.length === 0
+        ? `${result.instanceName} already had every mod`
+        : `Copied ${result.copied.length} mod${result.copied.length === 1 ? '' : 's'} to ${result.instanceName}`
+    toast('success', message)
+    return result
+  })
+
+  handle('host:joinTargets', (payload: { id: string }) =>
+    instancesThatCanJoin(getHostedServer(payload.id), listInstances())
+  )
+
+  handle('host:join', async (payload: { id: string; instanceId: string }) => {
+    const server = getHostedServer(payload.id)
+    if (!isHostedServerRunning(payload.id)) {
+      throw new LauncherError('NOT_FOUND', 'that server is not running', {
+        title: 'Start the server first',
+        message: 'The game would have nothing to connect to.',
+        actions: ['Press Start, wait for it to say ready, then Join']
+      })
+    }
+    return await launchInstance({ instanceId: payload.instanceId, serverAddress: serverAddress(server) })
+  })
+  handle('host:console', (payload: { id: string }) => getHostedServerConsole(payload.id))
+
+  handle('host:save', (input: SaveHostedServerInput) => saveHostedServer(input))
+
+  handle('host:delete', async (payload: { id: string; deleteWorld: boolean }) => {
+    await deleteHostedServer(payload.id, payload.deleteWorld)
+    toast('info', 'Server removed')
+    return true
+  })
+
+  handle('host:install', (payload: { id: string }) => installHostedServer(payload.id))
+
+  handle('host:acceptEula', (payload: { id: string }) => acceptEula(payload.id))
+
+  handle('host:start', (payload: { id: string }) => startHostedServer(payload.id))
+
+  handle('host:stop', (payload: { id: string }) => stopHostedServer(payload.id))
+
+  handle('host:command', (payload: { id: string; command: string }) => {
+    sendHostedServerCommand(payload.id, payload.command)
+    return true
+  })
+
   assertAllChannelsHandled()
   log.info(`registered IPC handlers`)
+}
+
+/**
+ * Turns a model-endpoint failure into something actionable.
+ *
+ * Providers answer an unknown model name with their own wording, sometimes in
+ * their own language — GLM says "模型不存在, 请检查模型代码" — which reached the
+ * user as a raw stack trace under "An unexpected problem occurred".
+ */
+function llmFailure(err: unknown): never {
+  if (!(err instanceof LlmError)) throw err
+
+  const message = err.message ?? ''
+  const unknownModel =
+    err.status === 404 ||
+    /模型不存在|model.*(not found|does not exist|not exist)|invalid model|unknown model/i.test(message)
+
+  if (unknownModel) {
+    throw new LauncherError('INVALID_INPUT', `the endpoint rejected the model name: ${message}`, {
+      title: 'That model name does not exist on this endpoint',
+      message:
+        'The endpoint answered and your key was accepted, but it does not serve a model by that name. Providers rename and retire models regularly.',
+      actions: ['Press "Load models" next to the model box to see what this endpoint offers']
+    })
+  }
+
+  // GLM answers an out-of-credit call with "余额不足或无可用资源包，请充值".
+  const outOfCredit = /余额不足|资源包|请充值|insufficient balance|quota|out of credit|billing/i.test(message)
+
+  if (outOfCredit) {
+    throw new LauncherError('INVALID_INPUT', `the endpoint reported no available credit: ${message}`, {
+      title: 'That account has no credit for this call',
+      message:
+        'The endpoint accepted your key but reported an empty balance or no usable plan. A GLM Coding Plan only covers a call when the endpoint and the model both qualify — otherwise the call bills your wallet instead, which is what this message means.',
+      actions: [
+        'For a Coding Plan, choose the "GLM Coding Plan" provider in Setup',
+        'That plan covers only GLM-4.7, GLM-5-Turbo and GLM-5.3',
+        'Otherwise top up the wallet, or switch to Ollama which is free and local'
+      ]
+    })
+  }
+
+  if (err.status === 401 || err.status === 403) {
+    throw new LauncherError('INVALID_INPUT', `the endpoint rejected the key: ${message}`, {
+      title: 'The endpoint rejected your API key',
+      message: 'The key was sent but refused.',
+      actions: ['Check the key is for this provider', 'GLM keys differ between the Chinese and international endpoints']
+    })
+  }
+
+  throw new LauncherError('UNKNOWN', message, {
+    title: 'The model endpoint returned an error',
+    message: message.slice(0, 200),
+    actions: ['Press Test to try again', 'Check the endpoint URL in Setup']
+  })
 }
 
 /**

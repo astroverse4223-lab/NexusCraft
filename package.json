@@ -21,6 +21,9 @@
   "dependencies": {
     "adm-zip": "^0.5.16",
     "electron-updater": "^6.8.9",
+    "minecraft-data": "^3.113.2",
+    "mineflayer": "^4.37.1",
+    "mineflayer-pathfinder": "^2.4.5",
     "zod": "^4.4.3"
   },
   "optionalDependencies": {

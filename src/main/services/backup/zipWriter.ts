@@ -72,6 +72,13 @@ export interface ZipProgress {
   total: number
 }
 
+export interface ZipOptions {
+  /** Return false to leave a file out. Paths are relative, forward-slashed. */
+  filter?: (relativePath: string) => boolean
+  /** Files added to the archive that do not exist on disk, e.g. a manifest. */
+  extraEntries?: Array<{ name: string; data: Buffer }>
+}
+
 /**
  * Writes a ZIP archive of `sourceDir`.
  *
@@ -82,9 +89,13 @@ export interface ZipProgress {
 export async function zipDirectory(
   sourceDir: string,
   outputFile: string,
-  onProgress?: (progress: ZipProgress) => void
+  onProgress?: (progress: ZipProgress) => void,
+  options: ZipOptions = {}
 ): Promise<{ bytes: number; entries: number }> {
-  const files = await collectFiles(sourceDir)
+  const all = await collectFiles(sourceDir)
+  const files = options.filter
+    ? all.filter((file) => options.filter!(relative(sourceDir, file).split('\\').join('/')))
+    : all
 
   if (files.length > MAX_ENTRIES) {
     throw new LauncherError('UNKNOWN', `${files.length} files exceeds the archive limit`, {
@@ -105,60 +116,68 @@ export async function zipDirectory(
     offset += chunk.length
   }
 
+  /** Appends one entry, whether it came from disk or from memory. */
+  const addEntry = async (name: string, input: Buffer, mtime: Date): Promise<void> => {
+    const raw: Buffer = Buffer.from(input)
+    const nameBuffer = Buffer.from(name, 'utf8')
+    const { time, date } = toDosTime(mtime)
+    const crc = crc32(raw)
+
+    // Normalised through Buffer.from so the deflate result and the raw input
+    // share one concrete Buffer type.
+    let payload: Buffer = Buffer.from(await deflate(raw, { level: 6 }))
+    let method = 8
+    if (payload.length >= raw.length) {
+      payload = raw
+      method = 0
+    }
+
+    if (offset + payload.length > MAX_TOTAL_BYTES) {
+      throw new LauncherError('UNKNOWN', 'archive would exceed 4 GB', {
+        title: 'This is too large to archive automatically',
+        message: 'The archive would be larger than 4 GB, which the standard ZIP format cannot hold.',
+        actions: ['Exclude worlds from the export, or copy the folder manually']
+      })
+    }
+
+    const localHeader = Buffer.alloc(30)
+    localHeader.writeUInt32LE(0x04034b50, 0)
+    localHeader.writeUInt16LE(20, 4)
+    localHeader.writeUInt16LE(0x0800, 6)
+    localHeader.writeUInt16LE(method, 8)
+    localHeader.writeUInt16LE(time, 10)
+    localHeader.writeUInt16LE(date, 12)
+    localHeader.writeUInt32LE(crc, 14)
+    localHeader.writeUInt32LE(payload.length, 18)
+    localHeader.writeUInt32LE(raw.length, 22)
+    localHeader.writeUInt16LE(nameBuffer.length, 26)
+    localHeader.writeUInt16LE(0, 28)
+
+    central.push({
+      name: nameBuffer,
+      crc,
+      compressedSize: payload.length,
+      uncompressedSize: raw.length,
+      offset,
+      time,
+      date,
+      method
+    })
+
+    await write(localHeader)
+    await write(nameBuffer)
+    await write(payload)
+  }
+
   try {
+    for (const extra of options.extraEntries ?? []) {
+      await addEntry(extra.name, extra.data, new Date())
+    }
+
     for (const file of files) {
       const name = relative(sourceDir, file).split('\\').join('/')
-      const nameBuffer = Buffer.from(name, 'utf8')
       const info = await stat(file)
-      const { time, date } = toDosTime(info.mtime)
-
-      const raw = await readFile(file)
-      const crc = crc32(raw)
-
-      // Region files compress well; already-compressed data does not, so fall
-      // back to storing when deflate makes the entry bigger.
-      let payload = await deflate(raw, { level: 6 })
-      let method = 8
-      if (payload.length >= raw.length) {
-        payload = raw
-        method = 0
-      }
-
-      if (offset + payload.length > MAX_TOTAL_BYTES) {
-        throw new LauncherError('UNKNOWN', 'archive would exceed 4 GB', {
-          title: 'This world is too large to back up automatically',
-          message: 'The backup would be larger than 4 GB, which the standard ZIP format cannot hold.',
-          actions: ['Copy the world folder manually instead']
-        })
-      }
-
-      const localHeader = Buffer.alloc(30)
-      localHeader.writeUInt32LE(0x04034b50, 0)
-      localHeader.writeUInt16LE(20, 4) // version needed
-      localHeader.writeUInt16LE(0x0800, 6) // UTF-8 file names
-      localHeader.writeUInt16LE(method, 8)
-      localHeader.writeUInt16LE(time, 10)
-      localHeader.writeUInt16LE(date, 12)
-      localHeader.writeUInt32LE(crc, 14)
-      localHeader.writeUInt32LE(payload.length, 18)
-      localHeader.writeUInt32LE(raw.length, 22)
-      localHeader.writeUInt16LE(nameBuffer.length, 26)
-      localHeader.writeUInt16LE(0, 28)
-
-      central.push({
-        name: nameBuffer,
-        crc,
-        compressedSize: payload.length,
-        uncompressedSize: raw.length,
-        offset,
-        time,
-        date,
-        method
-      })
-
-      await write(localHeader)
-      await write(nameBuffer)
-      await write(payload)
+      await addEntry(name, await readFile(file), info.mtime)
 
       completed++
       onProgress?.({ file: name, completed, total: files.length })

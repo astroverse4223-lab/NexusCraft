@@ -316,6 +316,151 @@ The **Mods & packs → Discover** tab searches [Modrinth](https://modrinth.com) 
 - Files are downloaded through the same hash-verified download manager as game files, and land in the instance's own `mods/`, `resourcepacks/` or `shaderpacks/` folder.
 - Project icons are fetched by the main process and passed to the interface as data URLs, so the renderer still makes no network requests of its own.
 
+## Content sources
+
+| Source | Key needed | Notes |
+|---|---|---|
+| **Modrinth** | None | Mods, resource packs, shaders and modpacks. Works out of the box. |
+| **CurseForge** | Free API key | Larger back catalogue, especially older Forge-era mods. |
+
+Switch between them with the Modrinth / CurseForge toggle in **Mods & packs → Discover**.
+
+### CurseForge API key
+
+CurseForge's API requires a key, issued instantly from
+[console.curseforge.com](https://console.curseforge.com). Paste it into **Settings → Content**. It is stored only on
+this PC, and can also be supplied as `NEXUSCRAFT_CURSEFORGE_KEY`. Without a key the CurseForge tab explains what is
+missing rather than showing an empty list; Modrinth is unaffected.
+
+**Some CurseForge mods cannot be installed by any launcher.** Authors may opt out of third-party distribution, and
+when they have, the API returns no download URL. NexusCraft marks those files **Manual only**, disables the install
+button, and links to the page so you can download the file and add it with *Add mods*. This is the author's choice and
+is respected rather than worked around — Modrinth has no equivalent restriction.
+
+## AI companion
+
+**AI Companion** connects a language model to a real Minecraft player on your server. It reads chat, follows you,
+gathers what you ask for, fights what attacks you, and — with autonomy on — decides what to do when left alone.
+
+It is built on [mineflayer](https://github.com/PrismarineJS/mineflayer), which speaks the actual Minecraft protocol,
+so the bot joins as a genuine second player rather than through commands or a mod.
+
+### Models
+
+Any OpenAI-compatible endpoint works, configured in the Companion screen:
+
+| Provider | Endpoint | Key |
+|---|---|---|
+| **Ollama** | `http://localhost:11434/v1` | none — runs entirely on your PC |
+| **GLM (Zhipu)** | `https://open.bigmodel.cn/api/paas/v4` | your GLM API key |
+| **GLM international** | `https://api.z.ai/api/paas/v4` | same key |
+| Anything else | your own base URL | as required |
+
+The API key is encrypted with Windows DPAPI in the same store as your Microsoft token, and never returns to the
+interface once saved. **Test the model** does a single cheap round trip so configuration problems surface before you
+are in game.
+
+### How it joins
+
+- **Your own LAN world or local server** — open a singleplayer world with *Open to LAN*, note the port Minecraft
+  prints in chat, and point the companion at it. These do not authenticate players, so no extra account is needed.
+- **An online server** — the bot signs in with `auth: microsoft`, which needs its own Microsoft account that owns
+  Minecraft. It cannot share the account you are playing on.
+
+There is deliberately no way to connect to an authenticated server without an account.
+
+### Two constraints
+
+- **The bot library currently reaches Minecraft 26.1.** Nothing has been discontinued — the protocol library is
+  volunteer-maintained and adds each Minecraft version by hand, so it trails new releases. The gap varies: 26.1
+  (March 2026) is supported, while 26.2 (June 2026) had not been added as of August 2026, despite the library being
+  updated days earlier. Instances newer than the supported list will not accept the bot until it catches up.
+  Only the companion is affected — the launcher itself plays any version.
+- **The model only gets a fixed tool list.** It cannot issue raw Minecraft commands. The tools are: say, look around,
+  follow, come, go to, stop, mine, collect drops, craft, place, attack, eat, give, inventory, remember, set goal and
+  wait.
+
+### Architecture
+
+The bot runs in **its own process**, spawned from the launcher and talking over process IPC. A crash in the bot — or in
+whatever the model decides to do — cannot take the launcher or a running game down with it. The launcher supervises it,
+persists its memory between sessions, and streams every thought, tool call and chat line into the Activity feed so
+nothing it does is hidden.
+
+## Data packs
+
+**Mods & packs → Data packs** generates real, working Minecraft data packs and installs them into a world.
+
+Data packs are Minecraft's *own* extension format — JSON and `.mcfunction` command scripts that vanilla loads
+directly. No mod loader and no Java compiler is involved, which is why the launcher can generate these honestly where
+it could not produce a real mod jar. They work on vanilla instances.
+
+Eighteen packs across five categories, each with its own options:
+
+| Category | Packs |
+|---|---|
+| **Essentials** | Quality of Life (game rules) · Coordinates HUD · Cave Sense · Explorer's Kit · Scoreboard Suite |
+| **Survival** | Death Waypoint · Home & Waypoints · Random Teleport · Void Rescue · Nether Calculator |
+| **Toys** | Elevator Blocks · Mob Radar · Speedrun Timer · Stats Sidebar |
+| **Crafting** | Craft the Uncraftables · Mob Heads · Ore Harvest |
+| **Arena** | Mob Arena (wave defence with a boss bar and rewards) |
+
+Two details worth knowing:
+
+- **The pack format is read from the game, not guessed.** Every Minecraft release states its data pack format in
+  `version.json` inside the client jar, so the generated `pack.mcmeta` is correct for any version — including ones
+  newer than this launcher.
+- **Version-specific schemas are generated, not guessed.** Recipes and loot tables changed shape in 1.20.5: a recipe
+  result went from `{"item": …}` to `{"id": …}`, and enchantment predicates were restructured. The generator emits the
+  right variant for the detected format, verified on both 1.20.1 and 1.21.1.
+- **Packs needing newer features declare it.** Home & Waypoints uses macro functions, which arrived in 1.20.2, so it
+  refuses to generate on older versions with an explanation instead of producing something broken.
+- **Both directory layouts are written.** Minecraft renamed data pack folders to singular forms in 1.21
+  (`functions` → `function`). A version only scans the names it knows, so writing both means one pack works on old and
+  new versions alike without loading twice.
+
+Every option is rendered live: press *Show what will be written* to read the exact commands before installing. Packs
+can also be exported as a `.zip` to share or install by hand. Data packs are per-world, so reopen the world or run
+`/reload` to activate one.
+
+## Mod updates
+
+**Mods & packs → Installed → Check for updates** hashes every jar in the instance and asks Modrinth which have a newer
+build for that Minecraft version and loader. Because it matches on file hash rather than on how a mod was installed,
+it also finds updates for jars you dropped in by hand or that arrived with a modpack.
+
+Updating downloads and verifies the new file before removing the old one, and preserves whether the mod was disabled.
+
+## Exporting and sharing instances
+
+**Instances → Export** (the upload icon on a card) writes the whole instance — mods, configs, resource packs and
+shaders — to a single `.ncinstance` file, with worlds optional. **Import instance** rebuilds it, restoring the memory
+and window settings along with the files. Logs and crash reports are always excluded.
+
+Imports are guarded the same way modpacks are: every archive entry is confined to the new instance, and an archive
+without a NexusCraft manifest is refused rather than unpacked blindly.
+
+## Modpacks
+
+**Instances → Import modpack** installs a modpack as a brand new instance. Both formats are recognised automatically —
+Modrinth `.mrpack` and CurseForge `.zip` — so you do not need to know which one you downloaded. Modrinth packs can also
+be installed directly from the Discover tab's Modpacks section. The manifest is read and shown
+first — pack name, Minecraft version, loader and file count — so you see what will be created before anything is
+written. Modpacks can also be installed straight from the Discover tab.
+
+A `.mrpack` is untrusted data that tells the launcher where to write files on disk, so it is treated as such:
+
+- Every path from the manifest and every `overrides/` entry is resolved and confirmed to stay inside the new
+  instance. Anything containing `..`, an absolute path or a drive letter is rejected outright (zip-slip).
+- Downloads are only fetched from an allowlist of hosts (Modrinth's CDN, GitHub, GitLab and the loader mavens),
+  mirroring the restriction Modrinth applies when packs are published. Files pointing anywhere else are skipped and
+  reported rather than fetched.
+- Every file is hash-verified by the same download manager as game files.
+- If anything fails part-way, the half-built instance is deleted rather than left behind.
+
+Verified against Fabulously Optimized 5.4.1: 51 files and 27 config overrides installed in 3 seconds, all 48 mods
+readable by the mod manager with no conflicts.
+
 ## Notes on mod loaders
 
 All four loaders are installed from their official sources:

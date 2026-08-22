@@ -7,8 +7,13 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: [] })],
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') },
-        external: ['better-sqlite3']
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // The companion bot runs as its own process, so it is bundled
+          // separately and spawned rather than imported.
+          bot: resolve(__dirname, 'src/main/companion/botEntry.ts')
+        },
+        external: ['better-sqlite3', 'mineflayer', 'mineflayer-pathfinder', 'minecraft-data', 'vec3']
       }
     },
     resolve: {

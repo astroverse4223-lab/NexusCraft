@@ -608,6 +608,43 @@ textarea {
   margin-top: 2px;
 }
 
+/* ----------------------------------------------------------- form fields */
+
+/*
+ * `.field` (defined with the inputs above) already stacks a label over its
+ * control, which is what a dialog needs. These add only what forms want on top:
+ * separators between fields, a side-by-side variant for toggles, and a two-up
+ * grid. `.setting-row` is the wrong tool inside a dialog — it puts the label
+ * beside the control, and a full-width input squeezes the text into a
+ * one-word-per-line column.
+ */
+.form-fields > .field {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.form-fields > .field:last-child {
+  border-bottom: none;
+}
+
+.field.field-inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.field.field-inline .field-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
 /* ---------------------------------------------------------------- pills */
 
 .pill {
@@ -974,4 +1011,127 @@ textarea {
   font: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* ---------------------------------------------------- host a server
+
+   The Host a Server screen was written against rules that were never added
+   to this sheet — `split-2`, `panel-head`, `panel-foot`, `log-feed` and
+   `selected` all did nothing. The two panes stacked, so the selected server
+   was drawn twice down the page and read as a duplicate, and the mods and
+   console sections had no header treatment at all. These are those rules.
+*/
+
+/* The list of servers sits beside the one being worked on. */
+.split-2 {
+  display: grid;
+  grid-template-columns: minmax(220px, 288px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* One column once there is no longer room for two. */
+@media (max-width: 1040px) {
+  .split-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The server currently being looked at, marked down its leading edge. */
+.panel.selected {
+  border-color: var(--border-strong);
+  background: var(--panel-strong);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/*
+ * A titled bar across the top of a panel. No display rule: these carry `row`
+ * in the markup, and setting one here would fight it.
+ */
+.panel-head {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius) var(--radius) 0 0;
+  min-height: 44px;
+  align-items: center;
+}
+
+.panel-head > span:first-child {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Its opposite number: the command line under the console. */
+.panel-foot {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 0 0 var(--radius) var(--radius);
+  align-items: center;
+}
+
+/*
+ * Server output. Darker than the panel it sits in, so a wall of log lines
+ * reads as machine output rather than as part of the interface.
+ */
+.log-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  min-height: 0;
+  background: rgba(0, 0, 0, 0.28);
+  font-variant-ligatures: none;
+  line-height: 1.55;
+}
+
+.log-feed::-webkit-scrollbar {
+  width: 10px;
+}
+
+.log-feed::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.log-feed::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+  background-clip: content-box;
+}
+
+/* Heading over the server list, aligned with the panels beside it. */
+.host-aside-label {
+  padding: 0 4px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Where the server can be reached, meant to be read and copied. */
+.host-address {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+}
+
+/* One mod per line, ruled off from the next so a long list stays readable. */
+.host-mod-row {
+  padding: 9px 14px;
+}
+
+.host-mod-row + .host-mod-row {
+  border-top: 1px solid var(--border);
+}
+
+.host-mod-row:hover {
+  background: rgba(255, 255, 255, 0.02);
 }

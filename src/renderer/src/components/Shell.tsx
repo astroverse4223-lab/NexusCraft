@@ -9,7 +9,9 @@ import {
   Shirt,
   Settings as SettingsIcon,
   UserCircle2,
-  Layers
+  Layers,
+  Bot,
+  HardDrive
 } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../api'
@@ -78,10 +80,12 @@ const LIBRARY: NavEntry[] = [
   { route: 'versions', label: 'Versions', icon: Layers },
   { route: 'mods', label: 'Mods & Packs', icon: Package },
   { route: 'worlds', label: 'Worlds', icon: Globe2 },
-  { route: 'servers', label: 'Servers', icon: Server }
+  { route: 'servers', label: 'Servers', icon: Server },
+  { route: 'host', label: 'Host a Server', icon: HardDrive }
 ]
 
 const ACCOUNT: NavEntry[] = [
+  { route: 'companion', label: 'AI Companion', icon: Bot },
   { route: 'skins', label: 'Skins', icon: Shirt },
   { route: 'account', label: 'Account', icon: UserCircle2 },
   { route: 'settings', label: 'Settings', icon: SettingsIcon }

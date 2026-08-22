@@ -233,6 +233,8 @@ export function componentForMajor(major: number): string {
   if (major <= 16) return 'java-runtime-alpha'
   if (major <= 17) return 'java-runtime-gamma'
   if (major <= 21) return 'java-runtime-delta'
+  // Newer versions ship their own component; delta is the closest fallback for
+  // anything above 21 whose manifest does not name one.
   return 'java-runtime-delta'
 }
 
@@ -412,15 +414,32 @@ export async function resolveJavaForVersion(
   const exact = detected.find((j) => j.majorVersion === required)
   if (exact) return { path: exact.path, majorVersion: exact.majorVersion, installed: false }
 
-  const newer = detected.find((j) => j.majorVersion > required)
-  if (newer && required >= 17) return { path: newer.path, majorVersion: newer.majorVersion, installed: false }
-
-  if (!installTask) {
-    throw new LauncherError('JAVA_NOT_FOUND', `no Java ${required} runtime available and no install task provided`)
+  /*
+   * Install the runtime Mojang names before settling for a newer one.
+   *
+   * Taking any newer JVM sounds harmless and is not. Minecraft 1.21.11 asks for
+   * Java 21; a Java 25 runtime installed for some other version satisfied the
+   * "newer" test and was used instead, and the game died 22 minutes in with an
+   * access violation inside the JIT compiler — a JVM bug, on a JVM the game was
+   * never tested against. Downloading the right one costs a minute, once.
+   */
+  if (installTask) {
+    const path = await installManagedRuntime(component, installTask)
+    return { path, majorVersion: required, installed: true }
   }
 
-  const path = await installManagedRuntime(component, installTask)
-  return { path, majorVersion: required, installed: true }
+  // No way to install right now: a newer JVM is better than refusing to launch,
+  // but it is a fallback rather than a preference.
+  const newer = detected.find((j) => j.majorVersion > required)
+  if (newer && required >= 17) {
+    log.warn(
+      `using Java ${newer.majorVersion} for a version that asks for Java ${required}; ` +
+        'the matching runtime is not installed and no download was possible'
+    )
+    return { path: newer.path, majorVersion: newer.majorVersion, installed: false }
+  }
+
+  throw new LauncherError('JAVA_NOT_FOUND', `no Java ${required} runtime available and no install task provided`)
 }
 
 /**

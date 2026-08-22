@@ -19,12 +19,28 @@ import type {
   ModrinthSearchResult,
   ModrinthVersion,
   ModrinthInstallResult,
+  ModpackInfo,
+  ModpackInstallResult,
+  ModUpdate,
+  InstanceExportInfo,
+  DataPackDefinition,
+  DataPackOptionValues,
+  DataPackInstallResult,
+  InstalledDataPack,
   Result,
   SavedServer,
   SavedSkin,
   ServerStatus,
   VersionManifestInfo,
   WorldInfo
+} from '@shared/types'
+import type { Companion, CompanionSettings, CompanionState } from '@shared/companion'
+import type {
+  HostedServer,
+  HostedServerConsoleLine,
+  HostedServerState,
+  SaveHostedServerInput,
+  ServerSoftwareInfo
 } from '@shared/types'
 
 /** An error that already carries a user-readable explanation from the main process. */
@@ -121,6 +137,8 @@ export const api = {
     pickDirectory: (title?: string) => call<string | null>('app:pickDirectory', { title }),
     pickFiles: (opts?: { title?: string; extensions?: string[]; multi?: boolean }) =>
       call<string[]>('app:pickFiles', opts ?? {}),
+    pickSavePath: (opts: { title?: string; defaultName?: string; extensions?: string[] }) =>
+      call<string | null>('app:pickSavePath', opts),
     window: (action: 'minimize' | 'maximize' | 'close') => call<boolean>('app:window', { action }),
     memory: () => call<MemoryInfo>('app:systemMemory')
   },
@@ -156,7 +174,16 @@ export const api = {
     stats: (id: string) => call<InstanceStats>('instances:stats', { id }),
     openFolder: (id: string, sub?: string) => call<boolean>('instances:openFolder', { id, sub }),
     install: (id: string) => call<{ versionId: string; javaPath: string }>('instances:install', { id }),
-    repair: (id: string) => call<{ versionId: string; javaPath: string }>('instances:repair', { id })
+    repair: (id: string) => call<{ versionId: string; javaPath: string }>('instances:repair', { id }),
+    export: (id: string, outputPath: string, includeWorlds: boolean, includeScreenshots: boolean) =>
+      call<{ path: string; bytes: number; entries: number }>('instances:export', {
+        id,
+        outputPath,
+        includeWorlds,
+        includeScreenshots
+      }),
+    inspectArchive: (filePath: string) => call<InstanceExportInfo>('instances:inspectArchive', { filePath }),
+    importArchive: (filePath: string, name?: string) => call<Instance>('instances:import', { filePath, name })
   },
 
   launch: {
@@ -186,6 +213,9 @@ export const api = {
 
   mods: {
     list: (instanceId: string) => call<ModInfo[]>('mods:list', { instanceId }),
+    checkUpdates: (instanceId: string) => call<ModUpdate[]>('mods:checkUpdates', { instanceId }),
+    applyUpdate: (instanceId: string, update: ModUpdate) =>
+      call<boolean>('mods:applyUpdate', { instanceId, update }),
     setEnabled: (instanceId: string, fileName: string, enabled: boolean) =>
       call<boolean>('mods:setEnabled', { instanceId, fileName, enabled }),
     remove: (instanceId: string, fileName: string) => call<boolean>('mods:delete', { instanceId, fileName }),
@@ -222,6 +252,99 @@ export const api = {
     install: (instanceId: string, versionId: string, kind: ContentKindId) =>
       call<ModrinthInstallResult>('modrinth:install', { instanceId, versionId, kind }),
     project: (projectId: string) => call<{ body: string; title: string }>('modrinth:project', { projectId })
+  },
+
+  curseforge: {
+    status: () => call<{ configured: boolean }>('curseforge:status'),
+    search: (input: {
+      query: string
+      kind: ContentKindId
+      gameVersion?: string | null
+      loader?: string | null
+      offset?: number
+      limit?: number
+      instanceId?: string | null
+    }) => call<ModrinthSearchResult>('curseforge:search', input),
+    files: (projectId: string, kind: ContentKindId, gameVersion?: string | null, loader?: string | null) =>
+      call<ModrinthVersion[]>('curseforge:files', { projectId, kind, gameVersion, loader }),
+    install: (instanceId: string, projectId: string, fileId: string, kind: ContentKindId) =>
+      call<ModrinthInstallResult>('curseforge:install', { instanceId, projectId, fileId, kind })
+  },
+
+  companion: {
+    list: () => call<Companion[]>('companion:list'),
+    states: () => call<CompanionState[]>('companion:states'),
+    create: (name?: string) => call<Companion>('companion:create', { name }),
+    remove: (id: string) => call<boolean>('companion:delete', { id }),
+    settings: (id: string) => call<Companion>('companion:settings', { id }),
+    updateSettings: (id: string, patch: Partial<CompanionSettings> & { apiKey?: string }) =>
+      call<Companion>('companion:updateSettings', { id, patch }),
+    start: (id: string) => call<CompanionState>('companion:start', { id }),
+    stop: (id: string) => call<CompanionState>('companion:stop', { id }),
+    state: (id: string) => call<CompanionState>('companion:state', { id }),
+    instruct: (id: string, text: string) => call<boolean>('companion:instruct', { id, text }),
+    clearMemory: (id: string) => call<boolean>('companion:clearMemory', { id }),
+    listModels: (id: string) => call<string[]>('companion:listModels', { id }),
+    testModel: (id: string) =>
+      call<{ ok: boolean; ms: number; model: string; reply: string }>('companion:testModel', { id })
+  },
+
+  host: {
+    list: () => call<HostedServer[]>('host:list'),
+    states: () => call<HostedServerState[]>('host:states'),
+    console: (id: string) => call<HostedServerConsoleLine[]>('host:console', { id }),
+    eulaUrl: () => call<string>('host:eulaUrl'),
+    software: () => call<ServerSoftwareInfo[]>('host:software'),
+    mods: (id: string) => call<ModInfo[]>('host:mods', { id }),
+    importMods: (id: string) => call<number>('host:importMods', { id }),
+    toggleMod: (id: string, fileName: string, enabled: boolean) =>
+      call<boolean>('host:toggleMod', { id, fileName, enabled }),
+    deleteMod: (id: string, fileName: string) => call<boolean>('host:deleteMod', { id, fileName }),
+    installMod: (id: string, versionId: string) => call<unknown>('host:installMod', { id, versionId }),
+    joinTargets: (id: string) => call<Instance[]>('host:joinTargets', { id }),
+    join: (id: string, instanceId: string) => call<unknown>('host:join', { id, instanceId }),
+    openFolder: (id: string) => call<boolean>('host:openFolder', { id }),
+    syncMods: (id: string, instanceId: string) =>
+      call<{ copied: string[]; alreadyPresent: string[]; instanceName: string }>('host:syncMods', {
+        id,
+        instanceId
+      }),
+    save: (input: SaveHostedServerInput) => call<HostedServer>('host:save', input),
+    remove: (id: string, deleteWorld: boolean) => call<boolean>('host:delete', { id, deleteWorld }),
+    install: (id: string) => call<HostedServer>('host:install', { id }),
+    acceptEula: (id: string) => call<HostedServer>('host:acceptEula', { id }),
+    start: (id: string) => call<HostedServerState>('host:start', { id }),
+    stop: (id: string) => call<HostedServerState>('host:stop', { id }),
+    command: (id: string, command: string) => call<boolean>('host:command', { id, command })
+  },
+
+  datapacks: {
+    list: () => call<DataPackDefinition[]>('datapacks:list'),
+    preview: (instanceId: string, packId: string, options: DataPackOptionValues) =>
+      call<{
+        fileName: string
+        packFormat: number
+        formatSource: string
+        files: Array<{ path: string; content: string }>
+      }>('datapacks:preview', { instanceId, packId, options }),
+    install: (instanceId: string, worldFolder: string, packId: string, options: DataPackOptionValues) =>
+      call<DataPackInstallResult>('datapacks:install', { instanceId, worldFolder, packId, options }),
+    installed: (instanceId: string, worldFolder: string) =>
+      call<InstalledDataPack[]>('datapacks:installed', { instanceId, worldFolder }),
+    remove: (instanceId: string, worldFolder: string, fileName: string) =>
+      call<boolean>('datapacks:remove', { instanceId, worldFolder, fileName }),
+    export: (instanceId: string, packId: string, options: DataPackOptionValues, outputPath: string) =>
+      call<{ path: string; packFormat: number }>('datapacks:export', { instanceId, packId, options, outputPath })
+  },
+
+  modpacks: {
+    inspect: (filePath: string) => call<ModpackInfo>('modpack:inspect', { filePath }),
+    installFromCurseForge: (projectId: string, fileId: string, name?: string) =>
+      call<ModpackInstallResult>('modpack:installCurseForge', { projectId, fileId, name }),
+    installFile: (filePath: string, name?: string) =>
+      call<ModpackInstallResult>('modpack:installFile', { filePath, name }),
+    installFromModrinth: (versionId: string, name?: string) =>
+      call<ModpackInstallResult>('modpack:installModrinth', { versionId, name })
   },
 
   worlds: {

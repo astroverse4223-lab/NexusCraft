@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Download, ExternalLink, Package, Search, Sparkles, Palette, Users } from 'lucide-react'
+import { AlertTriangle, Boxes, Check, Download, ExternalLink, Key, Package, Search, Sparkles, Palette, Users } from 'lucide-react'
 import type { ContentKindId, Instance, LauncherErrorPayload, ModrinthProject, ModrinthVersion } from '@shared/types'
 import { api, toPayload } from '../api'
 import { useStore } from '../store/useStore'
@@ -9,7 +9,8 @@ import { formatBytes, formatDate, LOADER_LABELS } from '../format'
 const KIND_TABS: Array<{ kind: ContentKindId; label: string; icon: typeof Package }> = [
   { kind: 'mod', label: 'Mods', icon: Package },
   { kind: 'resourcepack', label: 'Resource packs', icon: Palette },
-  { kind: 'shader', label: 'Shaders', icon: Sparkles }
+  { kind: 'shader', label: 'Shaders', icon: Sparkles },
+  { kind: 'modpack', label: 'Modpacks', icon: Boxes }
 ]
 
 function compactNumber(value: number): string {
@@ -23,7 +24,12 @@ function compactNumber(value: number): string {
  * looking at — results are filtered to its Minecraft version and mod loader, so
  * what you see is what will actually run.
  */
+type Source = 'modrinth' | 'curseforge'
+
 export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
+  const navigate = useStore((s) => s.navigate)
+  const [source, setSource] = useState<Source>('modrinth')
+  const [cfConfigured, setCfConfigured] = useState<boolean | null>(null)
   const [kind, setKind] = useState<ContentKindId>('mod')
   const [query, setQuery] = useState('')
   const [projects, setProjects] = useState<ModrinthProject[] | null>(null)
@@ -41,15 +47,17 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
       const id = ++requestId.current
       setLoading(true)
       try {
-        const result = await api.modrinth.search({
+        const input = {
           query,
           kind,
           gameVersion: matchVersion ? instance.minecraftVersion : null,
-          loader: matchVersion ? instance.loader : null,
+          loader: matchVersion && kind !== 'modpack' ? instance.loader : null,
           offset,
           limit: 20,
           instanceId: instance.id
-        })
+        }
+        const result =
+          source === 'curseforge' ? await api.curseforge.search(input) : await api.modrinth.search(input)
         if (id !== requestId.current) return
         setProjects(result.projects)
         setTotal(result.total)
@@ -62,7 +70,7 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
         if (id === requestId.current) setLoading(false)
       }
     },
-    [query, kind, matchVersion, instance.minecraftVersion, instance.loader, instance.id]
+    [query, kind, source, matchVersion, instance.minecraftVersion, instance.loader, instance.id]
   )
 
   // Debounced so typing does not fire a request per keystroke.
@@ -70,6 +78,13 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
     const timer = setTimeout(() => void search(0), query ? 350 : 0)
     return () => clearTimeout(timer)
   }, [search, query])
+
+  useEffect(() => {
+    void api.curseforge
+      .status()
+      .then((s) => setCfConfigured(s.configured))
+      .catch(() => setCfConfigured(false))
+  }, [])
 
   const vanilla = instance.loader === 'vanilla'
 
@@ -86,12 +101,26 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
         </div>
 
         <div className="row gap-8">
+          <div className="tabs">
+            <button
+              className={`tab ${source === 'modrinth' ? 'active' : ''}`}
+              onClick={() => setSource('modrinth')}
+            >
+              Modrinth
+            </button>
+            <button
+              className={`tab ${source === 'curseforge' ? 'active' : ''}`}
+              onClick={() => setSource('curseforge')}
+            >
+              CurseForge
+            </button>
+          </div>
           <div className="row gap-8 panel" style={{ padding: '0 10px', borderRadius: 10 }}>
             <Search size={14} className="dim" />
             <input
               className="input"
               style={{ border: 'none', background: 'transparent', padding: '7px 0', width: 230 }}
-              placeholder={`Search Modrinth for ${kind === 'mod' ? 'mods' : kind === 'shader' ? 'shaders' : 'resource packs'}`}
+              placeholder={`Search ${source === 'curseforge' ? 'CurseForge' : 'Modrinth'} for ${kind === 'mod' ? 'mods' : kind === 'shader' ? 'shaders' : kind === 'modpack' ? 'modpacks' : 'resource packs'}`}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -106,6 +135,43 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
           </button>
         </div>
       </div>
+
+      {source === 'curseforge' && cfConfigured === false && (
+        <div
+          className="panel panel-pad row gap-12 mb-16"
+          style={{ borderColor: 'color-mix(in srgb, var(--warning) 30%, transparent)' }}
+        >
+          <Key size={17} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+          <div className="flex-1">
+            <div style={{ fontWeight: 600 }}>CurseForge needs an API key</div>
+            <div className="small muted mt-8">
+              Searching CurseForge requires a free key from their developer console. It is issued instantly and is
+              stored only on this PC. Modrinth needs no key and works right now.
+            </div>
+            <div className="row gap-8 mt-16">
+              <button className="btn btn-sm" onClick={() => navigate('settings')}>
+                Add the key in Settings
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => void api.app.openExternal('https://console.curseforge.com')}
+              >
+                <ExternalLink size={13} /> Get a key
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {kind === 'modpack' && (
+        <div className="panel panel-pad row gap-12 mb-16">
+          <Boxes size={17} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+          <div className="small muted">
+            Installing a modpack creates a <strong style={{ color: 'var(--text)' }}>new instance</strong> with its own
+            Minecraft version, loader and mods. Your existing instances are untouched.
+          </div>
+        </div>
+      )}
 
       {vanilla && kind === 'mod' && (
         <div
@@ -128,7 +194,7 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
 
       {loading && projects === null ? (
         <div className="panel panel-pad row gap-12 muted">
-          <Spinner /> Searching Modrinth…
+          <Spinner /> Searching {source === 'curseforge' ? 'CurseForge' : 'Modrinth'}…
         </div>
       ) : projects && projects.length === 0 ? (
         <div className="panel">
@@ -222,6 +288,7 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
           project={selected}
           instance={instance}
           kind={kind}
+          source={source}
           matchVersion={matchVersion}
           onClose={() => setSelected(null)}
           onInstalled={() => void search(0)}
@@ -237,6 +304,7 @@ function InstallDialog({
   project,
   instance,
   kind,
+  source,
   matchVersion,
   onClose,
   onInstalled
@@ -244,11 +312,15 @@ function InstallDialog({
   project: ModrinthProject
   instance: Instance
   kind: ContentKindId
+  source: Source
   matchVersion: boolean
   onClose: () => void
   onInstalled: () => void
 }): JSX.Element {
   const pushToast = useStore((s) => s.pushToast)
+  const refreshInstances = useStore((s) => s.refreshInstances)
+  const selectInstance = useStore((s) => s.selectInstance)
+  const navigate = useStore((s) => s.navigate)
   const [versions, setVersions] = useState<ModrinthVersion[] | null>(null)
   const [installing, setInstalling] = useState<string | null>(null)
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
@@ -257,26 +329,43 @@ function InstallDialog({
   useEffect(() => {
     void (async () => {
       try {
+        const gameVersion = matchVersion ? instance.minecraftVersion : null
+        const loader = matchVersion && kind !== 'modpack' ? instance.loader : null
         setVersions(
-          await api.modrinth.versions(
-            project.projectId,
-            kind,
-            matchVersion ? instance.minecraftVersion : null,
-            matchVersion ? instance.loader : null
-          )
+          source === 'curseforge'
+            ? await api.curseforge.files(project.projectId, kind, gameVersion, loader)
+            : await api.modrinth.versions(project.projectId, kind, gameVersion, loader)
         )
       } catch (err) {
         setError(toPayload(err))
         setVersions([])
       }
     })()
-  }, [project.projectId, kind, matchVersion, instance.minecraftVersion, instance.loader])
+  }, [project.projectId, kind, source, matchVersion, instance.minecraftVersion, instance.loader])
 
   async function install(version: ModrinthVersion): Promise<void> {
     setInstalling(version.versionId)
     setError(null)
     try {
-      const result = await api.modrinth.install(instance.id, version.versionId, kind)
+      if (kind === 'modpack') {
+        // A modpack declares its own Minecraft version and loader, so it becomes
+        // a new instance rather than being merged into the current one.
+        const result =
+          source === 'curseforge'
+            ? await api.modpacks.installFromCurseForge(project.projectId, version.versionId, project.title)
+            : await api.modpacks.installFromModrinth(version.versionId, project.title)
+        await refreshInstances()
+        await selectInstance(result.instance.id)
+        setDone(true)
+        onClose()
+        navigate('play')
+        return
+      }
+
+      const result =
+        source === 'curseforge'
+          ? await api.curseforge.install(instance.id, project.projectId, version.versionId, kind)
+          : await api.modrinth.install(instance.id, version.versionId, kind)
       setDone(true)
       onInstalled()
       if (result.installed.length === 0 && result.skipped.length > 0) {
@@ -300,9 +389,13 @@ function InstallDialog({
         <>
           <button
             className="btn"
-            onClick={() => void api.app.openExternal(`https://modrinth.com/${project.projectType}/${project.slug}`)}
+            onClick={() =>
+              void api.app.openExternal(
+                project.pageUrl ?? `https://modrinth.com/${project.projectType}/${project.slug}`
+              )
+            }
           >
-            <ExternalLink size={14} /> View on Modrinth
+            <ExternalLink size={14} /> View on {source === 'curseforge' ? 'CurseForge' : 'Modrinth'}
           </button>
           <div className="flex-1" />
           <button className="btn" onClick={onClose}>
@@ -322,6 +415,16 @@ function InstallDialog({
       </div>
 
       {error && <ErrorView error={error} onDismiss={() => setError(null)} compact />}
+
+      {project.distributionAllowed === false && (
+        <div className="row gap-8 small" style={{ color: 'var(--warning)' }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>
+            This author has turned off third-party downloads, so no launcher may fetch it automatically. Download it
+            from CurseForge and add it with “Add mods”.
+          </span>
+        </div>
+      )}
 
       <div className="divider" style={{ margin: '6px 0' }} />
 
@@ -366,11 +469,22 @@ function InstallDialog({
               </div>
               <button
                 className="btn btn-sm btn-primary"
-                disabled={installing !== null}
+                disabled={installing !== null || version.downloadable === false}
+                title={
+                  version.downloadable === false
+                    ? 'The author has disabled third-party downloads for this file'
+                    : undefined
+                }
                 onClick={() => void install(version)}
               >
                 {installing === version.versionId ? <Spinner /> : <Download size={13} />}
-                {installing === version.versionId ? 'Installing…' : 'Install'}
+                {installing === version.versionId
+                  ? 'Installing…'
+                  : version.downloadable === false
+                    ? 'Manual only'
+                    : kind === 'modpack'
+                      ? 'Create instance'
+                      : 'Install'}
               </button>
             </div>
           ))}

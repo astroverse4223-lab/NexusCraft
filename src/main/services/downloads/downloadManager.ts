@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
-import { mkdir, stat, unlink, rename, chmod } from 'node:fs/promises'
+import { mkdir, stat, chmod } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -10,6 +9,7 @@ import { request, safeUrl } from '../../core/http'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { emit } from '../../core/events'
+import { openForWrite, removeFile, renameWhenFree } from '../../core/fileLocks'
 
 const log = createLogger('downloads')
 
@@ -256,9 +256,9 @@ export class DownloadTask {
     })
 
     try {
-      await pipeline(source, meter, createWriteStream(tempPath), { signal: this.abort.signal })
+      await pipeline(source, meter, await openForWrite(tempPath), { signal: this.abort.signal })
     } catch (err) {
-      await unlink(tempPath).catch(() => undefined)
+      await removeFile(tempPath)
       // Roll the progress counter back so a retry does not double count.
       this.downloadedBytes -= written
       throw err
@@ -284,13 +284,13 @@ export class DownloadTask {
         }
       }
     } catch (err) {
-      await unlink(tempPath).catch(() => undefined)
+      await removeFile(tempPath)
       this.downloadedBytes -= written
       throw err
     }
 
-    await unlink(item.destination).catch(() => undefined)
-    await rename(tempPath, item.destination)
+    await removeFile(item.destination)
+    await renameWhenFree(tempPath, item.destination)
     if (item.executable) await chmod(item.destination, 0o755).catch(() => undefined)
   }
 

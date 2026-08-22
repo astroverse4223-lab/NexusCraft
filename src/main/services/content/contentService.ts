@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readdir, rename, rm, stat, copyFile, mkdir, readFile } from 'node:fs/promises'
+import { readdir, rm, stat, copyFile, mkdir, readFile } from 'node:fs/promises'
 import { basename, join, extname } from 'node:path'
 import AdmZip from 'adm-zip'
 import type { ContentPack, Instance } from '@shared/types'
@@ -7,6 +7,7 @@ import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { assertInside } from '../../core/paths'
 import { instanceSubdir } from '../instances/instanceService'
+import { renameWhenFree } from '../../core/fileLocks'
 
 const log = createLogger('content')
 
@@ -141,7 +142,8 @@ export async function setContentEnabled(
   if (enabled === !isDisabled) return
 
   const nextName = enabled ? fileName.slice(0, -DISABLED_SUFFIX.length) : fileName + DISABLED_SUFFIX
-  await rename(current, assertInside(dir, join(dir, nextName)))
+  // The game or a scanner may still hold the jar open; wait it out.
+  await renameWhenFree(current, assertInside(dir, join(dir, nextName)))
 }
 
 export async function deleteContent(instance: Instance, kind: ContentKind, fileName: string): Promise<void> {

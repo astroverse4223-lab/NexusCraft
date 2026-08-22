@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { writeFile, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
 import type { GameLogLine, LaunchStage, LaunchState } from '@shared/types'
@@ -29,6 +29,8 @@ const log = createLogger('launch')
 
 interface RunningGame {
   instanceId: string
+  /** Where the JVM writes its crash dumps, which must be scrubbed on exit. */
+  gameDir: string
   child: ChildProcess
   startedAt: number
   /** Ring buffer of recent output for the log viewer. */
@@ -230,7 +232,14 @@ export async function launchInstance(options: LaunchOptions): Promise<LaunchStat
       env: { ...process.env, APPDATA: process.env.APPDATA }
     })
 
-    const game: RunningGame = { instanceId, child, startedAt: Date.now(), logs: [], crashHints: [] }
+    const game: RunningGame = {
+      instanceId,
+      gameDir: instance.gameDir,
+      child,
+      startedAt: Date.now(),
+      logs: [],
+      crashHints: []
+    }
     running.set(instanceId, game)
 
     child.stdout?.on('data', (chunk: Buffer) => pushLog(game, 'stdout', chunk.toString('utf8')))
@@ -262,6 +271,46 @@ export async function launchInstance(options: LaunchOptions): Promise<LaunchStat
   }
 }
 
+/**
+ * Strips the Minecraft access token out of JVM crash dumps.
+ *
+ * When the JVM dies hard it writes `hs_err_pid*.log` containing its entire
+ * command line — and Minecraft only accepts the session token as a command line
+ * argument, so the token lands in a plain text file on disk. The launcher's own
+ * logger redacts tokens; this file is written by the JVM, outside that.
+ *
+ * The dumps are still useful for diagnosing crashes, so they are kept and
+ * scrubbed rather than deleted.
+ */
+async function redactCrashDumps(gameDir: string): Promise<void> {
+  let entries: string[]
+  try {
+    entries = await readdir(gameDir)
+  } catch {
+    return
+  }
+
+  const dumps = entries.filter((name) => /^(hs_err_pid|replay_pid).*\.log$/i.test(name))
+
+  for (const name of dumps) {
+    const file = join(gameDir, name)
+    try {
+      const text = await readFile(file, 'utf8')
+      // Anything after --accessToken up to the next argument, plus bare JWTs.
+      const cleaned = text
+        .replace(/(--accessToken\s+)\S+/g, '$1[redacted]')
+        .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '[redacted token]')
+
+      if (cleaned !== text) {
+        await writeFile(file, cleaned, 'utf8')
+        log.info(`removed the access token from ${name}`)
+      }
+    } catch (err) {
+      log.warn(`could not scrub ${name}: ${(err as Error).message}`)
+    }
+  }
+}
+
 function handleExit(game: RunningGame, code: number | null, signal: NodeJS.Signals | null): void {
   const { instanceId } = game
   running.delete(instanceId)
@@ -272,6 +321,9 @@ function handleExit(game: RunningGame, code: number | null, signal: NodeJS.Signa
 
   const clean = code === 0 || signal === 'SIGTERM' || signal === 'SIGKILL'
   const crashReport = clean ? null : game.crashHints.slice(0, 12).join('\n') || null
+
+  // A hard JVM crash leaves the session token sitting in a dump file.
+  void redactCrashDumps(game.gameDir)
 
   log.info(`instance ${instanceId} exited with code ${code ?? 'null'} signal ${signal ?? 'none'}`)
   pushLog(game, 'launcher', `Minecraft exited with code ${code ?? 'unknown'}`)

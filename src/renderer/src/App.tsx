@@ -13,9 +13,11 @@ import { VersionsScreen } from './screens/Versions'
 import { ModsScreen } from './screens/Mods'
 import { WorldsScreen } from './screens/Worlds'
 import { ServersScreen } from './screens/Servers'
+import { HostServerScreen } from './screens/HostServer'
 import { SkinsScreen } from './screens/Skins'
 import { AccountScreen } from './screens/Account'
 import { SettingsScreen } from './screens/Settings'
+import { CompanionScreen } from './screens/Companion'
 
 export default function App(): JSX.Element {
   const ready = useStore((s) => s.ready)
@@ -91,12 +93,16 @@ function renderRoute(route: string): JSX.Element {
       return <WorldsScreen />
     case 'servers':
       return <ServersScreen />
+    case 'host':
+      return <HostServerScreen />
     case 'skins':
       return <SkinsScreen />
     case 'account':
       return <AccountScreen />
     case 'settings':
       return <SettingsScreen />
+    case 'companion':
+      return <CompanionScreen />
     default:
       return <HomeScreen />
   }

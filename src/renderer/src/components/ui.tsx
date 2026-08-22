@@ -303,6 +303,36 @@ export function SettingRow({
   )
 }
 
+/**
+ * A form field: label, optional hint, then the control on its own line.
+ *
+ * Use this inside dialogs and forms. `SettingRow` lays label and control out
+ * side by side, which only works when the control is narrow — a full-width
+ * input in a dialog crushes the text beside it into a single-word column.
+ */
+export function Field({
+  label,
+  hint,
+  inline,
+  children
+}: {
+  label: string
+  hint?: string
+  /** Puts the control beside the label instead of below it. For toggles. */
+  inline?: boolean
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <div className={inline ? 'field field-inline' : 'field'}>
+      <div className="field-text">
+        <div className="field-label">{label}</div>
+        {hint && <div className="field-hint">{hint}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 export function EmptyState({
   icon,
   title,

@@ -20,10 +20,12 @@ export type Route =
   | 'versions'
   | 'mods'
   | 'servers'
+  | 'host'
   | 'worlds'
   | 'skins'
   | 'settings'
   | 'account'
+  | 'companion'
 
 export interface ToastItem {
   id: number

@@ -11,6 +11,8 @@ import { trustWebContents } from './ipc/registry'
 import { stopAll } from './services/launch/launchService'
 import { cancelAll } from './services/downloads/downloadManager'
 import { initAutoUpdate } from './services/update/updateService'
+import { shutdownCompanion } from './services/companion/companionService'
+import { shutdownHostedServers } from './services/servers/hostService'
 
 const log = createLogger('main')
 
@@ -205,6 +207,10 @@ if (!gotLock) {
   app.on('before-quit', () => {
     log.info('shutting down')
     cancelAll()
+    // The companion is a child process; it must not outlive the launcher.
+    shutdownCompanion()
+    // A hosted server must never outlive the launcher that started it.
+    void shutdownHostedServers()
     // Minecraft keeps running deliberately: closing the launcher should not
     // kill a game the user is in the middle of.
     closeDatabase()

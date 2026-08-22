@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Coffee, ExternalLink, FolderOpen, Info, KeyRound, RefreshCw, ShieldQuestion } from 'lucide-react'
+import {
+  AlertTriangle,
+  Boxes,
+  Coffee,
+  ExternalLink,
+  FolderOpen,
+  Info,
+  KeyRound,
+  RefreshCw,
+  ShieldQuestion
+} from 'lucide-react'
 import type { JavaInstallation, LauncherErrorPayload } from '@shared/types'
 import { api, toPayload, type MemoryInfo } from '../api'
 import { useStore } from '../store/useStore'
@@ -8,7 +18,7 @@ import { formatRam } from '../format'
 
 const ACCENTS = ['#5eead4', '#818cf8', '#f472b6', '#fbbf24', '#4ade80', '#60a5fa', '#f87171', '#c084fc']
 
-type Tab = 'general' | 'java' | 'appearance' | 'account' | 'about'
+type Tab = 'general' | 'java' | 'appearance' | 'account' | 'content' | 'about'
 
 export function SettingsScreen(): JSX.Element {
   const settings = useStore((s) => s.settings)
@@ -21,6 +31,7 @@ export function SettingsScreen(): JSX.Element {
   const [javas, setJavas] = useState<JavaInstallation[]>([])
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [clientId, setClientId] = useState('')
+  const [curseKey, setCurseKey] = useState('')
   const [detecting, setDetecting] = useState(false)
 
   useEffect(() => {
@@ -29,7 +40,10 @@ export function SettingsScreen(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (settings) setClientId(settings.clientId)
+    if (settings) {
+      setClientId(settings.clientId)
+      setCurseKey(settings.curseForgeApiKey)
+    }
   }, [settings])
 
   if (!settings) {
@@ -57,6 +71,7 @@ export function SettingsScreen(): JSX.Element {
             ['java', 'Java & memory'],
             ['appearance', 'Appearance'],
             ['account', 'Sign-in'],
+            ['content', 'Content'],
             ['about', 'About']
           ] as Array<[Tab, string]>
         ).map(([key, label]) => (
@@ -449,6 +464,69 @@ export function SettingsScreen(): JSX.Element {
             >
               <ExternalLink size={14} /> Open the Azure portal
             </button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'content' && (
+        <div className="panel panel-pad">
+          <div className="row gap-12 items-start mb-16">
+            <Boxes size={18} style={{ color: 'var(--accent)', marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 650 }}>Content sources</div>
+              <p className="small muted mt-8" style={{ maxWidth: '68ch' }}>
+                Modrinth works with no configuration at all. CurseForge additionally requires a free API key, which is
+                issued instantly from their developer console and stored only on this PC.
+              </p>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="field-label">CurseForge API key</label>
+            <div className="row gap-8">
+              <input
+                className="input mono"
+                type="password"
+                value={curseKey}
+                placeholder="Optional — leave empty to use Modrinth only"
+                onChange={(event) => setCurseKey(event.target.value)}
+              />
+              <button
+                className="btn btn-primary"
+                disabled={curseKey.trim() === settings.curseForgeApiKey}
+                onClick={() => {
+                  void patch({ curseForgeApiKey: curseKey.trim() })
+                  pushToast({
+                    kind: 'success',
+                    title: curseKey.trim() ? 'CurseForge key saved' : 'CurseForge key cleared'
+                  })
+                }}
+              >
+                Save
+              </button>
+            </div>
+            <p className="field-hint">
+              {settings.curseForgeApiKey
+                ? 'A key is configured — CurseForge appears in the Discover tab.'
+                : 'No key yet. CurseForge search is disabled; Modrinth is unaffected.'}
+            </p>
+          </div>
+
+          <div className="row gap-8 mt-16">
+            <button className="btn btn-sm" onClick={() => void api.app.openExternal('https://console.curseforge.com')}>
+              <ExternalLink size={14} /> Get a CurseForge key
+            </button>
+          </div>
+
+          <div className="divider" />
+
+          <div className="row gap-12 items-start">
+            <AlertTriangle size={17} style={{ color: 'var(--warning)', marginTop: 2, flexShrink: 0 }} />
+            <p className="small muted">
+              CurseForge lets mod authors opt out of third-party downloads. Those mods cannot be installed
+              automatically by any launcher, including this one — NexusCraft marks them “Manual only” and links to the
+              page so you can download them yourself. Modrinth has no such restriction.
+            </p>
           </div>
         </div>
       )}

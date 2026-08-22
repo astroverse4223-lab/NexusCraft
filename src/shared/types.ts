@@ -313,6 +313,105 @@ export interface SavedServer {
   sortOrder: number
 }
 
+/* ------------------------------------------------------------ hosted servers */
+
+/**
+ * Who can reach a hosted server.
+ *
+ * Kept separate from `onlineMode` on purpose. Tying the two together forced a
+ * choice between letting the AI companion join and letting friends join, which
+ * are unrelated questions: one is about authentication, the other about which
+ * network interface the server listens on.
+ */
+export type ServerReachability = 'local' | 'network' | 'anyone'
+
+/** Which server implementation to run. */
+export type ServerSoftware = 'vanilla' | 'paper' | 'purpur' | 'fabric' | 'forge' | 'neoforge'
+
+export interface ServerSoftwareInfo {
+  id: ServerSoftware
+  label: string
+  blurb: string
+  plugins: boolean
+  mods: boolean
+}
+
+export type HostedServerStatus = 'stopped' | 'installing' | 'starting' | 'running' | 'stopping' | 'error'
+
+/** A Minecraft server the launcher installs, configures, and runs itself. */
+export interface HostedServer {
+  id: string
+  name: string
+  minecraftVersion: string
+  software: ServerSoftware
+  /** Build or loader version of the server software, filled in on install. */
+  softwareVersion: string | null
+  port: number
+  /**
+   * Whether Mojang verifies that joining players own the game. True is the
+   * default. Turning it off lets the AI companion join without a second paid
+   * account, at the cost of the server trusting whatever name a client claims —
+   * which is why the launcher also binds it to loopback when it is off.
+   */
+  onlineMode: boolean
+  /** Which network interface the server binds to. */
+  reachability: ServerReachability
+  memoryMb: number
+  motd: string
+  difficulty: 'peaceful' | 'easy' | 'normal' | 'hard'
+  gameMode: 'survival' | 'creative' | 'adventure'
+  maxPlayers: number
+  /** Enables command blocks. Player cheats come from being an operator. */
+  allowCheats: boolean
+  /**
+   * Players granted operator status when the server starts. Without this a
+   * launcher-hosted server has no operator at all, so nobody can run /gamemode,
+   * /time or any other command on their own world.
+   */
+  operators: string[]
+  /** When the user accepted the Minecraft EULA, or null if they have not. */
+  eulaAcceptedAt: number | null
+  /** Version whose server jar is actually on disk. */
+  installedVersion: string | null
+  createdAt: number
+  lastStartedAt: number | null
+}
+
+export interface HostedServerState {
+  id: string
+  status: HostedServerStatus
+  detail: string
+  /** Players currently connected, read from the server console. */
+  players: string[]
+  pid: number | null
+  startedAt: number | null
+}
+
+export interface HostedServerConsoleLine {
+  id: number
+  serverId: string
+  at: number
+  text: string
+  stream: 'out' | 'err' | 'in'
+}
+
+export interface SaveHostedServerInput {
+  id: string | null
+  name: string
+  minecraftVersion: string
+  software: ServerSoftware
+  port: number
+  onlineMode: boolean
+  reachability: ServerReachability
+  memoryMb: number
+  motd: string
+  difficulty: HostedServer['difficulty']
+  gameMode: HostedServer['gameMode']
+  maxPlayers: number
+  allowCheats: boolean
+  operators: string[]
+}
+
 export interface ServerStatus {
   serverId: string
   /** null while unknown — never rendered as "online". */
@@ -340,6 +439,48 @@ export interface SavedSkin {
   addedAt: number
 }
 
+/* --------------------------------------------------------------- datapacks */
+
+export type DataPackOptionValue = string | number | boolean
+export type DataPackOptionValues = Record<string, DataPackOptionValue>
+
+export interface DataPackOption {
+  key: string
+  label: string
+  type: 'boolean' | 'number' | 'select'
+  default: DataPackOptionValue
+  min?: number
+  max?: number
+  choices?: Array<{ value: string; label: string }>
+}
+
+/** A pack the launcher can generate, with the knobs it exposes. */
+export interface DataPackDefinition {
+  id: string
+  name: string
+  tagline: string
+  description: string
+  icon: string
+  /** Groups packs in the interface, e.g. "Survival" or "Crafting". */
+  category: string
+  options: DataPackOption[]
+}
+
+export interface DataPackInstallResult {
+  world: string
+  fileName: string
+  path: string
+  packFormat: number
+  fileCount: number
+}
+
+export interface InstalledDataPack {
+  fileName: string
+  sizeBytes: number
+  /** True when this launcher generated it. */
+  generated: boolean
+}
+
 /* ---------------------------------------------------------------- modrinth */
 
 export type ContentKindId = 'mod' | 'resourcepack' | 'shader' | 'modpack'
@@ -359,6 +500,13 @@ export interface ModrinthProject {
   projectType: string
   /** True when this project is already present in the target instance. */
   installed: boolean
+  /**
+   * False when the author has opted out of third-party distribution, so no
+   * launcher may download it. CurseForge only; Modrinth has no such flag.
+   */
+  distributionAllowed?: boolean
+  source?: 'modrinth' | 'curseforge'
+  pageUrl?: string
 }
 
 export interface ModrinthVersion {
@@ -374,12 +522,61 @@ export interface ModrinthVersion {
   fileSizeBytes: number
   /** Projects this version needs; required ones are installed alongside it. */
   requiredDependencies: number
+  /** False when the file cannot be fetched automatically (author opt-out). */
+  downloadable?: boolean
+}
+
+/** A newer build of an installed mod, found by matching its file hash. */
+export interface ModUpdate {
+  fileName: string
+  modName: string
+  projectId: string
+  currentVersion: string | null
+  newVersionId: string
+  newVersion: string
+  newFileName: string
+  sizeBytes: number
+  enabled: boolean
 }
 
 export interface ModrinthSearchResult {
   projects: ModrinthProject[]
   total: number
   offset: number
+}
+
+/** Summary of an exported instance archive, shown before importing it. */
+export interface InstanceExportInfo {
+  name: string
+  minecraftVersion: string
+  loader: LoaderId
+  loaderVersion: string | null
+  exportedAt: number
+  includesWorlds: boolean
+  fileCount: number
+  modCount: number
+  sizeBytes: number
+}
+
+export interface ModpackInfo {
+  name: string
+  version: string
+  summary: string | null
+  minecraftVersion: string
+  loader: LoaderId
+  loaderVersion: string | null
+  fileCount: number
+  overrideCount: number
+  /** Which modpack container this came from. */
+  format: 'modrinth' | 'curseforge'
+}
+
+export interface ModpackInstallResult {
+  instance: Instance
+  installedFiles: number
+  overrides: number
+  /** Files skipped because no download host was allowed. */
+  skipped: string[]
 }
 
 export interface ModrinthInstallResult {
@@ -451,6 +648,8 @@ export interface AppSettings {
   maxConcurrentDownloads: number
   showSnapshots: boolean
   authFlow: 'device-code' | 'browser-redirect'
+  /** CurseForge API key. Optional — Modrinth needs none. */
+  curseForgeApiKey: string
   /** Azure application (client) id. Empty until the user configures one. */
   clientId: string
   animatedBackground: boolean
@@ -508,7 +707,24 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: LauncherErro
 
 /* -------------------------------------------------------------- ipc events */
 
+import type { Companion, CompanionEvent, CompanionStatus } from './companion'
+
 export interface EventMap {
+  'companion:event': CompanionEvent
+  'companion:status': {
+    companionId: string
+    status: CompanionStatus
+    detail: string
+    goal: string | null
+    connectedVersion: string | null
+    /** Whether a bot process exists, which `status` alone does not tell you. */
+    alive: boolean
+  }
+  'companion:memory': { companionId: string; notes: string[] }
+  'companion:list': Companion[]
+  'host:changed': HostedServer[]
+  'host:state': HostedServerState
+  'host:console': HostedServerConsoleLine
   'auth:progress': AuthProgress
   'auth:device-code': DeviceCodePrompt
   'auth:accounts-changed': Account[]

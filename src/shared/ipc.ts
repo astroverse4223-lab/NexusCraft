@@ -41,6 +41,11 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
       multi: z.boolean().optional()
     })
     .optional(),
+  'app:pickSavePath': z.object({
+    title: z.string().max(120).optional(),
+    defaultName: z.string().max(255).optional(),
+    extensions: z.array(z.string().max(16)).max(8).optional()
+  }),
   'app:window': z.object({ action: z.enum(['minimize', 'maximize', 'close']) }),
   'app:systemMemory': z.void(),
   /** Renderer-side crash reporting, so a UI failure reaches the log file. */
@@ -86,6 +91,14 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'instances:openFolder': z.object({ id, sub: z.string().max(64).optional() }),
   'instances:install': z.object({ id }),
   'instances:repair': z.object({ id }),
+  'instances:export': z.object({
+    id,
+    outputPath: path,
+    includeWorlds: z.boolean(),
+    includeScreenshots: z.boolean()
+  }),
+  'instances:inspectArchive': z.object({ filePath: path }),
+  'instances:import': z.object({ filePath: path, name: z.string().max(64).optional() }),
 
   /* --------------------------------------------------------------- launch */
   'launch:start': z.object({ instanceId: id, serverAddress: z.string().max(255).optional() }),
@@ -159,6 +172,110 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     kind: z.enum(['mod', 'resourcepack', 'shader', 'modpack'])
   }),
   'modrinth:project': z.object({ projectId: z.string().min(1).max(64) }),
+  'modpack:inspect': z.object({ filePath: path }),
+  'modpack:installFile': z.object({ filePath: path, name: z.string().max(64).optional() }),
+  'modpack:installModrinth': z.object({ versionId: z.string().min(1).max(64), name: z.string().max(64).optional() }),
+  'modpack:installCurseForge': z.object({
+    projectId: z.string().min(1).max(32),
+    fileId: z.string().min(1).max(32),
+    name: z.string().max(64).optional()
+  }),
+  'mods:checkUpdates': z.object({ instanceId: id }),
+  'mods:applyUpdate': z.object({ instanceId: id, update: z.record(z.string(), z.unknown()) }),
+  'curseforge:status': z.void(),
+  'datapacks:list': z.void(),
+  'datapacks:preview': z.object({
+    instanceId: id,
+    packId: z.string().min(1).max(64),
+    options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+  }),
+  'datapacks:install': z.object({
+    instanceId: id,
+    worldFolder: safeSegment,
+    packId: z.string().min(1).max(64),
+    options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+  }),
+  'datapacks:installed': z.object({ instanceId: id, worldFolder: safeSegment }),
+  'datapacks:remove': z.object({ instanceId: id, worldFolder: safeSegment, fileName: safeSegment }),
+  /* ---------------------------------------------------------- companion */
+  'companion:list': z.void(),
+  'companion:create': z.object({ name: z.string().max(16).optional() }),
+  'companion:delete': z.object({ id: z.string().min(1) }),
+  'companion:settings': z.object({ id: z.string().min(1) }),
+  'companion:updateSettings': z.object({ id: z.string().min(1), patch: z.record(z.string(), z.unknown()) }),
+  'companion:start': z.object({ id: z.string().min(1) }),
+  'companion:stop': z.object({ id: z.string().min(1) }),
+  'companion:instruct': z.object({ id: z.string().min(1), text: z.string().min(1).max(500) }),
+  'companion:state': z.object({ id: z.string().min(1) }),
+  'companion:states': z.void(),
+  'companion:clearMemory': z.object({ id: z.string().min(1) }),
+  'companion:testModel': z.object({ id: z.string().min(1) }),
+  'companion:listModels': z.object({ id: z.string().min(1) }),
+
+  'host:list': z.void(),
+  'host:save': z.object({
+    id: z.string().nullable(),
+    name: z.string().min(1).max(60),
+    minecraftVersion: z.string().min(1).max(40),
+    software: z.enum(['vanilla', 'paper', 'purpur', 'fabric', 'forge', 'neoforge']),
+    port: z.number().int().min(1024).max(65535),
+    onlineMode: z.boolean(),
+    reachability: z.enum(['local', 'network', 'anyone']),
+    memoryMb: z.number().int().min(512).max(16384),
+    motd: z.string().max(59),
+    difficulty: z.enum(['peaceful', 'easy', 'normal', 'hard']),
+    gameMode: z.enum(['survival', 'creative', 'adventure']),
+    maxPlayers: z.number().int().min(1).max(100),
+    allowCheats: z.boolean(),
+    operators: z.array(z.string().min(1).max(16)).max(20)
+  }),
+  'host:delete': z.object({ id: z.string().min(1), deleteWorld: z.boolean() }),
+  'host:install': z.object({ id: z.string().min(1) }),
+  'host:acceptEula': z.object({ id: z.string().min(1) }),
+  'host:start': z.object({ id: z.string().min(1) }),
+  'host:stop': z.object({ id: z.string().min(1) }),
+  'host:command': z.object({ id: z.string().min(1), command: z.string().min(1).max(256) }),
+  'host:states': z.void(),
+  'host:console': z.object({ id: z.string().min(1) }),
+  'host:eulaUrl': z.void(),
+  'host:software': z.void(),
+  'host:mods': z.object({ id: z.string().min(1) }),
+  'host:importMods': z.object({ id: z.string().min(1) }),
+  'host:toggleMod': z.object({ id: z.string().min(1), fileName: z.string().min(1).max(255), enabled: z.boolean() }),
+  'host:deleteMod': z.object({ id: z.string().min(1), fileName: z.string().min(1).max(255) }),
+  'host:installMod': z.object({ id: z.string().min(1), versionId: z.string().min(1).max(64) }),
+  'host:joinTargets': z.object({ id: z.string().min(1) }),
+  'host:join': z.object({ id: z.string().min(1), instanceId: z.string().min(1) }),
+  'host:openFolder': z.object({ id: z.string().min(1) }),
+  'host:syncMods': z.object({ id: z.string().min(1), instanceId: z.string().min(1) }),
+
+  'datapacks:export': z.object({
+    instanceId: id,
+    packId: z.string().min(1).max(64),
+    options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+    outputPath: path
+  }),
+  'curseforge:search': z.object({
+    query: z.string().max(120),
+    kind: z.enum(['mod', 'resourcepack', 'shader', 'modpack']),
+    gameVersion: z.string().max(64).nullable().optional(),
+    loader: z.string().max(32).nullable().optional(),
+    offset: z.number().int().min(0).max(5000).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+    instanceId: id.nullable().optional()
+  }),
+  'curseforge:files': z.object({
+    projectId: z.string().min(1).max(32),
+    kind: z.enum(['mod', 'resourcepack', 'shader', 'modpack']),
+    gameVersion: z.string().max(64).nullable().optional(),
+    loader: z.string().max(32).nullable().optional()
+  }),
+  'curseforge:install': z.object({
+    instanceId: id,
+    projectId: z.string().min(1).max(32),
+    fileId: z.string().min(1).max(32),
+    kind: z.enum(['mod', 'resourcepack', 'shader', 'modpack'])
+  }),
 
   /* --------------------------------------------------------------- worlds */
   'worlds:list': z.object({ instanceId: id }),

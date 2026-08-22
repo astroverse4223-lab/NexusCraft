@@ -3,6 +3,7 @@ import {
   Boxes,
   Copy,
   Download,
+  FileArchive,
   FolderOpen,
   Globe2,
   HardDrive,
@@ -12,6 +13,7 @@ import {
   Plus,
   Settings2,
   Trash2,
+  Upload,
   Wrench
 } from 'lucide-react'
 import type { Instance, InstanceStats, LauncherErrorPayload, LoaderId, LoaderVersion, VersionSummary } from '@shared/types'
@@ -19,6 +21,7 @@ import { api, toPayload, type MemoryInfo } from '../api'
 import { useStore, selectedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Modal, SettingRow, Spinner, Toggle } from '../components/ui'
 import { formatBytes, formatDuration, formatRam, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
+import { ModpackImportModal } from '../components/ModpackImport'
 
 const ACCENTS = ['#5eead4', '#818cf8', '#f472b6', '#fbbf24', '#4ade80', '#60a5fa', '#f87171', '#c084fc']
 
@@ -32,6 +35,7 @@ export function InstancesScreen(): JSX.Element {
   const pushToast = useStore((s) => s.pushToast)
 
   const [createOpen, setCreateOpen] = useState(false)
+  const [modpackOpen, setModpackOpen] = useState(false)
   const [editing, setEditing] = useState<Instance | null>(null)
   const [deleting, setDeleting] = useState<Instance | null>(null)
   const [deleteFiles, setDeleteFiles] = useState(true)
@@ -64,9 +68,36 @@ export function InstancesScreen(): JSX.Element {
             settings. Files are never shared between them.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-          <Plus size={16} /> New instance
-        </button>
+        <div className="row gap-8">
+          <button
+            className="btn"
+            onClick={() => {
+              void (async () => {
+                const files = await api.app.pickFiles({
+                  title: 'Choose an exported instance',
+                  extensions: ['ncinstance', 'zip'],
+                  multi: false
+                })
+                if (!files[0]) return
+                try {
+                  const info = await api.instances.inspectArchive(files[0])
+                  await api.instances.importArchive(files[0], info.name)
+                  await refreshInstances()
+                } catch (err) {
+                  setError(toPayload(err))
+                }
+              })()
+            }}
+          >
+            <Download size={15} /> Import instance
+          </button>
+          <button className="btn" onClick={() => setModpackOpen(true)}>
+            <FileArchive size={15} /> Import modpack
+          </button>
+          <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
+            <Plus size={16} /> New instance
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -113,6 +144,7 @@ export function InstancesScreen(): JSX.Element {
       )}
 
       <CreateInstanceModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <ModpackImportModal open={modpackOpen} onClose={() => setModpackOpen(false)} />
       {editing && <EditInstanceModal instance={editing} onClose={() => setEditing(null)} />}
 
       <ConfirmDialog
@@ -278,6 +310,30 @@ function InstanceCard({
             {working === 'repair' ? <Spinner /> : <Wrench size={15} />}
           </IconAction>
           <IconAction title="Edit" onClick={onEdit}><Settings2 size={15} /></IconAction>
+          <IconAction
+            title="Export this instance"
+            disabled={working !== null}
+            onClick={() => {
+              void (async () => {
+                const target = await api.app.pickSavePath({
+                  title: `Export ${instance.name}`,
+                  defaultName: `${instance.name.replace(/[^A-Za-z0-9._ -]/g, '_')}.ncinstance`,
+                  extensions: ['ncinstance']
+                })
+                if (!target) return
+                setWorking('duplicate')
+                try {
+                  await api.instances.export(instance.id, target, false, false)
+                } catch (err) {
+                  onError(toPayload(err))
+                } finally {
+                  setWorking(null)
+                }
+              })()
+            }}
+          >
+            <Upload size={15} />
+          </IconAction>
           <div className="flex-1" />
           <IconAction title="Delete" danger disabled={isRunning} onClick={onDelete}><Trash2 size={15} /></IconAction>
         </div>

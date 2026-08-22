@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readdir } from 'node:fs/promises'
+import { readdir, rm } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import type {
   ContentKindId,
@@ -7,13 +7,14 @@ import type {
   ModrinthInstallResult,
   ModrinthProject,
   ModrinthSearchResult,
-  ModrinthVersion
+  ModrinthVersion,
+  LoaderId
 } from '@shared/types'
-import { getJson, fetchImageAsDataUrl } from '../../core/http'
+import { getJson, request, fetchImageAsDataUrl } from '../../core/http'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { instanceSubdir } from '../instances/instanceService'
-import { createTask, type DownloadItem } from '../downloads/downloadManager'
+import { createTask, sha1OfFile, type DownloadItem } from '../downloads/downloadManager'
 
 const log = createLogger('modrinth')
 
@@ -68,7 +69,9 @@ const KINDS: Record<ContentKindId, { projectType: string; subdir: string; extens
  * carry no loader at all, so filtering by one returns nothing.
  */
 function loaderFacet(kind: ContentKindId, loader: string): string[] {
-  if (kind === 'resourcepack') return []
+  // Resource packs have no loader, and a modpack brings its own — filtering
+  // either by the current instance's loader would hide valid results.
+  if (kind === 'resourcepack' || kind === 'modpack') return []
   if (kind === 'shader') return ['iris', 'optifine', 'canvas', 'vanilla']
   if (loader === 'vanilla') return []
   // Quilt runs Fabric mods, so surface both rather than an empty shelf.
@@ -225,11 +228,42 @@ export async function installVersionToInstance(
   versionId: string,
   kind: ContentKindId
 ): Promise<ModrinthInstallResult> {
-  const targetDir = instanceSubdir(instance, KINDS[kind].subdir)
+  return await installVersionToDir(
+    {
+      dir: instanceSubdir(instance, KINDS[kind].subdir),
+      taskId: instance.id,
+      loader: instance.loader,
+      minecraftVersion: instance.minecraftVersion
+    },
+    versionId,
+    kind
+  )
+}
+
+/** Where an install should land, plus what it needs to resolve dependencies. */
+export interface InstallTarget {
+  dir: string
+  /** Groups the download in the UI; an instance id, or the server's id. */
+  taskId: string
+  loader: LoaderId
+  minecraftVersion: string
+}
+
+/**
+ * Installs a Modrinth version into a specific folder. Hosted servers keep their
+ * mods outside the instances tree, so the destination cannot be derived from an
+ * instance the way it can for the client.
+ */
+export async function installVersionToDir(
+  target: InstallTarget,
+  versionId: string,
+  kind: ContentKindId
+): Promise<ModrinthInstallResult> {
+  const targetDir = target.dir
   const result: ModrinthInstallResult = { installed: [], dependencies: [], skipped: [] }
 
   const version = await fetchVersion(versionId)
-  const task = createTask({ instanceId: instance.id, label: 'Downloading content', phase: 'libraries' })
+  const task = createTask({ instanceId: target.taskId, label: 'Downloading content', phase: 'libraries' })
 
   const items: DownloadItem[] = []
 
@@ -259,14 +293,14 @@ export async function installVersionToInstance(
 
   // Required dependencies, one level deep — enough for the overwhelming
   // majority of mods (an API or library jar) without risking a runaway graph.
-  const gameVersion = instance.minecraftVersion
+  const gameVersion = target.minecraftVersion
   for (const dependency of version.dependencies) {
     if (dependency.dependency_type !== 'required') continue
     try {
       const raw = dependency.version_id
         ? await fetchVersion(dependency.version_id)
         : dependency.project_id
-          ? await resolveDependencyVersion(dependency.project_id, gameVersion, instance.loader)
+          ? await resolveDependencyVersion(dependency.project_id, gameVersion, target.loader)
           : null
       if (raw) queue(raw, true)
     } catch (err) {
@@ -284,7 +318,7 @@ export async function installVersionToInstance(
   task.markDone()
 
   log.info(
-    `installed ${result.installed.length} file(s) and ${result.dependencies.length} dependency file(s) into "${instance.name}"`
+    `installed ${result.installed.length} file(s) and ${result.dependencies.length} dependency file(s) into ${targetDir}`
   )
   return result
 }
@@ -296,4 +330,146 @@ export async function getProjectBody(projectId: string): Promise<{ body: string;
     { timeoutMs: 15_000, retries: 1 }
   )
   return { body: (project.body ?? '').slice(0, 20_000), title: project.title }
+}
+
+/* ----------------------------------------------------------- mod updates */
+
+/**
+ * Identifying installed mods by file hash rather than by how they were
+ * installed means updates work for jars dropped into the folder by hand,
+ * imported from a modpack, or installed through this launcher — Modrinth
+ * recognises the file either way.
+ */
+export interface ModUpdate {
+  /** Current file on disk, including any `.disabled` suffix. */
+  fileName: string
+  modName: string
+  projectId: string
+  currentVersion: string | null
+  newVersionId: string
+  newVersion: string
+  newFileName: string
+  sizeBytes: number
+  /** Preserved so an update does not silently re-enable a disabled mod. */
+  enabled: boolean
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await request(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+    timeoutMs: 25_000,
+    retries: 2
+  })
+  if (!response.ok) {
+    throw new LauncherError('NETWORK_ERROR', `POST ${url} -> HTTP ${response.status}`)
+  }
+  return (await response.json()) as T
+}
+
+/**
+ * Asks Modrinth which installed mods have a newer build for this instance's
+ * Minecraft version and loader. Files Modrinth does not recognise are simply
+ * absent from the result rather than being reported as errors.
+ */
+export async function checkModUpdates(instance: Instance): Promise<ModUpdate[]> {
+  const dir = instanceSubdir(instance, 'mods')
+
+  let entries: string[]
+  try {
+    entries = (await readdir(dir)).filter((name) => /\.jar(\.disabled)?$/i.test(name))
+  } catch {
+    return []
+  }
+  if (entries.length === 0) return []
+
+  // Hash every jar; the hash is what Modrinth matches on.
+  const byHash = new Map<string, string>()
+  for (const fileName of entries) {
+    try {
+      byHash.set(await sha1OfFile(join(dir, fileName)), fileName)
+    } catch {
+      /* unreadable jar — skip it rather than fail the whole check */
+    }
+  }
+  if (byHash.size === 0) return []
+
+  const hashes = [...byHash.keys()]
+  const loaders = loaderFacet('mod', instance.loader)
+
+  const [current, latest] = await Promise.all([
+    postJson<Record<string, RawVersion>>(`${API}/version_files`, { hashes, algorithm: 'sha1' }),
+    postJson<Record<string, RawVersion>>(`${API}/version_files/update`, {
+      hashes,
+      algorithm: 'sha1',
+      loaders: loaders.length > 0 ? loaders : undefined,
+      game_versions: [instance.minecraftVersion]
+    })
+  ])
+
+  const updates: ModUpdate[] = []
+
+  for (const [hash, newest] of Object.entries(latest)) {
+    const fileName = byHash.get(hash)
+    if (!fileName || !newest) continue
+
+    const installed = current[hash]
+    // Same version id means the installed file already is the newest build.
+    if (installed && installed.id === newest.id) continue
+
+    const file = newest.files.find((f) => f.primary) ?? newest.files[0]
+    if (!file) continue
+
+    updates.push({
+      fileName,
+      modName: newest.name || file.filename,
+      projectId: newest.id,
+      currentVersion: installed?.version_number ?? null,
+      newVersionId: newest.id,
+      newVersion: newest.version_number,
+      newFileName: file.filename,
+      sizeBytes: file.size,
+      enabled: !fileName.endsWith('.disabled')
+    })
+  }
+
+  log.info(`${updates.length} of ${byHash.size} mods in "${instance.name}" have updates`)
+  return updates
+}
+
+/**
+ * Replaces a mod with its newer build. The new file is downloaded and verified
+ * before the old one is removed, so a failed update never leaves the instance
+ * without the mod.
+ */
+export async function applyModUpdate(instance: Instance, update: ModUpdate): Promise<void> {
+  const dir = instanceSubdir(instance, 'mods')
+  const version = await fetchVersion(update.newVersionId)
+  const file = version.files.find((f) => f.primary) ?? version.files[0]
+  if (!file) throw new LauncherError('NOT_FOUND', 'that version has no downloadable file')
+
+  // Carry the disabled state across so an update cannot silently re-enable a
+  // mod the user turned off.
+  const targetName = update.enabled ? basename(file.filename) : `${basename(file.filename)}.disabled`
+  const destination = join(dir, targetName)
+
+  const task = createTask({ instanceId: instance.id, label: `Updating ${update.modName}`, phase: 'libraries' })
+  task.add([
+    {
+      url: file.url,
+      destination,
+      sha1: file.hashes?.sha1 ?? null,
+      size: file.size,
+      label: file.filename
+    }
+  ])
+  await task.run()
+  task.markDone()
+
+  // Only once the replacement is on disk and verified.
+  const old = join(dir, update.fileName)
+  if (old !== destination) await rm(old, { force: true })
+
+  log.info(`updated ${update.fileName} -> ${targetName} in "${instance.name}"`)
 }

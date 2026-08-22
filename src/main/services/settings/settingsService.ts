@@ -44,6 +44,7 @@ function defaults(): AppSettings {
     maxConcurrentDownloads: 8,
     showSnapshots: false,
     authFlow: 'device-code',
+    curseForgeApiKey: process.env.NEXUSCRAFT_CURSEFORGE_KEY?.trim() ?? '',
     clientId: process.env.NEXUSCRAFT_CLIENT_ID?.trim() ?? '',
     animatedBackground: true,
     particles: true,

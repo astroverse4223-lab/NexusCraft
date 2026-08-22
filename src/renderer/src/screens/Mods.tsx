@@ -9,16 +9,18 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  ArrowUpCircle,
   Trash2
 } from 'lucide-react'
-import type { ContentPack, Instance, LauncherErrorPayload, ModInfo } from '@shared/types'
+import type { ContentPack, Instance, LauncherErrorPayload, ModInfo, ModUpdate } from '@shared/types'
 import { api, toPayload, type Screenshot } from '../api'
 import { useStore, focusedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Spinner, Toggle } from '../components/ui'
 import { formatBytes, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
 import { BrowseTab } from './Browse'
+import { DataPacksTab } from './DataPacks'
 
-type Tab = 'browse' | 'mods' | 'resourcepacks' | 'shaderpacks' | 'screenshots'
+type Tab = 'browse' | 'mods' | 'datapacks' | 'resourcepacks' | 'shaderpacks' | 'screenshots'
 
 export function ModsScreen(): JSX.Element {
   const instance = useStore(focusedInstance)
@@ -75,6 +77,9 @@ export function ModsScreen(): JSX.Element {
         <button className={`tab ${tab === 'mods' ? 'active' : ''}`} onClick={() => setTab('mods')}>
           Installed
         </button>
+        <button className={`tab ${tab === 'datapacks' ? 'active' : ''}`} onClick={() => setTab('datapacks')}>
+          Data packs
+        </button>
         <button className={`tab ${tab === 'resourcepacks' ? 'active' : ''}`} onClick={() => setTab('resourcepacks')}>
           Resource packs
         </button>
@@ -88,6 +93,7 @@ export function ModsScreen(): JSX.Element {
 
       {tab === 'browse' && <BrowseTab instance={instance} />}
       {tab === 'mods' && <ModsTab instance={instance} />}
+      {tab === 'datapacks' && <DataPacksTab instance={instance} />}
       {tab === 'resourcepacks' && <ContentTab instance={instance} kind="resourcepacks" />}
       {tab === 'shaderpacks' && <ContentTab instance={instance} kind="shaderpacks" />}
       {tab === 'screenshots' && <ScreenshotsTab instance={instance} />}
@@ -104,6 +110,9 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [deleting, setDeleting] = useState<ModInfo | null>(null)
   const [busy, setBusy] = useState(false)
+  const [updates, setUpdates] = useState<ModUpdate[] | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [updating, setUpdating] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -158,6 +167,39 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
     }
   }
 
+  async function checkUpdates(): Promise<void> {
+    setChecking(true)
+    setError(null)
+    try {
+      const found = await api.mods.checkUpdates(instance.id)
+      setUpdates(found)
+      if (found.length === 0) pushToast({ kind: 'success', title: 'Everything is up to date' })
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  async function applyUpdate(update: ModUpdate): Promise<void> {
+    setUpdating(update.fileName)
+    try {
+      await api.mods.applyUpdate(instance.id, update)
+      setUpdates((current) => (current ?? []).filter((u) => u.fileName !== update.fileName))
+      await load()
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setUpdating(null)
+    }
+  }
+
+  async function updateAll(): Promise<void> {
+    // Sequential rather than parallel: each one replaces a file on disk, and a
+    // burst of concurrent writes into the same folder is not worth the risk.
+    for (const update of updates ?? []) await applyUpdate(update)
+  }
+
   async function remove(): Promise<void> {
     if (!deleting) return
     setBusy(true)
@@ -209,6 +251,9 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
           <button className="btn" onClick={() => void api.mods.openFolder(instance.id)}>
             <FolderOpen size={15} /> Open folder
           </button>
+          <button className="btn" disabled={checking} onClick={() => void checkUpdates()}>
+            {checking ? <Spinner /> : <ArrowUpCircle size={15} />} Check for updates
+          </button>
           <button className="btn btn-ghost btn-icon" title="Refresh" onClick={() => void load()}>
             <RefreshCw size={15} />
           </button>
@@ -218,6 +263,48 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       {error && (
         <div className="mb-16">
           <ErrorView error={error} onDismiss={() => setError(null)} />
+        </div>
+      )}
+
+      {updates && updates.length > 0 && (
+        <div className="panel panel-pad mb-16" style={{ borderColor: 'var(--accent)' }}>
+          <div className="row between mb-12">
+            <div className="row gap-10">
+              <ArrowUpCircle size={17} style={{ color: 'var(--accent)' }} />
+              <span style={{ fontWeight: 650 }}>
+                {updates.length} mod{updates.length === 1 ? ' has' : 's have'} a newer build
+              </span>
+            </div>
+            <button className="btn btn-primary btn-sm" disabled={updating !== null} onClick={() => void updateAll()}>
+              {updating ? <Spinner /> : null} Update all
+            </button>
+          </div>
+          <div className="col gap-8">
+            {updates.map((update) => (
+              <div key={update.fileName} className="row gap-12">
+                <div className="flex-1" style={{ minWidth: 0 }}>
+                  <div className="truncate" style={{ fontWeight: 600 }}>
+                    {update.modName}
+                  </div>
+                  <div className="tiny dim truncate">
+                    {update.currentVersion ? `${update.currentVersion} → ` : ''}
+                    {update.newVersion} · {formatBytes(update.sizeBytes)}
+                    {!update.enabled ? ' · disabled' : ''}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-sm"
+                  disabled={updating !== null}
+                  onClick={() => void applyUpdate(update)}
+                >
+                  {updating === update.fileName ? <Spinner /> : <ArrowUpCircle size={13} />} Update
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="field-hint mt-16">
+            Matched against Modrinth by file hash, so this works for mods added by hand as well as ones installed here.
+          </p>
         </div>
       )}
 

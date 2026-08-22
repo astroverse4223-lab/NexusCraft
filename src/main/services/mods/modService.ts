@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readdir, rename, rm, stat, copyFile, mkdir } from 'node:fs/promises'
+import { readdir, rm, stat, copyFile, mkdir } from 'node:fs/promises'
 import { basename, join, extname } from 'node:path'
 import AdmZip from 'adm-zip'
 import type { Instance, LoaderId, ModInfo, ModIssue } from '@shared/types'
@@ -7,6 +7,7 @@ import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { assertInside } from '../../core/paths'
 import { instanceSubdir } from '../instances/instanceService'
+import { renameWhenFree } from '../../core/fileLocks'
 
 const log = createLogger('mods')
 
@@ -14,6 +15,30 @@ const DISABLED_SUFFIX = '.disabled'
 
 export function modsDir(instance: Instance): string {
   return instanceSubdir(instance, 'mods')
+}
+
+/**
+ * Somewhere mods live, with enough context to judge whether they belong there.
+ *
+ * A client instance and a hosted server both have a mods folder, a loader and a
+ * Minecraft version — everything the analysis needs — but only the instance is
+ * an `Instance`. Naming the target directly lets both use the same code.
+ */
+export interface ModTarget {
+  dir: string
+  loader: LoaderId
+  minecraftVersion: string
+  /** How to refer to the destination in messages, e.g. "this server". */
+  description: string
+}
+
+export function instanceTarget(instance: Instance): ModTarget {
+  return {
+    dir: modsDir(instance),
+    loader: instance.loader,
+    minecraftVersion: instance.minecraftVersion,
+    description: 'this instance'
+  }
 }
 
 /* ---------------------------------------------------------- jar metadata */
@@ -232,7 +257,18 @@ const LOADER_NAMES: Record<LoaderId, string> = {
 }
 
 export async function analyseMods(instance: Instance): Promise<ModInfo[]> {
-  const dir = modsDir(instance)
+  return await analyseModsIn(instanceTarget(instance))
+}
+
+/**
+ * Reads a mods folder directly.
+ *
+ * Split out from the instance-based call so a hosted server's `mods` directory
+ * can be managed with exactly the same code — a server needs the same listing,
+ * toggling and importing a client instance does.
+ */
+export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
+  const dir = target.dir
   let entries: string[]
   try {
     entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name)
@@ -293,26 +329,26 @@ export async function analyseMods(instance: Instance): Promise<ModInfo[]> {
     }
 
     if (metadata && enabled) {
-      const verdict = loaderAccepts(instance.loader, metadata.loaders)
+      const verdict = loaderAccepts(target.loader, metadata.loaders)
       if (verdict === 'no') {
         issues.push({
           severity: 'error',
           code: 'loader-mismatch',
-          message: `This is a ${metadata.loaders.map((l) => LOADER_NAMES[l]).join('/')} mod, but this instance runs ${LOADER_NAMES[instance.loader]}.`
+          message: `This is a ${metadata.loaders.map((l) => LOADER_NAMES[l]).join('/')} mod, but ${target.description} runs ${LOADER_NAMES[target.loader]}.`
         })
       } else if (verdict === 'maybe' && metadata.loaders.length > 0) {
         issues.push({
           severity: 'warning',
           code: 'loader-mismatch',
-          message: `Built for ${metadata.loaders.map((l) => LOADER_NAMES[l]).join('/')}; it may or may not run on ${LOADER_NAMES[instance.loader]}.`
+          message: `Built for ${metadata.loaders.map((l) => LOADER_NAMES[l]).join('/')}; it may or may not run on ${LOADER_NAMES[target.loader]}.`
         })
       }
 
-      if (metadata.mcVersionRange && !versionSatisfies(instance.minecraftVersion, metadata.mcVersionRange)) {
+      if (metadata.mcVersionRange && !versionSatisfies(target.minecraftVersion, metadata.mcVersionRange)) {
         issues.push({
           severity: 'warning',
           code: 'mc-version-mismatch',
-          message: `Declares support for ${metadata.mcVersionRange}, but this instance is Minecraft ${instance.minecraftVersion}.`
+          message: `Declares support for ${metadata.mcVersionRange}, but ${target.description} is Minecraft ${target.minecraftVersion}.`
         })
       }
     }
@@ -364,7 +400,10 @@ export async function analyseMods(instance: Instance): Promise<ModInfo[]> {
 
 /** Enabling and disabling is a rename, which is how every launcher does it. */
 export async function setModEnabled(instance: Instance, fileName: string, enabled: boolean): Promise<void> {
-  const dir = modsDir(instance)
+  await setModEnabledIn(modsDir(instance), fileName, enabled)
+}
+
+export async function setModEnabledIn(dir: string, fileName: string, enabled: boolean): Promise<void> {
   const current = assertInside(dir, join(dir, fileName))
   if (!existsSync(current)) throw new LauncherError('NOT_FOUND', 'that mod file no longer exists')
 
@@ -373,19 +412,26 @@ export async function setModEnabled(instance: Instance, fileName: string, enable
 
   const nextName = enabled ? fileName.slice(0, -DISABLED_SUFFIX.length) : fileName + DISABLED_SUFFIX
   const next = assertInside(dir, join(dir, nextName))
-  await rename(current, next)
+  // The game or a scanner may still hold the jar open; wait it out.
+  await renameWhenFree(current, next)
   log.info(`${enabled ? 'enabled' : 'disabled'} ${nextName}`)
 }
 
 export async function deleteMod(instance: Instance, fileName: string): Promise<void> {
-  const dir = modsDir(instance)
+  await deleteModIn(modsDir(instance), fileName)
+}
+
+export async function deleteModIn(dir: string, fileName: string): Promise<void> {
   const target = assertInside(dir, join(dir, fileName))
   await rm(target, { force: true })
   log.info(`removed mod ${fileName}`)
 }
 
 export async function importMods(instance: Instance, files: string[]): Promise<number> {
-  const dir = modsDir(instance)
+  return await importModsIn(modsDir(instance), files)
+}
+
+export async function importModsIn(dir: string, files: string[]): Promise<number> {
   await mkdir(dir, { recursive: true })
   let imported = 0
 
