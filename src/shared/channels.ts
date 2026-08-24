@@ -97,6 +97,7 @@ export const IPC_CHANNELS = [
   'modpack:installCurseForge',
   'mods:checkUpdates',
   'mods:applyUpdate',
+  'curseforge:verify',
   'curseforge:search',
   'curseforge:files',
   'curseforge:install',
@@ -124,6 +125,10 @@ export const IPC_CHANNELS = [
   'companion:listModels',
 
   /* self-hosted servers */
+  'host:share',
+  'host:forwardStatus',
+  'host:openPort',
+  'host:closePort',
   'host:list',
   'host:save',
   'host:delete',

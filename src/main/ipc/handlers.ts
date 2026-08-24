@@ -105,6 +105,8 @@ import {
   getHostedServer,
   hostedServerDir,
   serverAddress,
+  connectAddress,
+  shareDetails,
   syncServerModsToInstance,
   saveHostedServer,
   sendHostedServerCommand,
@@ -143,8 +145,15 @@ import {
   searchCurseForge,
   listCurseForgeFiles,
   installCurseForgeFile,
-  isConfigured as curseForgeConfigured
+  isConfigured as curseForgeConfigured,
+  verifyApiKey as verifyCurseForgeKey
 } from '../services/content/curseforgeService'
+import {
+  discoverGateway,
+  openPort,
+  closePort,
+  forwardingStatus
+} from '../services/servers/portForwarding'
 import { checkModUpdates, applyModUpdate } from '../services/content/modrinthService'
 import {
   listDataPacks,
@@ -702,7 +711,84 @@ export function registerIpcHandlers(): void {
 
   /* -------------------------------------------------------- curseforge */
 
+  /* ------------------------------------------------------- port forwarding */
+
+  handle('host:share', async (payload: { id: string }) => await shareDetails(payload.id))
+
+  handle('host:forwardStatus', async (payload: { id: string }) => {
+    const server = getHostedServer(payload.id)
+    const [host] = connectAddress(server).split(':')
+    return await forwardingStatus(server.port, host)
+  })
+
+  /**
+   * Opens the server's port on the router.
+   *
+   * Refused while the server does not verify players with Mojang, unless the
+   * caller says it understands. Those two settings are each reasonable alone
+   * and dangerous together: an unverified server reachable from the internet
+   * can be joined by anyone, under any name they care to type, including the
+   * owner's or an operator's.
+   */
+  handle('host:openPort', async (payload: { id: string; acceptUnverified?: boolean }) => {
+    const server = getHostedServer(payload.id)
+
+    if (!server.onlineMode && !payload.acceptUnverified) {
+      throw new LauncherError('INVALID_INPUT', 'refusing to expose an unverified server', {
+        title: 'This server does not check who joins',
+        message:
+          `"${server.name}" has "Verify players with Mojang" switched off, which is what lets an AI companion ` +
+          'join without its own Minecraft account. Opening it to the internet as well means anyone who finds ' +
+          'the address can join under any name they like — including yours, or an operator\'s.',
+        actions: [
+          'Turn "Verify players with Mojang" back on, and forward the port',
+          'Or keep it off and play over your local network only',
+          'The launcher will still do it if you confirm you understand'
+        ]
+      })
+    }
+
+    const gateway = await discoverGateway()
+    if (!gateway) {
+      throw new LauncherError('NETWORK_ERROR', 'no UPnP gateway on this network', {
+        title: 'No router offered to forward the port',
+        message:
+          'Nothing on this network answered a UPnP search. Routers often ship with it switched off.',
+        actions: [
+          'Turn on UPnP in the router settings and try again',
+          `Or forward TCP port ${server.port} to this machine by hand`
+        ]
+      })
+    }
+
+    const [host] = connectAddress(server).split(':')
+    await openPort(gateway, server.port, host, `NexusCraft — ${server.name}`)
+    log.info(`opened port ${server.port} for "${server.name}" via ${gateway.description}`)
+
+    return await forwardingStatus(server.port, host)
+  })
+
+  handle('host:closePort', async (payload: { id: string }) => {
+    const server = getHostedServer(payload.id)
+    const gateway = await discoverGateway()
+    if (!gateway) return { closed: false }
+
+    const closed = await closePort(gateway, server.port)
+    if (closed) log.info(`closed port ${server.port} for "${server.name}"`)
+    return { closed }
+  })
+
   handle('curseforge:status', () => ({ configured: curseForgeConfigured() }))
+
+  /*
+   * Whether a key actually works, asked of CurseForge itself. Saving one used
+   * to report success regardless, so a key that was never going to work looked
+   * accepted until a search failed much later for reasons the settings screen
+   * had not mentioned.
+   */
+  handle('curseforge:verify', async (payload: { key?: string } | undefined) =>
+    await verifyCurseForgeKey(payload?.key)
+  )
 
   /* --------------------------------------------------------- data packs */
 

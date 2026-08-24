@@ -363,6 +363,34 @@ export interface HostedServer {
   maxPlayers: number
   /** Enables command blocks. Player cheats come from being an operator. */
   allowCheats: boolean
+
+  /* --------------------------------------------------- world and gameplay
+   *
+   * These map onto server.properties keys of the same meaning. They are all
+   * optional so that servers created before they existed keep working — each
+   * falls back to the same default a fresh Minecraft server would use.
+   */
+
+  /** Seed for world generation. Empty means let the server pick one. */
+  levelSeed?: string
+  /** Whether players can hurt each other. */
+  pvp?: boolean
+  /** One life: death bans the player from the world. */
+  hardcore?: boolean
+  /** Allows flight for players in survival, for use with mods that grant it. */
+  allowFlight?: boolean
+  /** Radius in blocks around spawn that only operators may build in. */
+  spawnProtection?: number
+  /** How many chunks are sent to players. The biggest lever on performance. */
+  viewDistance?: number
+  /** How many chunks actually tick. Never larger than the view distance. */
+  simulationDistance?: number
+  /** Whether hostile mobs spawn. */
+  spawnMonsters?: boolean
+  /** Whether animals spawn. */
+  spawnAnimals?: boolean
+  /** Only players on the whitelist may join. */
+  whitelist?: boolean
   /**
    * Players granted operator status when the server starts. Without this a
    * launcher-hosted server has no operator at all, so nobody can run /gamemode,
@@ -385,6 +413,15 @@ export interface HostedServerState {
   players: string[]
   pid: number | null
   startedAt: number | null
+  /**
+   * Where to actually connect, as `host:port`.
+   *
+   * Not always loopback: a server set to "my local network" binds to the
+   * machine's LAN address alone, and nothing answers on 127.0.0.1. Everything
+   * that needs to reach the server — the Join button, the companions — has to
+   * be told this rather than assuming.
+   */
+  address: string
 }
 
 export interface HostedServerConsoleLine {
@@ -410,6 +447,18 @@ export interface SaveHostedServerInput {
   maxPlayers: number
   allowCheats: boolean
   operators: string[]
+
+  /* World and gameplay. Optional so older callers keep compiling. */
+  levelSeed?: string
+  pvp?: boolean
+  hardcore?: boolean
+  allowFlight?: boolean
+  spawnProtection?: number
+  viewDistance?: number
+  simulationDistance?: number
+  spawnMonsters?: boolean
+  spawnAnimals?: boolean
+  whitelist?: boolean
 }
 
 export interface ServerStatus {
@@ -735,4 +784,26 @@ export interface EventMap {
   'servers:status': ServerStatus
   'settings:changed': AppSettings
   'toast': { kind: 'info' | 'success' | 'warning' | 'error'; title: string; message?: string }
+}
+
+/** Everything needed to advertise a hosted server somewhere. */
+export interface ServerShareDetails {
+  /** What people outside the network type in, once the port is forwarded. */
+  publicAddress: string | null
+  /** What people in the house type in. */
+  localAddress: string
+  /**
+   * Whether the public address answered a Minecraft ping.
+   *
+   * `null` means it could not be tested rather than that it failed — there is
+   * no public address yet, or the port is not forwarded.
+   */
+  reachable: boolean | null
+  /** Why a test failed, in words worth reading. */
+  note: string | null
+  /** The line players see in their server list. */
+  motd: string
+  minecraftVersion: string
+  software: string
+  maxPlayers: number
 }

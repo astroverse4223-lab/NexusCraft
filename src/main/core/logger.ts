@@ -13,9 +13,13 @@ import { logsRoot, ensureDir } from './paths'
  */
 const REDACTIONS: Array<[RegExp, string]> = [
   // JSON fields carrying secrets
-  [/("(?:access_token|refresh_token|id_token|accessToken|refreshToken|Token|device_code|RpsTicket|client_secret)"\s*:\s*)"[^"]*"/gi, '$1"[redacted]"'],
-  // Authorization headers, incl. the Minecraft XBL3.0 scheme
-  [/\b(Authorization|Bearer|XBL3\.0 x=)\s*[:=]?\s*\S+/gi, '$1 [redacted]'],
+  [/("(?:access_token|refresh_token|id_token|accessToken|refreshToken|Token|device_code|RpsTicket|client_secret|Authorization)"\s*:\s*)"[^"]*"/gi, '$1"[redacted]"'],
+  // Authorization headers, including the Minecraft XBL3.0 scheme. The whole
+  // value has to go, not just the first word after the colon: the secret in
+  // "Authorization: Bearer <jwt>" is the *second* word, so a \S+ that stops at
+  // "Bearer" leaves the token sitting in the log.
+  [/\b(Authorization)\s*[:=]\s*[^\r\n"',}]+/gi, '$1: [redacted]'],
+  [/\b(Bearer|XBL3\.0 x=)\s*[^\r\n"',}]+/gi, '$1 [redacted]'],
   // JWTs anywhere in free text
   [/\bey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, '[redacted-jwt]'],
   // Long opaque MSA tokens
@@ -30,7 +34,9 @@ export function redact(input: unknown): string {
   else if (input instanceof Error) text = `${input.name}: ${input.message}\n${input.stack ?? ''}`
   else {
     try {
-      text = JSON.stringify(input)
+      // JSON.stringify returns undefined for undefined, functions and symbols,
+      // and the replace below would then throw on the value it was handed.
+      text = JSON.stringify(input) ?? String(input)
     } catch {
       text = String(input)
     }

@@ -1135,3 +1135,21 @@ textarea {
 .host-mod-row:hover {
   background: rgba(255, 255, 255, 0.02);
 }
+
+/* A heading that divides a long settings form into readable sections. */
+.settings-group-label {
+  margin: 18px 0 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.form-fields > .settings-group-label:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}

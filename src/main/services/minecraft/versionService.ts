@@ -144,10 +144,30 @@ export async function resolveVersion(versionId: string, seen = new Set<string>()
 
   const parent = await resolveVersion(json.inheritsFrom, seen)
 
-  // Child libraries win over the parent's for the same group:artifact, which is
-  // how Forge replaces vanilla libraries with its patched builds.
+  /*
+   * Child libraries win over the parent's for the same artifact, which is how
+   * Forge replaces vanilla libraries with its patched builds.
+   *
+   * The classifier has to be part of that identity. Since 1.19 natives are not
+   * a separate `natives` map but ordinary libraries told apart only by their
+   * classifier:
+   *
+   *     org.lwjgl:lwjgl:3.3.3
+   *     org.lwjgl:lwjgl:3.3.3:natives-windows
+   *
+   * Keying on group:artifact alone made those two the same library, so the
+   * second was dropped as a duplicate and every native went with it. Vanilla
+   * was unaffected — it has no parent, so it never comes through here — which
+   * is why the game launched normally and every loader profile died on
+   * `Failed to locate library: lwjgl.dll`.
+   */
   const merged: Library[] = []
-  const keyOf = (name: string): string => name.split(':').slice(0, 2).join(':')
+  const keyOf = (name: string): string => {
+    const parts = name.split(':')
+    const artifact = parts.slice(0, 2).join(':')
+    const classifier = parts.length > 3 ? parts[3] : ''
+    return classifier ? `${artifact}:${classifier}` : artifact
+  }
   const takenKeys = new Set<string>()
   for (const library of [...(json.libraries ?? []), ...(parent.libraries ?? [])]) {
     const key = keyOf(library.name)

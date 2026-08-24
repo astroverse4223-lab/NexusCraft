@@ -28,6 +28,7 @@ import { readFile, writeFile, mkdir, rm, copyFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   ServerReachability,
+  ServerShareDetails,
   Instance,
   ModInfo,
   ModrinthInstallResult,
@@ -41,6 +42,8 @@ import { db, Collections } from '../../core/database'
 import { emit } from '../../core/events'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
+import { discoverGateway, closePort, externalAddress } from './portForwarding'
+import { pingServer } from './mcPing'
 import { dataRoot, ensureDir } from '../../core/paths'
 import { createTask } from '../downloads/downloadManager'
 import { ensureVersionJson } from '../minecraft/versionService'
@@ -109,11 +112,20 @@ interface Running {
 const running = new Map<string, Running>()
 
 function blankState(id: string): HostedServerState {
-  return { id, status: 'stopped', detail: '', players: [], pid: null, startedAt: null }
+  return { id, status: 'stopped', detail: '', players: [], pid: null, startedAt: null, address: '' }
 }
 
 export function getHostedServerState(id: string): HostedServerState {
-  return running.get(id)?.state ?? blankState(id)
+  const base = running.get(id)?.state ?? blankState(id)
+
+  /*
+   * Fill the address in on the way out rather than when the state was made:
+   * the machine's LAN address can change between a server being configured and
+   * somebody trying to connect to it, and a stale one is exactly as useless as
+   * the wrong one.
+   */
+  const server = listHostedServers().find((entry) => entry.id === id)
+  return { ...base, address: server ? connectAddress(server) : base.address }
 }
 
 export function allHostedServerStates(): HostedServerState[] {
@@ -227,6 +239,22 @@ export function saveHostedServer(input: SaveHostedServerInput): HostedServer {
     maxPlayers: Math.max(1, Math.min(100, Math.round(input.maxPlayers))),
     allowCheats: input.allowCheats,
     operators: [...new Set(input.operators.map((name) => name.trim()).filter(Boolean))],
+
+    /*
+     * World and gameplay settings, each falling back to what a fresh Minecraft
+     * server would use so a server saved before these existed is unchanged by
+     * being opened and saved again.
+     */
+    levelSeed: (input.levelSeed ?? existing?.levelSeed ?? '').trim().slice(0, 120),
+    pvp: input.pvp ?? existing?.pvp ?? true,
+    hardcore: input.hardcore ?? existing?.hardcore ?? false,
+    allowFlight: input.allowFlight ?? existing?.allowFlight ?? false,
+    spawnProtection: clampWhole(input.spawnProtection ?? existing?.spawnProtection ?? 16, 0, 256),
+    viewDistance: clampWhole(input.viewDistance ?? existing?.viewDistance ?? 10, 3, 32),
+    simulationDistance: clampWhole(input.simulationDistance ?? existing?.simulationDistance ?? 10, 3, 32),
+    spawnMonsters: input.spawnMonsters ?? existing?.spawnMonsters ?? true,
+    spawnAnimals: input.spawnAnimals ?? existing?.spawnAnimals ?? true,
+    whitelist: input.whitelist ?? existing?.whitelist ?? false,
     // Accepting the EULA is a separate, explicit act — never carried in on a save.
     eulaAcceptedAt: existing?.eulaAcceptedAt ?? null,
     installedVersion:
@@ -343,6 +371,12 @@ export async function installHostedServer(id: string): Promise<HostedServer> {
  * anything else the file holds. A player who hand-edits view-distance should
  * not lose it because they renamed their server here.
  */
+/** Keeps a whole-number setting inside what the server will accept. */
+function clampWhole(value: number, low: number, high: number): number {
+  if (!Number.isFinite(value)) return low
+  return Math.max(low, Math.min(high, Math.round(value)))
+}
+
 async function writeServerProperties(server: HostedServer): Promise<void> {
   const file = join(hostedServerDir(server.id), 'server.properties')
 
@@ -368,7 +402,27 @@ async function writeServerProperties(server: HostedServer): Promise<void> {
     // only real one behind the setting.
     'enable-command-block': String(server.allowCheats),
     // Which interface to listen on. Empty means every one of them.
-    'server-ip': bindAddress(server.reachability)
+    'server-ip': bindAddress(server.reachability),
+
+    /*
+     * World and gameplay. Written every time so the file matches what the
+     * settings screen shows — editing server.properties by hand and then saving
+     * from the launcher should not leave the two disagreeing.
+     *
+     * `simulation-distance` is held at or under the view distance because the
+     * server quietly ignores a larger one, which would make the setting look
+     * broken.
+     */
+    pvp: String(server.pvp ?? true),
+    hardcore: String(server.hardcore ?? false),
+    'allow-flight': String(server.allowFlight ?? false),
+    'spawn-protection': String(server.spawnProtection ?? 16),
+    'view-distance': String(server.viewDistance ?? 10),
+    'simulation-distance': String(Math.min(server.simulationDistance ?? 10, server.viewDistance ?? 10)),
+    'spawn-monsters': String(server.spawnMonsters ?? true),
+    'spawn-animals': String(server.spawnAnimals ?? true),
+    'white-list': String(server.whitelist ?? false),
+    'level-seed': server.levelSeed ?? ''
   }
   for (const [key, value] of Object.entries(managed)) properties.set(key, value)
 
@@ -520,7 +574,8 @@ export async function startHostedServer(id: string): Promise<HostedServerState> 
       detail: `Starting Minecraft ${server.minecraftVersion}…`,
       players: [],
       pid: child.pid ?? null,
-      startedAt: Date.now()
+      startedAt: Date.now(),
+      address: connectAddress(server)
     },
     console: [],
     lineId: 0,
@@ -632,6 +687,28 @@ export async function stopHostedServer(id: string): Promise<HostedServerState> {
   if (!entry) return blankState(id)
 
   setState(id, { status: 'stopping', detail: 'Saving the world and shutting down…' })
+
+  /*
+   * Shut the door on the way out.
+   *
+   * A port forwarded for a server that is no longer running is just an opening
+   * in someone's router that nothing is listening behind, and nobody would ever
+   * think to go and close it by hand. Left to run on its own: finding the
+   * gateway takes a few seconds and stopping the server should not wait on the
+   * router, and the mapping's own lease expires regardless.
+   */
+  void (async () => {
+    try {
+      const server = getHostedServer(id)
+      const gateway = await discoverGateway()
+      if (!gateway) return
+      if (await closePort(gateway, server.port)) {
+        log.info(`closed the forwarded port ${server.port} now "${server.name}" has stopped`)
+      }
+    } catch (err) {
+      log.warn(`could not close the forwarded port: ${(err as Error).message}`)
+    }
+  })()
 
   // `stop` lets the server flush chunks; killing it outright risks the world.
   try {
@@ -745,9 +822,27 @@ export function instancesThatCanJoin(server: HostedServer, instances: Instance[]
   })
 }
 
-/** The address a client on this machine should connect to. */
+/**
+ * The address a client on this machine should connect to.
+ *
+ * Loopback is not always right, which is what made Join fail with "connection
+ * refused" on a server that was plainly running. A server set to "my local
+ * network" binds to the machine's LAN address alone — deliberately, so it is
+ * not exposed on every interface — and nothing is then listening on 127.0.0.1.
+ * Handing the game loopback anyway meant it knocked on a door that was not
+ * there.
+ *
+ * So the address has to match how the server was actually bound: loopback when
+ * it is bound to loopback or to everything, and the LAN address when that is
+ * the only interface it is on.
+ */
 export function serverAddress(server: HostedServer): string {
-  return `127.0.0.1:${server.port}`
+  // 'anyone' listens on every interface, so loopback is both valid and the
+  // shortest path; 'local' is loopback by definition.
+  if (server.reachability === 'anyone' || server.reachability === 'local') {
+    return `127.0.0.1:${server.port}`
+  }
+  return connectAddress(server)
 }
 
 export interface ModSyncResult {
@@ -802,4 +897,55 @@ export async function syncServerModsToInstance(id: string, instance: Instance): 
 /** Called on app shutdown so a server never outlives the launcher silently. */
 export async function shutdownHostedServers(): Promise<void> {
   await Promise.all([...running.keys()].map((id) => stopHostedServer(id).catch(() => undefined)))
+}
+
+/**
+ * Gathers what a server listing asks for, and checks the address really works.
+ *
+ * The reachability test pings the public address from this machine. A success
+ * is proof: something answered the Minecraft handshake on that address and
+ * port. A failure is weaker evidence than it looks — many routers will not let
+ * a machine inside the network reach its own public address, so a server that
+ * is perfectly reachable from outside can fail this test. The distinction is
+ * spelled out rather than reported as a flat "offline", which would send
+ * someone off to fix a working server.
+ */
+export async function shareDetails(id: string): Promise<ServerShareDetails> {
+  const server = getHostedServer(id)
+  const localAddress = connectAddress(server)
+
+  const gateway = await discoverGateway()
+  const external = gateway ? await externalAddress(gateway) : null
+  const publicAddress = external ? `${external}:${server.port}` : null
+
+  let reachable: boolean | null = null
+  let note: string | null = null
+
+  if (!publicAddress) {
+    note =
+      'No public address yet. Open the port with "Play with friends online", or forward it in the router, and ' +
+      'the address will appear here.'
+  } else {
+    const result = await pingServer(external as string, server.port, 6_000)
+    if (result.online) {
+      reachable = true
+    } else {
+      reachable = false
+      note =
+        'Your public address did not answer from this machine. That often means nothing is wrong: many routers ' +
+        'refuse to let a device inside the network reach its own public address. Ask someone outside the house ' +
+        'to try it before changing anything — and check the server is actually running.'
+    }
+  }
+
+  return {
+    publicAddress,
+    localAddress,
+    reachable,
+    note,
+    motd: server.motd,
+    minecraftVersion: server.minecraftVersion,
+    software: softwareLabel(server.software),
+    maxPlayers: server.maxPlayers
+  }
 }

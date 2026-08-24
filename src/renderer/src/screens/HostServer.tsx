@@ -10,7 +10,9 @@ import {
   Play,
   Plus,
   Send,
+  Globe,
   Server,
+  Share2,
   Square,
   Trash2,
   Users
@@ -23,12 +25,30 @@ import type {
   HostedServerState,
   LauncherErrorPayload,
   SaveHostedServerInput,
+  ServerShareDetails,
   ServerSoftwareInfo,
   VersionSummary
 } from '@shared/types'
 import { api, subscribe, toPayload } from '../api'
 import { activeAccount, useStore } from '../store/useStore'
-import { EmptyState, ErrorView, Field, Modal, Spinner, Toggle, useAutoScroll } from '../components/ui'
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorView,
+  Field,
+  Modal,
+  Spinner,
+  Toggle,
+  useAutoScroll
+} from '../components/ui'
+
+/** Splits `host:port`, tolerating a bare host. */
+function splitAddress(address: string): [string, number] {
+  const at = address.lastIndexOf(':')
+  if (at === -1) return [address, 25565]
+  const port = Number(address.slice(at + 1))
+  return [address.slice(0, at), Number.isFinite(port) && port > 0 ? port : 25565]
+}
 
 const STATUS_STYLE: Record<HostedServerState['status'], { label: string; className: string }> = {
   stopped: { label: 'Stopped', className: 'pill' },
@@ -57,7 +77,19 @@ function blankInput(version: string, owner?: string | null): SaveHostedServerInp
     difficulty: 'normal',
     gameMode: 'survival',
     maxPlayers: 8,
-    allowCheats: false
+    allowCheats: false,
+
+    // The same defaults a fresh Minecraft server would use.
+    levelSeed: '',
+    pvp: true,
+    hardcore: false,
+    allowFlight: false,
+    spawnProtection: 16,
+    viewDistance: 10,
+    simulationDistance: 10,
+    spawnMonsters: true,
+    spawnAnimals: true,
+    whitelist: false
   }
 }
 
@@ -83,6 +115,17 @@ export function HostServerScreen(): JSX.Element {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<SaveHostedServerInput | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<HostedServer | null>(null)
+  const [forwarding, setForwarding] = useState<{
+    available: boolean
+    open: boolean
+    externalAddress: string | null
+    router: string | null
+    reason: string | null
+  } | null>(null)
+  const [checkingRouter, setCheckingRouter] = useState(false)
+  const [share, setShare] = useState<ServerShareDetails | null>(null)
+  const [gathering, setGathering] = useState(false)
+  const [confirmExpose, setConfirmExpose] = useState(false)
   const [eulaUrl, setEulaUrl] = useState('https://aka.ms/MinecraftEULA')
   const [mods, setMods] = useState<ModInfo[]>([])
   const [joinTargets, setJoinTargets] = useState<Instance[]>([])
@@ -225,18 +268,115 @@ export function HostServerScreen(): JSX.Element {
    * Points every companion at this server so they need not be wired by hand.
    * They all join the same world, so there is nothing to choose between them.
    */
-  async function useForCompanion(): Promise<void> {
+  /**
+   * Collects everything a server listing asks for, and tests the address.
+   *
+   * Takes a moment: it looks for the router, asks it for the external address,
+   * then pings that address to see whether anything answers.
+   */
+  async function gatherShareDetails(): Promise<void> {
+    if (!selected) return
+    setGathering(true)
+    try {
+      setShare(await api.host.share(selected.id))
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setGathering(false)
+    }
+  }
+
+  /** Asks the router what it will do, without changing anything. */
+  async function checkRouter(): Promise<void> {
+    if (!selected) return
+    setCheckingRouter(true)
+    try {
+      setForwarding(await api.host.forwardStatus(selected.id))
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setCheckingRouter(false)
+    }
+  }
+
+  /**
+   * Opens the port, or explains why it will not.
+   *
+   * The refusal for a server that does not verify players comes back from the
+   * main process as an ordinary error with the reasoning in it, and is shown as
+   * a confirmation rather than a dead end — it is the owner's network.
+   */
+  async function openToInternet(acceptUnverified = false): Promise<void> {
+    if (!selected) return
+    setCheckingRouter(true)
+    try {
+      setForwarding(await api.host.openPort(selected.id, acceptUnverified))
+      pushToast({ kind: 'success', title: 'Port opened on the router' })
+    } catch (err) {
+      if (!selected.onlineMode && !acceptUnverified) {
+        setConfirmExpose(true)
+      } else {
+        setError(toPayload(err))
+      }
+    } finally {
+      setCheckingRouter(false)
+    }
+  }
+
+  async function closeToInternet(): Promise<void> {
+    if (!selected) return
+    setCheckingRouter(true)
+    try {
+      await api.host.closePort(selected.id)
+      setForwarding(await api.host.forwardStatus(selected.id))
+      pushToast({ kind: 'success', title: 'Port closed' })
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setCheckingRouter(false)
+    }
+  }
+
+  async function applyToCompanion(): Promise<void> {
     if (!selected) return
     await run(async () => {
+      /*
+       * Point the companions at the address the server is actually listening
+       * on. Loopback was assumed here, and a server bound to the local network
+       * does not answer on it — the companions failed to connect for the same
+       * reason the Join button did.
+       */
+      const [host, port] = splitAddress(state?.address || `127.0.0.1:${selected.port}`)
+
       const list = await api.companion.list()
       for (const companion of list) {
         await api.companion.updateSettings(companion.id, {
-          host: '127.0.0.1',
-          port: selected.port,
+          host,
+          port,
           auth: selected.onlineMode ? 'microsoft' : 'offline'
         })
       }
     }, 'Companions now point at this server')
+
+    /*
+     * Say straight away that they will not get in.
+     *
+     * Pointing the companions at a server that verifies players with Mojang
+     * quietly sets them to sign in as real accounts, which they have no way to
+     * do on their own — so the settings looked applied and the first sign of
+     * trouble was being kicked seconds later for an "unverified username".
+     */
+    if (selected.onlineMode) {
+      pushToast({
+        kind: 'error',
+        title: 'This server will not let a companion in',
+        message:
+          'It verifies players with Mojang, and a companion has no Minecraft account of its own. Turn off ' +
+          '"Verify players with Mojang" in this server\'s settings, or sign this companion in with a ' +
+          'Microsoft account that owns the game.'
+      })
+    }
+
     navigate('companion')
   }
 
@@ -410,8 +550,22 @@ export function HostServerScreen(): JSX.Element {
                 </div>
 
                 <div className="row gap-8 wrap">
-                  <button className="btn btn-ghost btn-sm" onClick={() => void useForCompanion()} disabled={busy}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => void applyToCompanion()} disabled={busy}>
                     <Bot size={14} /> Use for the AI companion
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void checkRouter()}
+                    disabled={busy || checkingRouter}
+                  >
+                    <Globe size={14} /> {checkingRouter ? 'Asking the router…' : 'Play with friends online'}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void gatherShareDetails()}
+                    disabled={busy || gathering}
+                  >
+                    <Share2 size={14} /> {gathering ? 'Checking…' : 'Share / list this server'}
                   </button>
                   <button
                     className="btn btn-ghost btn-sm"
@@ -431,7 +585,20 @@ export function HostServerScreen(): JSX.Element {
                         gameMode: selected.gameMode,
                         maxPlayers: selected.maxPlayers,
                         allowCheats: selected.allowCheats,
-                        operators: selected.operators ?? []
+                        operators: selected.operators ?? [],
+
+                        // Carried in so the panel shows this server's settings
+                        // rather than the defaults for a new one.
+                        levelSeed: selected.levelSeed ?? '',
+                        pvp: selected.pvp ?? true,
+                        hardcore: selected.hardcore ?? false,
+                        allowFlight: selected.allowFlight ?? false,
+                        spawnProtection: selected.spawnProtection ?? 16,
+                        viewDistance: selected.viewDistance ?? 10,
+                        simulationDistance: selected.simulationDistance ?? 10,
+                        spawnMonsters: selected.spawnMonsters ?? true,
+                        spawnAnimals: selected.spawnAnimals ?? true,
+                        whitelist: selected.whitelist ?? false
                       })
                     }
                   >
@@ -445,6 +612,195 @@ export function HostServerScreen(): JSX.Element {
                     <Trash2 size={14} /> Delete
                   </button>
                 </div>
+
+                {share && (
+                  <div className="panel panel-pad col gap-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                    <div className="row gap-8 between">
+                      <strong className="small">Share this server</strong>
+                      <button className="btn btn-ghost btn-icon" onClick={() => setShare(null)} title="Close">
+                        ×
+                      </button>
+                    </div>
+
+                    {/* Where people connect, indoors and out. */}
+                    <div className="col gap-6">
+                      <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                        <span className="tiny dim" style={{ minWidth: 96 }}>
+                          In your house
+                        </span>
+                        <span className="host-address">{share.localAddress}</span>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => void navigator.clipboard.writeText(share.localAddress)}
+                        >
+                          <Copy size={13} /> Copy
+                        </button>
+                      </div>
+
+                      <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                        <span className="tiny dim" style={{ minWidth: 96 }}>
+                          Everyone else
+                        </span>
+                        {share.publicAddress ? (
+                          <>
+                            <span className="host-address">{share.publicAddress}</span>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => void navigator.clipboard.writeText(share.publicAddress as string)}
+                            >
+                              <Copy size={13} /> Copy
+                            </button>
+                            {share.reachable === true && (
+                              <span className="pill success tiny">
+                                <span className="dot online" /> answering
+                              </span>
+                            )}
+                            {share.reachable === false && <span className="pill warning tiny">no answer</span>}
+                          </>
+                        ) : (
+                          <span className="tiny dim">not available yet</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {share.note && (
+                      <p className="tiny dim" style={{ margin: 0 }}>
+                        {share.note}
+                      </p>
+                    )}
+
+                    {/*
+                     * A description in the shape every listing site asks for, so
+                     * it is one paste rather than ten fields typed by hand.
+                     */}
+                    <Field
+                      label="Ready to paste"
+                      hint="Most listing sites want an address, a version and a line about the server."
+                    >
+                      <textarea
+                        className="input mono"
+                        rows={4}
+                        readOnly
+                        value={
+                          `${selected.name}\n` +
+                          `Address: ${share.publicAddress ?? share.localAddress}\n` +
+                          `Version: Minecraft ${share.minecraftVersion} (${share.software})\n` +
+                          `Slots: ${share.maxPlayers}\n` +
+                          `${share.motd}`
+                        }
+                      />
+                    </Field>
+
+                    <div className="row gap-8 wrap">
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() =>
+                          void navigator.clipboard.writeText(
+                            `${selected.name}\n` +
+                              `Address: ${share.publicAddress ?? share.localAddress}\n` +
+                              `Version: Minecraft ${share.minecraftVersion} (${share.software})\n` +
+                              `Slots: ${share.maxPlayers}\n` +
+                              `${share.motd}`
+                          )
+                        }
+                      >
+                        <Copy size={13} /> Copy all of it
+                      </button>
+                    </div>
+
+                    {/*
+                     * Links, not submissions. Every one of these wants an account
+                     * of your own and most forbid posting by machine, so the
+                     * honest help is to carry the details to the door.
+                     */}
+                    <div className="col gap-6">
+                      <span className="tiny dim">
+                        Listing sites — each needs a free account of your own, then paste the details above:
+                      </span>
+                      <div className="row gap-8 wrap">
+                        {[
+                          ['minecraft-server-list.com', 'https://minecraft-server-list.com'],
+                          ['minecraftservers.org', 'https://minecraftservers.org'],
+                          ['topminecraftservers.org', 'https://topminecraftservers.org'],
+                          ['minecraft-mp.com', 'https://minecraft-mp.com'],
+                          ['planetminecraft.com', 'https://www.planetminecraft.com/servers/']
+                        ].map(([label, url]) => (
+                          <button
+                            key={url}
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => void api.app.openExternal(url)}
+                          >
+                            <ExternalLink size={13} /> {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {!selected.onlineMode && (
+                      <p className="tiny" style={{ margin: 0, color: 'var(--warning)' }}>
+                        This server does not verify players with Mojang. Listing it publicly means anyone who reads
+                        the listing can join under any name they type — turn verification on before advertising it.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {forwarding && (
+                  <div className="panel panel-pad col gap-8" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                    {!forwarding.available ? (
+                      <>
+                        <strong className="small">Your router will not forward ports</strong>
+                        <p className="tiny dim" style={{ margin: 0 }}>{forwarding.reason}</p>
+                      </>
+                    ) : forwarding.open ? (
+                      <>
+                        <div className="row gap-8" style={{ alignItems: 'center' }}>
+                          <span className="pill success tiny">
+                            <span className="dot online" /> Open to the internet
+                          </span>
+                          <span className="tiny dim">via {forwarding.router}</span>
+                        </div>
+                        {forwarding.externalAddress && (
+                          <div className="row gap-8" style={{ alignItems: 'center' }}>
+                            <span className="tiny dim">Friends connect to</span>
+                            <span className="host-address">
+                              {forwarding.externalAddress}:{selected.port}
+                            </span>
+                          </div>
+                        )}
+                        <p className="tiny dim" style={{ margin: 0 }}>
+                          The router is asked to keep this for twelve hours, and it is closed again when you stop
+                          the server.
+                        </p>
+                        <div className="row gap-8">
+                          <button
+                            className="btn btn-ghost btn-sm danger"
+                            onClick={() => void closeToInternet()}
+                            disabled={checkingRouter}
+                          >
+                            Close the port
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <strong className="small">Your router can open the port</strong>
+                        <p className="tiny dim" style={{ margin: 0 }}>
+                          {forwarding.router} answered. Port {selected.port} is not open yet.
+                        </p>
+                        <div className="row gap-8">
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => void openToInternet()}
+                            disabled={checkingRouter}
+                          >
+                            Open port {selected.port}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {!selected.onlineMode && (
                   <p className="tiny dim" style={{ margin: 0 }}>
@@ -613,7 +969,7 @@ export function HostServerScreen(): JSX.Element {
         title={editing?.id ? 'Server settings' : 'New server'}
         subtitle={editing?.id ? undefined : 'The launcher downloads the official server from Mojang.'}
         onClose={() => setEditing(null)}
-        width={520}
+        width={640}
         footer={
           <div className="row gap-10 end">
             <button className="btn btn-ghost" onClick={() => setEditing(null)}>
@@ -627,6 +983,8 @@ export function HostServerScreen(): JSX.Element {
       >
         {editing && (
           <div className="form-fields">
+            <div className="settings-group-label">The server itself</div>
+
             <Field label="Name" hint="Only used to tell your servers apart in the launcher.">
               <input
                 className="input"
@@ -691,6 +1049,34 @@ export function HostServerScreen(): JSX.Element {
                 onChange={(value) => setEditing({ ...editing, onlineMode: value })}
               />
             </Field>
+
+            {/*
+             * Changing this changes who the world thinks you are.
+             *
+             * A verified server identifies players by the account number Mojang
+             * issued them; an unverified one has nothing to go on but the name,
+             * so it makes a number up from it. Those are different players as far
+             * as the world is concerned — different inventories, different places
+             * to stand, no skin. Nothing is lost, but it certainly looks like it,
+             * and the first anyone knows of it is standing at spawn with empty
+             * hands wondering where their things went.
+             */}
+            {selected && editing.id && editing.onlineMode !== selected.onlineMode && (
+              <div
+                className="panel panel-pad col gap-6"
+                style={{ borderColor: 'var(--warning)', background: 'rgba(251,191,36,0.06)' }}
+              >
+                <div className="row gap-8" style={{ alignItems: 'center' }}>
+                  <AlertTriangle size={15} style={{ color: 'var(--warning)' }} />
+                  <strong className="small">Everyone gets a new identity in this world</strong>
+                </div>
+                <p className="tiny dim" style={{ margin: 0 }}>
+                  {editing.onlineMode
+                    ? 'Turning verification on means players are known by their Mojang account again. Anything built or collected while it was off belongs to the temporary identity and will not be in your inventory — turn it back off to reach that character.'
+                    : 'Turning verification off means the server no longer knows your Mojang account and identifies you by name alone. You will arrive as a brand new player: empty inventory, back at spawn, no skin. Your real character is kept and comes back the moment verification is turned on again.'}
+                </p>
+              </div>
+            )}
 
             <Field
               label="Who can connect"
@@ -832,9 +1218,133 @@ export function HostServerScreen(): JSX.Element {
                 onChange={(value) => setEditing({ ...editing, allowCheats: value })}
               />
             </Field>
+
+            <div className="settings-group-label">The world</div>
+
+            <Field
+              label="World seed"
+              hint="Leave empty for a random world. Only used the first time the world is generated — changing it later does nothing."
+            >
+              <input
+                className="input mono"
+                placeholder="random"
+                value={editing.levelSeed ?? ''}
+                onChange={(event) => setEditing({ ...editing, levelSeed: event.target.value })}
+              />
+            </Field>
+
+            <div className="field-grid">
+              <Field label="Spawn protection" hint="Blocks around spawn only operators can build in. 0 disables it.">
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={256}
+                  value={editing.spawnProtection ?? 16}
+                  onChange={(event) =>
+                    setEditing({ ...editing, spawnProtection: Number(event.target.value) })
+                  }
+                />
+              </Field>
+
+              <Field label="View distance" hint="Chunks sent to players. The biggest lever on performance.">
+                <input
+                  className="input"
+                  type="number"
+                  min={3}
+                  max={32}
+                  value={editing.viewDistance ?? 10}
+                  onChange={(event) => setEditing({ ...editing, viewDistance: Number(event.target.value) })}
+                />
+              </Field>
+            </div>
+
+            <Field
+              label="Simulation distance"
+              hint="Chunks that actually tick — where crops grow and mobs move. Held at or below the view distance, which is all the server will honour."
+            >
+              <input
+                className="input"
+                type="number"
+                min={3}
+                max={32}
+                value={editing.simulationDistance ?? 10}
+                onChange={(event) => setEditing({ ...editing, simulationDistance: Number(event.target.value) })}
+              />
+            </Field>
+
+            <Field label="Hostile mobs spawn" hint="Turn off for a peaceful build server without changing difficulty." inline>
+              <Toggle
+                checked={editing.spawnMonsters ?? true}
+                onChange={(value) => setEditing({ ...editing, spawnMonsters: value })}
+              />
+            </Field>
+
+            <Field label="Animals spawn" hint="Cows, sheep, chickens and the rest." inline>
+              <Toggle
+                checked={editing.spawnAnimals ?? true}
+                onChange={(value) => setEditing({ ...editing, spawnAnimals: value })}
+              />
+            </Field>
+
+            <div className="settings-group-label">Players</div>
+
+            <Field label="Players can hurt each other" hint="Turn off so nobody can be killed by another player." inline>
+              <Toggle checked={editing.pvp ?? true} onChange={(value) => setEditing({ ...editing, pvp: value })} />
+            </Field>
+
+            <Field
+              label="Hardcore"
+              hint="One life each: a player who dies is banned from the world. Difficulty is forced to hard."
+              inline
+            >
+              <Toggle
+                checked={editing.hardcore ?? false}
+                onChange={(value) => setEditing({ ...editing, hardcore: value })}
+              />
+            </Field>
+
+            <Field
+              label="Allow flight"
+              hint="Stops the server kicking survival players for flying. Needed for mods that grant it — it does not grant flight by itself."
+              inline
+            >
+              <Toggle
+                checked={editing.allowFlight ?? false}
+                onChange={(value) => setEditing({ ...editing, allowFlight: value })}
+              />
+            </Field>
+
+            <Field
+              label="Whitelist"
+              hint="Only players on the whitelist may join. The operators above are added to it automatically."
+              inline
+            >
+              <Toggle
+                checked={editing.whitelist ?? false}
+                onChange={(value) => setEditing({ ...editing, whitelist: value })}
+              />
+            </Field>
           </div>
         )}
       </Modal>
+
+      <ConfirmDialog
+        open={confirmExpose}
+        title="Open an unverified server to the internet?"
+        message={
+          `"${selected?.name ?? 'This server'}" does not check that players own Minecraft — that is what lets ` +
+          'an AI companion join without an account of its own. Opening it to the internet as well means anyone ' +
+          "who finds the address can join under any name they type, including yours or an operator's."
+        }
+        confirmLabel="I understand, open it"
+        danger
+        onCancel={() => setConfirmExpose(false)}
+        onConfirm={() => {
+          setConfirmExpose(false)
+          void openToInternet(true)
+        }}
+      />
 
       <Modal
         open={Boolean(confirmDelete)}

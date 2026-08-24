@@ -294,10 +294,29 @@ export function isCompanionRunning(id: string): boolean {
 }
 
 /** Terminates a bot process without waiting for it to acknowledge. */
-function killChild(id: string): void {
+function killChild(id: string, immediate = false): void {
   const entry = running.get(id)
   if (!entry) return
   entry.child.removeAllListeners()
+
+  /*
+   * When the launcher itself is closing there is no time to be polite.
+   *
+   * The courteous logout below waits a moment for the companion to disconnect
+   * cleanly, which is right when someone presses Stop. At shutdown it is not:
+   * the wait keeps a live child and a pending timer attached to a process that
+   * is supposed to be going away, and an installer trying to close the app sees
+   * one that will not close.
+   */
+  if (immediate) {
+    try {
+      entry.child.kill()
+    } catch {
+      /* already gone */
+    }
+    running.delete(id)
+    return
+  }
 
   /*
    * Ask the companion to log out rather than killing it where it stands.
@@ -607,7 +626,9 @@ export function clearCompanionMemory(id: string): void {
 /** Called on shutdown so no bot outlives the launcher. */
 export function shutdownCompanion(): void {
   for (const id of [...running.keys()]) {
+    // Tell it to log out, then end it — the launcher is not staying around to
+    // wait, and a child left running would hold the whole app open.
     post(id, { type: 'stop' })
-    killChild(id)
+    killChild(id, true)
   }
 }

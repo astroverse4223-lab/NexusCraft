@@ -30,6 +30,7 @@ import type {
   Result,
   SavedServer,
   SavedSkin,
+  ServerShareDetails,
   ServerStatus,
   VersionManifestInfo,
   WorldInfo
@@ -256,6 +257,7 @@ export const api = {
 
   curseforge: {
     status: () => call<{ configured: boolean }>('curseforge:status'),
+    verify: (key?: string) => call<{ ok: boolean; reason: string }>('curseforge:verify', { key }),
     search: (input: {
       query: string
       kind: ContentKindId
@@ -290,6 +292,24 @@ export const api = {
   },
 
   host: {
+    share: (id: string) => call<ServerShareDetails>('host:share', { id }),
+    forwardStatus: (id: string) =>
+      call<{
+        available: boolean
+        open: boolean
+        externalAddress: string | null
+        router: string | null
+        reason: string | null
+      }>('host:forwardStatus', { id }),
+    openPort: (id: string, acceptUnverified?: boolean) =>
+      call<{
+        available: boolean
+        open: boolean
+        externalAddress: string | null
+        router: string | null
+        reason: string | null
+      }>('host:openPort', { id, acceptUnverified }),
+    closePort: (id: string) => call<{ closed: boolean }>('host:closePort', { id }),
     list: () => call<HostedServer[]>('host:list'),
     states: () => call<HostedServerState[]>('host:states'),
     console: (id: string) => call<HostedServerConsoleLine[]>('host:console', { id }),

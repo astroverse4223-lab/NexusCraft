@@ -182,6 +182,7 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   }),
   'mods:checkUpdates': z.object({ instanceId: id }),
   'mods:applyUpdate': z.object({ instanceId: id, update: z.record(z.string(), z.unknown()) }),
+  'curseforge:verify': z.object({ key: z.string().optional() }).optional(),
   'curseforge:status': z.void(),
   'datapacks:list': z.void(),
   'datapacks:preview': z.object({
@@ -212,6 +213,10 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'companion:testModel': z.object({ id: z.string().min(1) }),
   'companion:listModels': z.object({ id: z.string().min(1) }),
 
+  'host:share': z.object({ id: z.string() }),
+  'host:forwardStatus': z.object({ id: z.string() }),
+  'host:openPort': z.object({ id: z.string(), acceptUnverified: z.boolean().optional() }),
+  'host:closePort': z.object({ id: z.string() }),
   'host:list': z.void(),
   'host:save': z.object({
     id: z.string().nullable(),

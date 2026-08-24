@@ -87,12 +87,50 @@ function expandArguments(entries: ArgumentEntry[], features: FeatureSet, table: 
  * quoted segments, so a path with spaces survives.
  */
 export function splitJvmArgs(input: string): string[] {
-  const matches = input.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
-  return matches.map((token) => token.replace(/^["']|["']$/g, '')).filter((token) => token.length > 0)
+  const tokens: string[] = []
+  let current = ''
+  let quote: string | null = null
+
+  for (const char of input) {
+    if (quote) {
+      // Inside a quoted run everything is literal until the matching quote.
+      if (char === quote) quote = null
+      else current += char
+    } else if (char === '"' || char === "'") {
+      quote = char
+    } else if (/\s/.test(char)) {
+      if (current) tokens.push(current)
+      current = ''
+    } else {
+      current += char
+    }
+  }
+  if (current) tokens.push(current)
+  return tokens
 }
 
 /** Arguments that would break the launch or leak data if a user pasted them in. */
 const BLOCKED_USER_JVM_ARGS = [/^-Xmx/i, /^-Xms/i, /^-cp$/i, /^-classpath$/i, /^-jar$/i]
+
+/**
+ * Blocked flags whose value is a separate argv entry. Dropping the flag alone
+ * would leave its operand behind as a stray argument the JVM cannot parse.
+ */
+const BLOCKED_WITH_OPERAND = [/^-cp$/i, /^-classpath$/i, /^-jar$/i]
+
+/** Removes blocked user arguments, and the operand of any that take one. */
+function filterUserJvmArgs(tokens: string[]): string[] {
+  const kept: string[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (!BLOCKED_USER_JVM_ARGS.some((pattern) => pattern.test(token))) {
+      kept.push(token)
+      continue
+    }
+    if (BLOCKED_WITH_OPERAND.some((pattern) => pattern.test(token))) i++
+  }
+  return kept
+}
 
 export interface BuiltArguments {
   args: string[]
@@ -125,10 +163,7 @@ export function buildLaunchArguments(context: LaunchContext): BuiltArguments {
     jvm.push('-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump')
   }
 
-  const userArgs = splitJvmArgs(instance.java.jvmArgs).filter(
-    (arg) => !BLOCKED_USER_JVM_ARGS.some((pattern) => pattern.test(arg))
-  )
-  jvm.push(...userArgs)
+  jvm.push(...filterUserJvmArgs(splitJvmArgs(instance.java.jvmArgs)))
 
   jvm.push(`-Dminecraft.launcher.brand=${LAUNCHER_NAME.toLowerCase()}`)
   jvm.push(`-Dminecraft.launcher.version=${LAUNCHER_VERSION}`)
@@ -192,8 +227,10 @@ export function splitAddress(address: string): [string, number] {
   const bracketed = trimmed.match(/^\[([^\]]+)\](?::(\d+))?$/)
   if (bracketed) return [bracketed[1], bracketed[2] ? Number(bracketed[2]) : 25565]
 
+  // Only a host with no colons of its own can be carrying a :port suffix —
+  // otherwise this is a bare IPv6 literal and the last group is not a port.
   const index = trimmed.lastIndexOf(':')
-  if (index > 0 && !trimmed.slice(index + 1).includes(':')) {
+  if (index > 0 && !trimmed.slice(0, index).includes(':')) {
     const port = Number(trimmed.slice(index + 1))
     if (Number.isInteger(port) && port > 0 && port <= 65535) return [trimmed.slice(0, index), port]
   }

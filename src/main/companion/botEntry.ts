@@ -280,7 +280,7 @@ async function start(config: CompanionConfig): Promise<void> {
   })
 
   bot.on('kicked', (reason: string) => {
-    send({ type: 'status', status: 'error', detail: `kicked: ${String(reason).slice(0, 200)}` })
+    send({ type: 'status', status: 'error', detail: describeKick(reason, config) })
   })
 
   bot.on('error', (err: Error) => {
@@ -300,6 +300,44 @@ async function start(config: CompanionConfig): Promise<void> {
   bot.on('end', (reason: string) => {
     if (!stopping) send({ type: 'status', status: 'disconnected', detail: String(reason ?? '') })
   })
+}
+
+/**
+ * Turns a server's kick message into something worth reading.
+ *
+ * Servers send these as a translation key wrapped in JSON, so what reached the
+ * screen was a line like `{"translate":"multiplayer.disconnect.unverified_username"}`
+ * — which says nothing to anyone who does not already know what it means, and
+ * least of all what to do about it. The handful that actually happen to a
+ * companion are spelled out, with the remedy, and anything else is at least
+ * stripped of its JSON.
+ */
+function describeKick(reason: unknown, config: CompanionConfig): string {
+  const raw = typeof reason === 'string' ? reason : JSON.stringify(reason ?? '')
+
+  if (raw.includes('unverified_username')) {
+    return (
+      `${config.host}:${config.port} only accepts players verified with Mojang, and the companion is signed ` +
+      'in offline. Either turn off "Verify players with Mojang" in the server settings — which is what lets a ' +
+      'companion join without a Minecraft account of its own — or give this companion its own Microsoft ' +
+      'account that owns the game.'
+    )
+  }
+  if (raw.includes('outdated_server') || raw.includes('outdated_client')) {
+    return `The companion and ${config.host}:${config.port} are on different Minecraft versions.`
+  }
+  if (raw.includes('server_full')) return 'The server is full.'
+  if (raw.includes('banned') || raw.includes('You are banned')) {
+    return 'This server has banned the companion\'s username.'
+  }
+  if (raw.includes('whitelist')) {
+    return `${config.host}:${config.port} has a whitelist, and the companion's username is not on it.`
+  }
+  if (raw.includes('flying')) return 'The server kicked the companion for flying.'
+
+  // Not one we know: at least pull the words out of the JSON.
+  const spoken = raw.match(/"(?:text|translate)"\s*:\s*"([^"]+)"/)
+  return `The server disconnected the companion: ${spoken ? spoken[1] : raw.slice(0, 160)}`
 }
 
 /**

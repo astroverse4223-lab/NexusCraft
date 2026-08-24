@@ -107,6 +107,33 @@ function apiKey(): string {
   return key
 }
 
+/**
+ * Whatever the API said about refusing us, if it said anything.
+ *
+ * Never throws and never returns the request's own details — only the server's
+ * words, so nothing sensitive can travel out with it.
+ */
+async function readApiComplaint(response: Response): Promise<string> {
+  try {
+    const text = (await response.text()).trim()
+    if (!text) return ''
+
+    try {
+      const parsed = JSON.parse(text) as { message?: string; error?: string; description?: string }
+      const said = parsed.message ?? parsed.error ?? parsed.description
+      if (said) return String(said).slice(0, 200)
+    } catch {
+      /* not JSON; the raw text will do */
+    }
+
+    // Guard against an HTML error page arriving instead of an API reply.
+    if (/^\s*</.test(text)) return 'an HTML error page rather than an API response'
+    return text.slice(0, 200)
+  } catch {
+    return ''
+  }
+}
+
 async function cfGet<T>(path: string, params?: URLSearchParams): Promise<T> {
   const url = `${API}${path}${params ? `?${params}` : ''}`
   const response = await request(url, {
@@ -115,11 +142,44 @@ async function cfGet<T>(path: string, params?: URLSearchParams): Promise<T> {
     retries: 2
   })
 
+  /*
+   * 401 and 403 are different problems and were being reported as the same one.
+   *
+   * 401 is the key: missing, mistyped, revoked. 403 is not — the key was read
+   * and accepted, and the request was refused anyway, which for this API means
+   * the key is not approved for the Minecraft data it is asking for. Telling
+   * someone with a perfectly good key to go and generate another one sends them
+   * round in circles, so each now says what actually happened.
+   *
+   * CurseForge explains itself in the response body, and that explanation was
+   * being thrown away. It is read here and passed along.
+   */
   if (response.status === 401 || response.status === 403) {
-    throw new LauncherError('AUTH_NOT_CONFIGURED', `CurseForge rejected the API key (HTTP ${response.status})`, {
-      title: 'CurseForge rejected the API key',
-      message: 'The key was not accepted. It may have been typed incorrectly, or revoked.',
-      actions: ['Check the key in Settings → Content', 'Generate a new one at console.curseforge.com']
+    const explanation = await readApiComplaint(response)
+    const detail = explanation ? ` — CurseForge said: ${explanation}` : ''
+
+    if (response.status === 401) {
+      throw new LauncherError('AUTH_NOT_CONFIGURED', `CurseForge rejected the API key (HTTP 401)${detail}`, {
+        title: 'CurseForge did not accept the key',
+        message: `The key was not recognised. It may be mistyped, incomplete, or revoked.${detail}`,
+        actions: [
+          'Check the key in Settings → Content — paste the whole thing, it is long',
+          'Generate a new one at console.curseforge.com',
+          'Modrinth needs no key and works without this'
+        ]
+      })
+    }
+
+    throw new LauncherError('AUTH_NOT_CONFIGURED', `CurseForge refused the request (HTTP 403)${detail}`, {
+      title: 'CurseForge refused this request',
+      message:
+        'CurseForge answers this both for a key it does not recognise and for one that has not been approved ' +
+        `for Minecraft, so it is worth ruling out the simple case first.${detail}`,
+      actions: [
+        'Re-copy the whole key — they are long and easily cut short',
+        'At console.curseforge.com, check the key is approved for Minecraft',
+        'Modrinth needs no key and has most of the same mods'
+      ]
     })
   }
   if (!response.ok) {
@@ -306,4 +366,89 @@ export async function getFiles(fileIds: number[]): Promise<CfFile[]> {
   if (fileIds.length === 0) return []
   const result = await cfPost<{ data: CfFile[] }>('/mods/files', { fileIds })
   return result.data
+}
+
+/* ------------------------------------------------------------ verifying */
+
+/**
+ * Asks CurseForge whether a key actually works, and says why if it does not.
+ *
+ * Saving a key used to be silent — the interface said "saved" whatever the key
+ * was, and the first sign of trouble came later from a search that failed for
+ * reasons the settings screen never mentioned. Since the API is the only thing
+ * that can settle it, it gets asked at the point the key is entered.
+ *
+ * Never throws, and never reports the key itself.
+ */
+export async function verifyApiKey(candidate?: string): Promise<{ ok: boolean; reason: string }> {
+  const key = (candidate ?? getSettings().curseForgeApiKey ?? '').trim()
+  if (!key) return { ok: false, reason: 'No key has been entered.' }
+
+  /*
+   * Test the call the launcher actually makes, not a tidier one.
+   *
+   * This first asked `/games/{id}`, which looked like the cheapest possible
+   * check — but keys issued for mod distribution are frequently not authorised
+   * for the games endpoints while working perfectly well for searching mods.
+   * That turned a good key into a flat "CurseForge would not accept that key",
+   * which is worse than no check at all: it sends someone off to change
+   * settings that were never wrong. Searching for one mod proves the only thing
+   * that matters, which is whether search works.
+   */
+  const params = new URLSearchParams({
+    gameId: String(GAME_MINECRAFT),
+    pageSize: '1',
+    sortField: '6',
+    sortOrder: 'desc'
+  })
+
+  try {
+    const response = await request(`${API}/mods/search?${params}`, {
+      headers: { 'x-api-key': key, Accept: 'application/json' },
+      timeoutMs: 15_000,
+      retries: 1
+    })
+
+    if (response.ok) return { ok: true, reason: 'CurseForge accepted the key.' }
+
+    const said = await readApiComplaint(response)
+    const complaint = said ? ` CurseForge said: ${said}` : ''
+
+    /*
+     * A note on the shape of what was entered, never the thing itself.
+     *
+     * The field is a password box, so a key that was cut short on the way in
+     * looks exactly like a good one, and this is the single most common reason
+     * for a rejection. Its length is enough to show that up and gives nothing
+     * away.
+     */
+    const shape =
+      key.length < 40
+        ? ` The key entered is ${key.length} characters, which is short — CurseForge keys are around 60, so check none of it was left behind.`
+        : ''
+
+    const detail = `${complaint}${shape}`
+
+    if (response.status === 401) {
+      return { ok: false, reason: `CurseForge did not recognise that key.${detail}` }
+    }
+    if (response.status === 403) {
+      /*
+       * Do not over-read a 403 here. This API answers 403 both for a key it
+       * does not accept and for one it accepts but will not serve, so the two
+       * cannot be told apart from the status alone — and guessing sends people
+       * off to fix whichever one was not the problem.
+       */
+      return {
+        ok: false,
+        reason:
+          'CurseForge refused the request. Their API answers this both for a key it does not recognise and ' +
+          'for one that has not been approved for Minecraft, so check the key is complete first, then its ' +
+          `approval at console.curseforge.com.${detail}`
+      }
+    }
+    return { ok: false, reason: `CurseForge returned HTTP ${response.status}.${detail}` }
+  } catch (err) {
+    return { ok: false, reason: `Could not reach CurseForge: ${(err as Error).message}` }
+  }
 }

@@ -32,6 +32,7 @@ export function SettingsScreen(): JSX.Element {
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [clientId, setClientId] = useState('')
   const [curseKey, setCurseKey] = useState('')
+  const [checkingKey, setCheckingKey] = useState(false)
   const [detecting, setDetecting] = useState(false)
 
   useEffect(() => {
@@ -493,16 +494,49 @@ export function SettingsScreen(): JSX.Element {
               />
               <button
                 className="btn btn-primary"
-                disabled={curseKey.trim() === settings.curseForgeApiKey}
+                disabled={curseKey.trim() === settings.curseForgeApiKey || checkingKey}
                 onClick={() => {
-                  void patch({ curseForgeApiKey: curseKey.trim() })
-                  pushToast({
-                    kind: 'success',
-                    title: curseKey.trim() ? 'CurseForge key saved' : 'CurseForge key cleared'
-                  })
+                  const entered = curseKey.trim()
+
+                  /*
+                   * Check the key with CurseForge before calling it saved.
+                   *
+                   * This used to announce success the instant it was clicked,
+                   * whatever had been pasted in, so a key that was never going
+                   * to work looked accepted — and the first sign of trouble was
+                   * a search failing later with a message that said nothing
+                   * about the settings screen. Only CurseForge can settle
+                   * whether a key works, so it gets asked here.
+                   */
+                  void (async () => {
+                    setCheckingKey(true)
+                    try {
+                      await patch({ curseForgeApiKey: entered })
+
+                      if (!entered) {
+                        pushToast({ kind: 'success', title: 'CurseForge key cleared' })
+                        return
+                      }
+
+                      const verdict = await api.curseforge.verify(entered)
+                      pushToast({
+                        kind: verdict.ok ? 'success' : 'error',
+                        title: verdict.ok ? 'CurseForge key works' : 'CurseForge would not accept that key',
+                        message: verdict.reason
+                      })
+                    } catch (err) {
+                      pushToast({
+                        kind: 'error',
+                        title: 'Could not check the key',
+                        message: (err as Error).message
+                      })
+                    } finally {
+                      setCheckingKey(false)
+                    }
+                  })()
                 }}
               >
-                Save
+                {checkingKey ? 'Checking…' : 'Save'}
               </button>
             </div>
             <p className="field-hint">

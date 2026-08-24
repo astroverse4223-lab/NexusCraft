@@ -220,12 +220,7 @@ async function runInstallerJar(
     }
 
     if (!result.ok) {
-      // The output is thousands of lines of remapping chatter, most of it
-      // harmless "Can't Find Class" notes, so pull out the lines that explain
-      // the failure rather than blindly keeping the tail.
-      const lines = result.output.trim().split(/\r?\n/).filter((line) => !/Can.t Find Class/i.test(line))
-      const meaningful = lines.filter((line) => /error|exception|failed|caused by/i.test(line)).slice(-8)
-      const detail = (meaningful.length > 0 ? meaningful : lines.slice(-12)).join('\n')
+      const detail = explainInstallerFailure(result.output)
 
       throw new LauncherError('LOADER_INSTALL_FAILED', `${label} installer exited with an error:\n${detail}`, {
         title: `The ${label} installer failed`,
@@ -241,22 +236,100 @@ async function runInstallerJar(
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined)
   }
 
-  // Identify what the installer added by diffing the versions directory.
+  /*
+   * Work out which profile to launch by diffing the versions directory.
+   *
+   * Nothing new appearing is not a failure. These installers write the same
+   * profile again when it is already there, so re-installing a loader that was
+   * already present — or one installed by hand — left the diff empty and the
+   * whole thing was reported as having produced nothing, over a profile sitting
+   * right there on disk. So an empty diff sends us looking for what is already
+   * installed before giving up on it.
+   */
   const after = await listInstalledVersionIds()
   const added = after.filter((id) => !before.has(id))
-  if (added.length === 0) {
-    throw new LauncherError('LOADER_INSTALL_FAILED', `${label} installer produced no new version profile`)
-  }
+
   // If several appeared, prefer the one naming the loader.
-  const match = added.find((id) => id.toLowerCase().includes(label.toLowerCase())) ?? added[0]
-  log.info(`installed loader profile ${match}`)
-  return match
+  const fresh = added.find((id) => id.toLowerCase().includes(label.toLowerCase())) ?? added[0]
+  if (fresh) {
+    log.info(`installed loader profile ${fresh}`)
+    return fresh
+  }
+
+  /*
+   * Nothing new: find the profile that must already be there. It names both the
+   * loader and the Minecraft version, so the newest one naming both is it.
+   */
+  const wanted = after
+    .filter((id) => id.toLowerCase().includes(label.toLowerCase()))
+    .filter((id) => id.includes(minecraftVersion))
+    .sort()
+
+  const existing = wanted[wanted.length - 1]
+  if (existing) {
+    log.info(`${label} was already installed as ${existing}; using it`)
+    return existing
+  }
+
+  throw new LauncherError(
+    'LOADER_INSTALL_FAILED',
+    `${label} installer wrote no version profile for ${minecraftVersion}`,
+    {
+      title: `The ${label} installer finished without installing anything`,
+      message:
+        `The installer ran and reported success, but no ${label} profile for Minecraft ${minecraftVersion} ` +
+        'appeared in the versions folder. That usually means it could not write there.',
+      actions: [
+        'Check the data folder is writable and not full',
+        'Make sure antivirus is not quarantining files as they are written',
+        `Try a different ${label} build`
+      ]
+    }
+  )
 }
 
 /**
  * Installs a mod loader and returns the version id to launch. Returns the
  * vanilla version id unchanged for `vanilla`.
  */
+/**
+ * Picks the lines out of an installer log that say what went wrong.
+ *
+ * The installer prints thousands of lines of remapping chatter, and a naive
+ * search for words like "failed" drowns in it — Minecraft ships classes named
+ * `TagValueInput$DecodeFromListFailedProblem`, so the file list itself matched
+ * and filled the whole report with class names while the real error scrolled
+ * out of sight. Anything that is merely the name of a file is discarded first,
+ * and what remains is ranked by how much it sounds like a diagnosis.
+ */
+function explainInstallerFailure(output: string): string {
+  const lines = output
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
+    // Remapping notes for classes it could not resolve are normal and harmless.
+    .filter((line) => !/Can.t Find Class/i.test(line))
+    // A bare path is a file being processed, not a complaint about one — even
+    // when the class is called something with "Failed" in it.
+    .filter((line) => !/^\s*\S+\.(class|jar|json|txt)\s*$/i.test(line))
+
+  const damning = [
+    /^\s*(Caused by|Exception in thread)\b/i,
+    /\b[A-Za-z.]*(Exception|Error)\b\s*:/,
+    /\b(BUILD FAILED|FAILURE|could not|cannot|unable to|denied|no such file|not found)\b/i,
+    /\b(error|failed)\b/i
+  ]
+
+  for (const pattern of damning) {
+    const hits = lines.filter((line) => pattern.test(line))
+    if (hits.length > 0) return hits.slice(-8).join('\n')
+  }
+
+  // Nothing announced itself, so the end of the log is the best guess left.
+  return lines.slice(-12).join('\n')
+}
+
 export async function installLoader(
   loader: LoaderId,
   minecraftVersion: string,

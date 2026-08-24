@@ -2,6 +2,10 @@ node_modules/
 out/
 dist/
 release/
+# Any build output directory, however it is named — electron-builder gets
+# pointed at release2/ and the like when the usual one is locked by another
+# process, and none of it belongs in the repository.
+release*/
 *.log
 .DS_Store
 Thumbs.db

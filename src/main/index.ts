@@ -215,6 +215,21 @@ if (!gotLock) {
     // kill a game the user is in the middle of.
     closeDatabase()
     closeLogger()
+
+    /*
+     * Make sure we actually go.
+     *
+     * Stopping a hosted server is asynchronous and deliberately not waited on,
+     * so a slow or wedged shutdown could leave the process alive after every
+     * window had gone — and an app that will not close is one an installer
+     * cannot replace, which is how a routine update turns into "NexusCraft
+     * Launcher cannot be closed". This gives the tidying a few seconds and then
+     * leaves regardless. Unreferenced, so it never keeps the process up itself.
+     */
+    setTimeout(() => {
+      log.info('shutdown took too long; exiting anyway')
+      process.exit(0)
+    }, 5_000).unref()
   })
 }
 
