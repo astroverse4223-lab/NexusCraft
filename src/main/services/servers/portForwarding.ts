@@ -417,6 +417,52 @@ export async function closePort(gateway: Gateway, port: number): Promise<boolean
 /** How long a mapping lasts before the router drops it of its own accord. */
 export const PORT_LEASE_SECONDS = 43_200 // twelve hours
 
+/* ------------------------------------------------------------- renewal */
+
+/**
+ * Keeps an opened port open.
+ *
+ * The mapping is requested with a twelve-hour lease, which is the polite thing
+ * to ask a router for — a permanent mapping outlives the launcher, the server
+ * and sometimes the machine. But a lease that is never renewed simply expires,
+ * and a long session or an overnight server goes unreachable partway through
+ * with nothing in the interface to say why. Renewing at a third of the lease
+ * gives two chances to recover from a router that briefly refuses.
+ */
+const renewals = new Map<number, NodeJS.Timeout>()
+
+export function keepPortOpen(port: number, internalAddress: string, label: string): void {
+  stopKeepingPortOpen(port)
+
+  const timer = setInterval(
+    () => {
+      void (async () => {
+        const gateway = await discoverGateway()
+        if (!gateway) {
+          log.warn(`could not renew the mapping for port ${port}: no gateway answered`)
+          return
+        }
+        try {
+          await openPort(gateway, port, internalAddress, label)
+          log.info(`renewed the port ${port} mapping`)
+        } catch (err) {
+          log.warn(`could not renew the mapping for port ${port}: ${(err as Error).message}`)
+        }
+      })()
+    },
+    (PORT_LEASE_SECONDS / 3) * 1000
+  )
+
+  timer.unref()
+  renewals.set(port, timer)
+}
+
+export function stopKeepingPortOpen(port: number): void {
+  const timer = renewals.get(port)
+  if (timer) clearInterval(timer)
+  renewals.delete(port)
+}
+
 /** Everything the interface needs to describe the state of forwarding. */
 export async function forwardingStatus(port: number, internalAddress: string): Promise<ForwardingStatus> {
   const gateway = await discoverGateway()

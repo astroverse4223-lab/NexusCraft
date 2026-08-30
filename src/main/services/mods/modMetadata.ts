@@ -9,6 +9,9 @@ import type { LoaderId } from '@shared/types'
  * can be tested against real-world manifests without a fixture jar.
  */
 
+/** Which side of the game a mod runs on, when it says. */
+export type ModEnvironment = 'client' | 'server' | 'both' | null
+
 export interface RawMetadata {
   modId: string | null
   name: string
@@ -16,7 +19,29 @@ export interface RawMetadata {
   description: string | null
   authors: string[]
   loaders: LoaderId[]
+  /**
+   * Which side the mod declares it runs on.
+   *
+   * A dedicated server that loads a client-only mod does not warn — it dies on
+   * startup with a missing-class trace naming something in the rendering
+   * engine, which reads as a corrupt install. Fabric states this outright in
+   * `fabric.mod.json`, so where a mod says so it is worth believing.
+   *
+   * `null` means the jar did not say, which is the common case for Forge and
+   * must be treated as "probably both" rather than as a reason to exclude it.
+   */
+  environment: ModEnvironment
   mcVersionRange: string | null
+  /**
+   * Which build of the loader itself the mod needs, as declared by
+   * `loaderVersion` in a Forge manifest.
+   *
+   * Worth keeping separately from the Minecraft range because plenty of mods
+   * declare only this one — GlitchCore names no Minecraft version at all and
+   * asks for Forge 65 or above — and it is the difference between a mod that
+   * loads and one the game silently skips.
+   */
+  loaderVersionRange: string | null
   iconPath: string | null
 }
 
@@ -49,16 +74,27 @@ export function parseFabricJson(text: string): RawMetadata | null {
       authors?: Array<string | { name?: string }>
       icon?: string | Record<string, string>
       depends?: Record<string, string | string[]>
+      environment?: string
     }
     const minecraft = json.depends?.minecraft
+    /*
+     * Fabric's own values: "client", "server", or "*" for both. Anything else
+     * (including absent) is treated as both, since guessing "client" here would
+     * strip a working mod out of a server.
+     */
+    const declared = (json.environment ?? '').toLowerCase()
+    const environment: ModEnvironment =
+      declared === 'client' ? 'client' : declared === 'server' ? 'server' : 'both'
     return {
       modId: json.id ?? null,
+      environment,
       name: json.name ?? json.id ?? 'Unknown mod',
       version: json.version ?? null,
       description: json.description ?? null,
       authors: (json.authors ?? []).map((a) => (typeof a === 'string' ? a : (a.name ?? ''))).filter(Boolean),
       loaders: ['fabric'],
       mcVersionRange: Array.isArray(minecraft) ? minecraft.join(', ') : (minecraft ?? null),
+      loaderVersionRange: null,
       iconPath: typeof json.icon === 'string' ? json.icon : (Object.values(json.icon ?? {})[0] ?? null)
     }
   } catch {
@@ -80,12 +116,15 @@ export function parseQuiltJson(text: string): RawMetadata | null {
         }
         depends?: Array<{ id?: string; versions?: string }>
       }
+      minecraft?: { environment?: string }
     }
     const loader = json.quilt_loader
     if (!loader) return null
     const minecraft = loader.depends?.find((d) => d.id === 'minecraft')
+    const quiltEnv = (json.minecraft?.environment ?? '').toLowerCase()
     return {
       modId: loader.id ?? null,
+      environment: quiltEnv === 'client' ? 'client' : quiltEnv === 'dedicated_server' ? 'server' : 'both',
       name: loader.metadata?.name ?? loader.id ?? 'Unknown mod',
       version: loader.version ?? null,
       description: loader.metadata?.description ?? null,
@@ -93,6 +132,7 @@ export function parseQuiltJson(text: string): RawMetadata | null {
       // Quilt can load Fabric mods, and most Quilt mods ship a Fabric entry too.
       loaders: ['quilt', 'fabric'],
       mcVersionRange: minecraft?.versions ?? null,
+      loaderVersionRange: null,
       iconPath: loader.metadata?.icon ?? null
     }
   } catch {
@@ -106,8 +146,17 @@ export function parseModsToml(text: string, loader: LoaderId): RawMetadata {
   const modId = readTomlValue(modsBlock, 'modId')
   const mcRange = text.match(/modId\s*=\s*"minecraft"[\s\S]{0,300}?versionRange\s*=\s*"([^"]*)"/)?.[1] ?? null
 
+  /*
+   * NeoForge added a per-mod `side` key; Forge has no equivalent, so most of
+   * these jars simply do not say. Silence means "assume both" — excluding a mod
+   * from a server because its manifest predates the field would break far more
+   * packs than it fixed.
+   */
+  const side = (readTomlValue(modsBlock, 'side') ?? '').toUpperCase()
+
   return {
     modId,
+    environment: side === 'CLIENT' ? 'client' : side === 'SERVER' ? 'server' : 'both',
     name: readTomlValue(modsBlock, 'displayName') ?? modId ?? 'Unknown mod',
     version: readTomlValue(modsBlock, 'version'),
     description: readTomlValue(modsBlock, 'description'),
@@ -117,6 +166,8 @@ export function parseModsToml(text: string, loader: LoaderId): RawMetadata {
       .filter(Boolean),
     loaders: [loader],
     mcVersionRange: mcRange,
+    // What the mod asks of the loader itself, e.g. "[65,)".
+    loaderVersionRange: text.match(/loaderVersion\s*=\s*"([^"]*)"/)?.[1] ?? null,
     iconPath: readTomlValue(modsBlock, 'logoFile')
   }
 }
@@ -143,7 +194,9 @@ export function parseLegacyMcmod(text: string): RawMetadata | null {
       description: (entry.description as string) ?? null,
       authors: ((entry.authorList as string[]) ?? []).filter(Boolean),
       loaders: ['forge'],
+      environment: 'both',
       mcVersionRange: (entry.mcversion as string) ?? null,
+      loaderVersionRange: null,
       iconPath: (entry.logoFile as string) ?? null
     }
   } catch {
@@ -152,9 +205,17 @@ export function parseLegacyMcmod(text: string): RawMetadata | null {
 }
 
 /**
- * Picks the right parser for whichever manifest a jar turned out to contain.
- * The order matters: a Quilt mod usually ships a Fabric manifest too, and the
- * Fabric one is the more complete of the pair.
+ * Reads every manifest a jar turned out to contain, not just the first.
+ *
+ * Plenty of mods ship one jar that runs on several loaders — anything built
+ * with Architectury carries `fabric.mod.json` and `META-INF/mods.toml` side by
+ * side. Stopping at the first manifest found meant `journeymap-forge-...jar`
+ * was read as a Fabric mod and the launcher refused to start a Forge instance
+ * over a mod that supports Forge perfectly well.
+ *
+ * So the loaders are collected from all of them and merged. The description
+ * still comes from whichever manifest is richest — Fabric's, then Quilt's, then
+ * the TOML — because that part is a matter of presentation rather than truth.
  */
 export function parseModManifest(manifests: {
   fabric?: string | null
@@ -163,23 +224,48 @@ export function parseModManifest(manifests: {
   forge?: string | null
   legacy?: string | null
 }): RawMetadata | null {
+  const found: RawMetadata[] = []
+
   if (manifests.fabric) {
     const parsed = parseFabricJson(manifests.fabric)
-    if (parsed) return parsed
+    if (parsed) found.push(parsed)
   }
   if (manifests.quilt) {
     const parsed = parseQuiltJson(manifests.quilt)
-    if (parsed) return parsed
+    if (parsed) found.push(parsed)
   }
-  if (manifests.neoforge) return parseModsToml(manifests.neoforge, 'neoforge')
+  if (manifests.neoforge) found.push(parseModsToml(manifests.neoforge, 'neoforge'))
   if (manifests.forge) {
     // A 1.20.1-era mods.toml works on both Forge and NeoForge.
     const parsed = parseModsToml(manifests.forge, 'forge')
     parsed.loaders = ['forge', 'neoforge']
-    return parsed
+    found.push(parsed)
   }
-  if (manifests.legacy) return parseLegacyMcmod(manifests.legacy)
-  return null
+  if (manifests.legacy) {
+    const parsed = parseLegacyMcmod(manifests.legacy)
+    if (parsed) found.push(parsed)
+  }
+
+  if (found.length === 0) return null
+
+  // The first is the most descriptive, by the order they were read above.
+  const best = found[0]
+  const loaders = [...new Set(found.flatMap((entry) => entry.loaders))]
+
+  /*
+   * Side merges the permissive way, for the same reason the loaders do: a
+   * multi-loader jar whose Fabric manifest says "client" may still be a
+   * perfectly good server mod under Forge, and dropping it would repeat the
+   * mistake that once read JourneyMap as Fabric-only.
+   */
+  const sides = found.map((entry) => entry.environment)
+  const environment: ModEnvironment = sides.every((side) => side === 'client')
+    ? 'client'
+    : sides.every((side) => side === 'server')
+      ? 'server'
+      : 'both'
+
+  return { ...best, loaders, environment }
 }
 
 /* ------------------------------------------------------------- analysis */

@@ -5,6 +5,7 @@ declare global {
     nexus: {
       invoke(channel: IpcChannel, payload?: unknown): Promise<unknown>
       on(channel: EventChannel, listener: (payload: unknown) => void): () => void
+      filePath(file: File): string
       platform: string
       channels: readonly string[]
     }

@@ -20,6 +20,23 @@ asarUnpack:
   - '**/*.node'
   - node_modules/better-sqlite3/**/*
 
+# The tray reads its icon from disk at runtime, so the .ico has to exist as a
+# real file next to the app rather than only inside the asar.
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+
+# "Install with NexusCraft" links and server invites.
+#
+# Kept here for the targets that honour it — macOS, Linux and the Windows Store
+# build. The NSIS target ignores `protocols` entirely, so the Windows installer
+# registers the scheme through build/installer.nsh instead, and the app claims
+# it again at each start so a source build works without installing at all.
+protocols:
+  - name: NexusCraft
+    schemes:
+      - nexuscraft
+
 # Bundled runtimes and game files live in the user's data directory, never in
 # the install directory, so an uninstall never takes worlds with it.
 win:
@@ -48,6 +65,8 @@ nsis:
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico
+  # Registers nexuscraft:// links, which the NSIS target will not do on its own.
+  include: build/installer.nsh
 
 # Portable build: npx electron-builder --win portable
 portable:

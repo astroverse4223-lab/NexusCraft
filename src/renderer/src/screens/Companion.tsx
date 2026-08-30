@@ -16,11 +16,13 @@ import {
   Wrench,
   Zap
 } from 'lucide-react'
-import type { Companion, CompanionEvent, CompanionSettings, CompanionState, CompanionStatus } from '@shared/companion'
+import type { Companion, CompanionEvent, CompanionSettings, CompanionState, CompanionStatus , RoutineInfo } from '@shared/companion'
 import type { LauncherErrorPayload } from '@shared/types'
 import { api, subscribe, toPayload } from '../api'
+import { BotCam } from '../components/BotCam'
 import { useStore } from '../store/useStore'
 import { ErrorView, SettingRow, Spinner, Toggle, useAutoScroll } from '../components/ui'
+import { CrewPanel } from '../components/CrewPanel'
 
 const PROVIDERS: Array<{ id: string; label: string; baseUrl: string; needsKey: boolean; model: string; hint: string }> = [
   {
@@ -103,9 +105,10 @@ export function CompanionScreen(): JSX.Element {
   const [testing, setTesting] = useState(false)
   const [models, setModels] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
+  const [routines, setRoutines] = useState<RoutineInfo[]>([])
   const [statuses, setStatuses] = useState<Record<string, CompanionStatus>>({})
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
-  const [tab, setTab] = useState<'activity' | 'setup'>('setup')
+  const [tab, setTab] = useState<'activity' | 'crew' | 'setup'>('setup')
 
   const feedRef = useAutoScroll(state?.events.length ?? 0)
 
@@ -130,6 +133,12 @@ export function CompanionScreen(): JSX.Element {
     } catch (err) {
       setError(toPayload(err))
     }
+  }, [])
+
+  useEffect(() => {
+    // The scripted workers on offer, read from the main process so the list is
+    // whatever actually exists rather than a copy that drifts.
+    void api.companion.routines().then(setRoutines).catch(() => setRoutines([]))
   }, [])
 
   useEffect(() => {
@@ -396,12 +405,17 @@ export function CompanionScreen(): JSX.Element {
         <button className={`tab ${tab === 'activity' ? 'active' : ''}`} onClick={() => setTab('activity')}>
           Activity
         </button>
+        <button className={`tab ${tab === 'crew' ? 'active' : ''}`} onClick={() => setTab('crew')}>
+          Crews
+        </button>
         <button className={`tab ${tab === 'setup' ? 'active' : ''}`} onClick={() => setTab('setup')}>
           Setup
         </button>
       </div>
 
-      {tab === 'activity' ? (
+      {tab === 'crew' ? (
+        <CrewPanel companions={companions} statuses={statuses} />
+      ) : tab === 'activity' ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16, alignItems: 'start' }}>
           <div>
             <div
@@ -432,10 +446,35 @@ export function CompanionScreen(): JSX.Element {
               )}
             </div>
 
+            {running && (
+              /*
+               * A blank box does not say what a companion can be asked for, and
+               * the biggest thing it does — planning and building a structure in
+               * one go — is invisible until someone happens to phrase it right.
+               */
+              <div className="row gap-8 wrap mt-16">
+                {[
+                  'Build me a small oak cottage with a peaked roof',
+                  'Build a stone watchtower 5 wide and 10 tall',
+                  'What materials would that need?',
+                  'Follow me'
+                ].map((example) => (
+                  <button
+                    key={example}
+                    className="tab"
+                    onClick={() => setInstruction(example)}
+                    title="Put this in the box"
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="row gap-8 mt-16">
               <input
                 className="input"
-                placeholder={running ? 'Tell it what to do…' : 'Start the companion first'}
+                placeholder={running ? 'Tell it what to do — e.g. "build me a small cottage"' : 'Start the companion first'}
                 value={instruction}
                 disabled={!running}
                 onChange={(event) => setInstruction(event.target.value)}
@@ -448,11 +487,14 @@ export function CompanionScreen(): JSX.Element {
               </button>
             </div>
             <p className="field-hint mt-8">
-              You can also just talk to it in Minecraft chat — it reads the server chat directly.
+              You can also just talk to it in Minecraft chat — it reads the server chat directly. Building needs a
+              companion with a model configured, not a routine; in survival it will tell you what to gather first.
             </p>
           </div>
 
           <div className="col gap-16">
+            <BotCam companionId={selectedId!} running={running} />
+
             <div className="panel panel-pad">
               <div className="row gap-8 mb-8">
                 <Target size={15} style={{ color: 'var(--accent)' }} />
@@ -502,6 +544,44 @@ export function CompanionScreen(): JSX.Element {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+          {/* --------------------------------------------- how it decides */}
+          <div className="panel panel-pad" style={{ gridColumn: '1 / -1' }}>
+            <div className="section-title">How this companion decides</div>
+            {/*
+              * Think, or just work.
+              *
+              * A language model is worth its cost when the job is open-ended and
+              * wasted when it is not — chopping wood for an hour needs no
+              * judgement. Choosing a routine here swaps the model out entirely:
+              * no API key, no waiting on a reply, and the same behaviour every
+              * time. The two live side by side, one companion each.
+              */}
+            <div className="field">
+              <select
+                className="input"
+                value={settings.routine ?? ''}
+                onChange={(event) => void patch({ routine: event.target.value })}
+              >
+                <option value="">Think for itself — uses the language model below</option>
+                {routines.map((routine) => (
+                  <option key={routine.id} value={routine.id}>
+                    {routine.label} — scripted, no model needed
+                  </option>
+                ))}
+              </select>
+              <div className="field-hint">
+                {settings.routine
+                  ? (() => {
+                      const chosen = routines.find((r) => r.id === settings.routine)
+                      if (!chosen) return 'This routine is no longer available — pick another.'
+                      return `${chosen.description}${chosen.needs ? ` Wants: ${chosen.needs}` : ''} Nothing below this is used while a routine is running.`
+                    })()
+                  : 'Thinking costs a request to the model for every decision. A routine costs nothing and never surprises you — good for gathering, farming, guarding and the like.'}
+              </div>
+            </div>
+
+          </div>
+
           {/* ------------------------------------------------------ model */}
           <div className="panel panel-pad">
             <div className="section-title">The brain</div>

@@ -79,11 +79,38 @@ async function prepare(instance: Instance, verifyMode: 'quick' | 'full'): Promis
   }
 }
 
+/**
+ * Installs already under way, so a second request joins the first.
+ *
+ * Two installs of the same instance at once race over the same files, and the
+ * loser reports a `FileAlreadyExistsException` from a file the winner had just
+ * finished writing. The user sees "The Forge installer failed" while the
+ * install goes on to succeed — an alarming error about a job that worked.
+ * Whatever asked second gets the first one's answer instead.
+ */
+const installsInFlight = new Map<string, Promise<InstallResult>>()
+
 export async function installInstance(instanceId: string): Promise<InstallResult> {
+  const already = installsInFlight.get(instanceId)
+  if (already) {
+    log.info(`install of ${instanceId} is already running; waiting for it rather than starting a second`)
+    return await already
+  }
+
   const instance = getInstance(instanceId)
-  const result = await prepare(instance, 'quick')
-  toast('success', 'Instance ready', `${instance.name} is installed and ready to play.`)
-  return result
+
+  const running = (async (): Promise<InstallResult> => {
+    const result = await prepare(instance, 'quick')
+    toast('success', 'Instance ready', `${instance.name} is installed and ready to play.`)
+    return result
+  })()
+
+  installsInFlight.set(instanceId, running)
+  try {
+    return await running
+  } finally {
+    installsInFlight.delete(instanceId)
+  }
 }
 
 /**

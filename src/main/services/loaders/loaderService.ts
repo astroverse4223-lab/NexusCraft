@@ -222,6 +222,28 @@ async function runInstallerJar(
     if (!result.ok) {
       const detail = explainInstallerFailure(result.output)
 
+      /*
+       * A file that already exists is a different problem from a bad build, and
+       * saying "the loader version does not match" sends someone off to change
+       * a version that was correct. It means something else got there first —
+       * usually a second install racing this one, or the leavings of one that
+       * was interrupted.
+       */
+      if (/FileAlreadyExistsException/i.test(result.output)) {
+        throw new LauncherError('LOADER_INSTALL_FAILED', `${label} installer exited with an error:\n${detail}`, {
+          title: `The ${label} installer found files already there`,
+          message:
+            `${label} ${minecraftVersion} could not be written because some of its files already exist. That ` +
+            'usually means two installs ran at once, or an earlier one was interrupted part way through. The ' +
+            'loader version is not the problem.',
+          actions: [
+            'Try again — if another install was running, it may already have finished the job',
+            'If it keeps happening, delete the instance and create it again',
+            'Make sure antivirus is not holding files open in the data folder'
+          ]
+        })
+      }
+
       throw new LauncherError('LOADER_INSTALL_FAILED', `${label} installer exited with an error:\n${detail}`, {
         title: `The ${label} installer failed`,
         message: `${label} could not be installed for Minecraft ${minecraftVersion}. This usually means the loader build does not match the Minecraft version, or the installer could not write to the data folder.`,

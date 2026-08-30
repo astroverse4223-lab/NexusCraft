@@ -17,7 +17,7 @@ const log = createLogger('modpack')
 
 /* ------------------------------------------------------- manifest shape */
 
-interface MrpackFile {
+export interface MrpackFile {
   path: string
   hashes?: { sha1?: string; sha512?: string }
   env?: { client?: string; server?: string }
@@ -25,7 +25,7 @@ interface MrpackFile {
   fileSize?: number
 }
 
-interface MrpackIndex {
+export interface MrpackIndex {
   formatVersion: number
   game: string
   versionId: string
@@ -54,7 +54,7 @@ const ALLOWED_DOWNLOAD_DOMAINS = [
   'maven.fabricmc.net'
 ]
 
-function isAllowedDownload(url: string): boolean {
+export function isAllowedDownload(url: string): boolean {
   try {
     const parsed = new URL(url)
     if (parsed.protocol !== 'https:') return false
@@ -68,7 +68,7 @@ function isAllowedDownload(url: string): boolean {
 /* -------------------------------------------------------------- parsing */
 
 /** Maps the pack's dependency block onto a loader the launcher understands. */
-function resolveLoader(dependencies: Record<string, string>): { loader: LoaderId; version: string | null } {
+export function resolveLoader(dependencies: Record<string, string>): { loader: LoaderId; version: string | null } {
   if (dependencies['fabric-loader']) return { loader: 'fabric', version: dependencies['fabric-loader'] }
   if (dependencies['quilt-loader']) return { loader: 'quilt', version: dependencies['quilt-loader'] }
   if (dependencies['neoforge']) return { loader: 'neoforge', version: dependencies['neoforge'] }
@@ -81,7 +81,7 @@ function resolveLoader(dependencies: Record<string, string>): { loader: LoaderId
  * .mrpack are attacker-controlled, and "../" in a zip entry is the classic
  * zip-slip escape.
  */
-function safeTarget(gameDir: string, relative: string): string {
+export function safeTarget(gameDir: string, relative: string): string {
   const cleaned = relative.replace(/\\/g, '/').replace(/^\/+/, '')
   if (!cleaned || cleaned.includes('..') || isAbsolute(cleaned) || /^[a-zA-Z]:/.test(cleaned)) {
     throw new LauncherError('INVALID_INPUT', `modpack entry escapes the instance: ${relative.slice(0, 120)}`)
@@ -91,7 +91,7 @@ function safeTarget(gameDir: string, relative: string): string {
   return assertInside(gameDir, target)
 }
 
-function readIndex(zip: AdmZip): MrpackIndex {
+export function readIndex(zip: AdmZip): MrpackIndex {
   const entry = zip.getEntry('modrinth.index.json')
   if (!entry) {
     throw new LauncherError('INVALID_INPUT', 'no modrinth.index.json in the archive', {
@@ -304,7 +304,7 @@ export const __internals = { isAllowedDownload, resolveLoader, safeTarget }
  * ids must be resolved against the CurseForge API to obtain download URLs, so
  * this path needs an API key where the Modrinth one does not.
  */
-interface CfManifest {
+export interface CfManifest {
   manifestType?: string
   name?: string
   version?: string
@@ -318,7 +318,7 @@ interface CfManifest {
 }
 
 /** "forge-47.2.0" -> { loader: 'forge', version: '47.2.0' } */
-function parseCfLoader(modLoaders: CfManifest['minecraft']['modLoaders']): {
+export function parseCfLoader(modLoaders: CfManifest['minecraft']['modLoaders']): {
   loader: LoaderId
   version: string | null
 } {
@@ -341,7 +341,7 @@ function parseCfLoader(modLoaders: CfManifest['minecraft']['modLoaders']): {
   }
 }
 
-function readCfManifest(zip: AdmZip): CfManifest | null {
+export function readCfManifest(zip: AdmZip): CfManifest | null {
   const entry = zip.getEntry('manifest.json')
   if (!entry) return null
   try {

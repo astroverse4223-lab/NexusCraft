@@ -4,11 +4,15 @@ import type {
   AppSettings,
   BackupInfo,
   ContentPack,
+  CrashAutopsy,
+  CrashFix,
   CreateInstanceInput,
   DownloadProgress,
   GameLogLine,
   Instance,
+  InstanceSnapshot,
   InstanceStats,
+  SnapshotDiff,
   JavaInstallation,
   LauncherErrorPayload,
   LaunchState,
@@ -21,7 +25,10 @@ import type {
   ModrinthInstallResult,
   ModpackInfo,
   ModpackInstallResult,
+  ModpackServerInstallResult,
   ModUpdate,
+  ModChangelog,
+  ModRollback,
   InstanceExportInfo,
   DataPackDefinition,
   DataPackOptionValues,
@@ -30,12 +37,24 @@ import type {
   Result,
   SavedServer,
   SavedSkin,
+  ServerInvite,
   ServerShareDetails,
   ServerStatus,
+  DirectoryListing,
+  DirectoryLookup,
+  DirectoryJoinTargets,
   VersionManifestInfo,
   WorldInfo
 } from '@shared/types'
-import type { Companion, CompanionSettings, CompanionState } from '@shared/companion'
+import type {
+  BlueprintSummary,
+  Companion,
+  CompanionSettings,
+  CompanionState,
+  Crew,
+  CrewNote,
+  RoutineInfo
+} from '@shared/companion'
 import type {
   HostedServer,
   HostedServerConsoleLine,
@@ -103,6 +122,7 @@ export interface AppInfo {
   logsDir: string
   secureStorage: boolean
   isPackaged: boolean
+  scratchData: boolean
 }
 
 export interface MemoryInfo {
@@ -128,6 +148,36 @@ export interface Screenshot {
   takenAt: number
   sizeBytes: number
   dataUrl: string | null
+}
+
+/** The relay agent a server uses when its router cannot forward a port. */
+export interface TunnelSettings {
+  agentPath: string
+  provider: 'playit' | 'custom'
+  args: string
+}
+
+export interface TunnelState {
+  serverId: string
+  status: 'stopped' | 'starting' | 'running' | 'error'
+  address: string | null
+  detail: string
+  output: string[]
+}
+
+/** How often a hosted server snapshots its world, and how many it keeps. */
+export interface ServerBackupSettings {
+  enabled: boolean
+  intervalMinutes: number
+  keep: number
+  onStop: boolean
+}
+
+/** What a modpack-as-server install may override. All optional. */
+export interface ModpackServerOptions {
+  name?: string
+  port?: number
+  memoryMb?: number
 }
 
 export const api = {
@@ -184,7 +234,31 @@ export const api = {
         includeScreenshots
       }),
     inspectArchive: (filePath: string) => call<InstanceExportInfo>('instances:inspectArchive', { filePath }),
-    importArchive: (filePath: string, name?: string) => call<Instance>('instances:import', { filePath, name })
+    importArchive: (filePath: string, name?: string) => call<Instance>('instances:import', { filePath, name }),
+    snapshots: (id: string) => call<InstanceSnapshot[]>('instances:snapshots', { id }),
+    snapshot: (id: string, name: string, note?: string) =>
+      call<InstanceSnapshot>('instances:snapshot', { id, name, note }),
+    restoreSnapshot: (id: string, snapshotId: string) =>
+      call<InstanceSnapshot>('instances:restoreSnapshot', { id, snapshotId }),
+    deleteSnapshot: (id: string, snapshotId: string) =>
+      call<boolean>('instances:deleteSnapshot', { id, snapshotId }),
+    diffSnapshot: (id: string, snapshotId: string) =>
+      call<SnapshotDiff>('instances:diffSnapshot', { id, snapshotId }),
+    exportPack: (
+      id: string,
+      outputPath: string,
+      options: {
+        name?: string
+        version?: string
+        summary?: string
+        includeConfigs?: boolean
+        includeWorlds?: boolean
+      } = {}
+    ) =>
+      call<{ path: string; bytes: number; linked: number; overrides: number; unmatched: string[] }>(
+        'instances:exportPack',
+        { id, outputPath, ...options }
+      )
   },
 
   launch: {
@@ -192,7 +266,11 @@ export const api = {
       call<LaunchState>('launch:start', { instanceId, serverAddress }),
     stop: (instanceId: string) => call<boolean>('launch:stop', { instanceId }),
     states: () => call<LaunchState[]>('launch:state'),
-    logs: (instanceId: string, limit?: number) => call<GameLogLine[]>('launch:logs', { instanceId, limit })
+    logs: (instanceId: string, limit?: number) => call<GameLogLine[]>('launch:logs', { instanceId, limit }),
+    autopsyAvailable: () => call<{ available: boolean }>('launch:autopsyAvailable'),
+    autopsy: (instanceId: string) => call<CrashAutopsy>('launch:autopsy', { instanceId }),
+    applyFix: (instanceId: string, fix: CrashFix) =>
+      call<{ applied: string; maxRamMb?: number }>('launch:applyFix', { instanceId, fix })
   },
 
   downloads: {
@@ -217,6 +295,11 @@ export const api = {
     checkUpdates: (instanceId: string) => call<ModUpdate[]>('mods:checkUpdates', { instanceId }),
     applyUpdate: (instanceId: string, update: ModUpdate) =>
       call<boolean>('mods:applyUpdate', { instanceId, update }),
+    changelog: (instanceId: string, update: ModUpdate) =>
+      call<ModChangelog[]>('mods:changelog', { instanceId, update }),
+    rollbacks: (instanceId: string) => call<ModRollback[]>('mods:rollbacks', { instanceId }),
+    rollback: (instanceId: string, fileName: string) =>
+      call<ModRollback>('mods:rollback', { instanceId, fileName }),
     setEnabled: (instanceId: string, fileName: string, enabled: boolean) =>
       call<boolean>('mods:setEnabled', { instanceId, fileName, enabled }),
     remove: (instanceId: string, fileName: string) => call<boolean>('mods:delete', { instanceId, fileName }),
@@ -274,6 +357,7 @@ export const api = {
   },
 
   companion: {
+    routines: () => call<RoutineInfo[]>('companion:routines'),
     list: () => call<Companion[]>('companion:list'),
     states: () => call<CompanionState[]>('companion:states'),
     create: (name?: string) => call<Companion>('companion:create', { name }),
@@ -286,12 +370,46 @@ export const api = {
     state: (id: string) => call<CompanionState>('companion:state', { id }),
     instruct: (id: string, text: string) => call<boolean>('companion:instruct', { id, text }),
     clearMemory: (id: string) => call<boolean>('companion:clearMemory', { id }),
+    camera: (id: string, on: boolean) => call<boolean>('companion:camera', { id, on }),
+    blueprints: () => call<BlueprintSummary[]>('companion:blueprints'),
+    importSchematic: (filePath: string) => call<BlueprintSummary>('companion:importSchematic', { filePath }),
+    build: (id: string, blueprintId: string) => call<boolean>('companion:build', { id, blueprintId }),
+    exportBlueprint: (
+      blueprintId: string,
+      target: { instanceId?: string; serverId?: string },
+      format: 'schem' | 'nbt'
+    ) =>
+      call<{ path: string; format: string; bytes: number }>('blueprints:export', {
+        blueprintId,
+        ...target,
+        format
+      }),
+    setupLitematica: (instanceId: string) =>
+      call<{ installed: string[]; missing: string[] }>('blueprints:setupLitematica', { instanceId }),
     listModels: (id: string) => call<string[]>('companion:listModels', { id }),
     testModel: (id: string) =>
       call<{ ok: boolean; ms: number; model: string; reply: string }>('companion:testModel', { id })
   },
 
+  crews: {
+    list: () => call<Crew[]>('crew:list'),
+    create: (name: string, foremanId: string, memberIds: string[]) =>
+      call<Crew>('crew:create', { name, foremanId, memberIds }),
+    update: (id: string, patch: { name?: string; memberIds?: string[] }) =>
+      call<Crew>('crew:update', { id, patch }),
+    remove: (id: string) => call<boolean>('crew:delete', { id }),
+    start: (id: string) =>
+      call<{ started: string[]; failed: Array<{ username: string; reason: string }> }>('crew:start', { id }),
+    stop: (id: string) => call<string[]>('crew:stop', { id }),
+    notes: (id: string) => call<CrewNote[]>('crew:notes', { id }),
+    clearNotes: (id: string) => call<boolean>('crew:clearNotes', { id })
+  },
+
   host: {
+    installModrinth: (id: string, versionId: string, kind: string) =>
+      call<ModrinthInstallResult>('host:installModrinth', { id, versionId, kind }),
+    installCurseForge: (id: string, projectId: string, fileId: string, kind: string) =>
+      call<ModrinthInstallResult>('host:installCurseForge', { id, projectId, fileId, kind }),
     share: (id: string) => call<ServerShareDetails>('host:share', { id }),
     forwardStatus: (id: string) =>
       call<{
@@ -322,7 +440,29 @@ export const api = {
     deleteMod: (id: string, fileName: string) => call<boolean>('host:deleteMod', { id, fileName }),
     installMod: (id: string, versionId: string) => call<unknown>('host:installMod', { id, versionId }),
     joinTargets: (id: string) => call<Instance[]>('host:joinTargets', { id }),
-    join: (id: string, instanceId: string) => call<unknown>('host:join', { id, instanceId }),
+    stewards: (id: string) => call<Companion[]>('host:stewards', { id }),
+    deploySteward: (id: string, companionId?: string) =>
+      call<{ companion: Companion; created: boolean; warning: string | null }>('host:deploySteward', {
+        id,
+        companionId
+      }),
+    dismissSteward: (companionId: string) => call<Companion>('host:dismissSteward', { companionId }),
+    backups: (id: string) => call<BackupInfo[]>('host:backups', { id }),
+    backup: (id: string) => call<BackupInfo>('host:backup', { id }),
+    restoreBackup: (id: string, fileName: string) => call<boolean>('host:restoreBackup', { id, fileName }),
+    deleteBackup: (id: string, fileName: string) => call<boolean>('host:deleteBackup', { id, fileName }),
+    backupSettings: (id: string) => call<ServerBackupSettings>('host:backupSettings', { id }),
+    inviteLink: (id: string) =>
+      call<{ link: string; address: string; isPublic: boolean; note: string | null }>('host:inviteLink', { id }),
+    tunnelSettings: (id: string) => call<TunnelSettings>('host:tunnelSettings', { id }),
+    setTunnelSettings: (id: string, patch: Partial<TunnelSettings>) =>
+      call<TunnelSettings>('host:setTunnelSettings', { id, patch }),
+    tunnelState: (id: string) => call<TunnelState>('host:tunnelState', { id }),
+    startTunnel: (id: string) => call<TunnelState>('host:startTunnel', { id }),
+    stopTunnel: (id: string) => call<TunnelState>('host:stopTunnel', { id }),
+    setBackupSettings: (id: string, patch: Partial<ServerBackupSettings>) =>
+      call<ServerBackupSettings>('host:setBackupSettings', { id, patch }),
+    join: (id: string, instanceId?: string) => call<unknown>('host:join', { id, instanceId }),
     openFolder: (id: string) => call<boolean>('host:openFolder', { id }),
     syncMods: (id: string, instanceId: string) =>
       call<{ copied: string[]; alreadyPresent: string[]; instanceName: string }>('host:syncMods', {
@@ -364,7 +504,15 @@ export const api = {
     installFile: (filePath: string, name?: string) =>
       call<ModpackInstallResult>('modpack:installFile', { filePath, name }),
     installFromModrinth: (versionId: string, name?: string) =>
-      call<ModpackInstallResult>('modpack:installModrinth', { versionId, name })
+      call<ModpackInstallResult>('modpack:installModrinth', { versionId, name }),
+
+    /* The same three sources, installed as a server to host instead. */
+    serverFromFile: (filePath: string, options: ModpackServerOptions = {}) =>
+      call<ModpackServerInstallResult>('modpack:serverFromFile', { filePath, ...options }),
+    serverFromModrinth: (versionId: string, options: ModpackServerOptions = {}) =>
+      call<ModpackServerInstallResult>('modpack:serverFromModrinth', { versionId, ...options }),
+    serverFromCurseForge: (projectId: string, fileId: string, options: ModpackServerOptions = {}) =>
+      call<ModpackServerInstallResult>('modpack:serverFromCurseForge', { projectId, fileId, ...options })
   },
 
   worlds: {
@@ -375,7 +523,22 @@ export const api = {
     listBackups: (instanceId: string) => call<BackupInfo[]>('worlds:listBackups', { instanceId }),
     deleteBackup: (instanceId: string, fileName: string) =>
       call<boolean>('worlds:deleteBackup', { instanceId, fileName }),
+    restore: (instanceId: string, fileName: string) => call<WorldInfo>('worlds:restore', { instanceId, fileName }),
+    importArchive: (instanceId: string, filePath: string) => call<WorldInfo>('worlds:import', { instanceId, filePath }),
     remove: (instanceId: string, folderName: string) => call<BackupInfo>('worlds:delete', { instanceId, folderName })
+  },
+
+  directory: {
+    list: () => call<DirectoryListing>('directory:list'),
+    refresh: (force = false) => call<ServerStatus[]>('directory:refresh', { force }),
+    ping: (id: string) => call<ServerStatus>('directory:ping', { id }),
+    lookup: (address: string) => call<DirectoryLookup>('directory:lookup', { address }),
+    add: (name: string, address: string, port: number) =>
+      call<SavedServer>('directory:add', { name, address, port }),
+    joinTargets: (address: string, port: number) =>
+      call<DirectoryJoinTargets>('directory:joinTargets', { address, port }),
+    join: (address: string, port: number, instanceId?: string) =>
+      call<LaunchState>('directory:join', { address, port, instanceId })
   },
 
   servers: {
@@ -395,6 +558,19 @@ export const api = {
     ping: (id: string) => call<ServerStatus>('servers:ping', { id }),
     pingAll: () => call<ServerStatus[]>('servers:pingAll'),
     import: (instanceId: string) => call<{ imported: number }>('servers:import', { instanceId })
+  },
+
+  links: {
+    pendingInvite: () => call<ServerInvite | null>('links:pendingInvite'),
+    acceptInvite: (invite: {
+      host: string
+      port: number
+      name?: string | null
+      minecraftVersion?: string | null
+      loader?: string | null
+      packVersionId?: string | null
+      instanceId?: string | null
+    }) => call<{ instanceId: string; instanceName: string; address: string }>('links:acceptInvite', invite)
   },
 
   skins: {

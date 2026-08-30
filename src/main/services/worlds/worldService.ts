@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
-import { readdir, readFile, rm, stat, mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readdir, readFile, rm, stat, mkdir, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import type { BackupInfo, Instance, WorldInfo } from '@shared/types'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
@@ -219,6 +219,155 @@ export async function deleteBackup(instance: Instance, fileName: string): Promis
   const dir = backupsDir(instance)
   const target = assertInside(dir, join(dir, fileName))
   await rm(target, { force: true })
+}
+
+/**
+ * Turns a zip into a world folder under `saves`.
+ *
+ * Minecraft world archives come in two shapes: the world folder zipped up (so
+ * every entry sits under `MyWorld/`) and the *contents* zipped up (`level.dat`
+ * at the root). Both are common, so the level.dat is located first and whatever
+ * directory holds it becomes the world root.
+ */
+export async function importWorldArchive(instance: Instance, filePath: string): Promise<WorldInfo> {
+  const AdmZip = (await import('adm-zip')).default
+
+  let zip: InstanceType<typeof AdmZip>
+  try {
+    zip = new AdmZip(filePath)
+  } catch {
+    throw new LauncherError('INVALID_INPUT', 'not a readable zip archive', {
+      title: 'That file is not a world archive',
+      message: 'A Minecraft world is a folder containing level.dat, usually shared as a .zip.',
+      actions: ['Check the file downloaded completely', 'Drop the .zip you received rather than an extracted folder']
+    })
+  }
+
+  const entries = zip.getEntries().filter((entry) => !entry.isDirectory)
+
+  // The shallowest level.dat wins: a world may contain another world in a
+  // backups folder, and the outer one is the world being imported.
+  const levelEntry = entries
+    .filter((entry) => entry.entryName.toLowerCase().endsWith('level.dat'))
+    .sort((a, b) => a.entryName.split('/').length - b.entryName.split('/').length)[0]
+
+  if (!levelEntry) {
+    throw new LauncherError('INVALID_INPUT', 'no level.dat in the archive', {
+      title: 'That archive is not a Minecraft world',
+      message: 'It contains no level.dat, which every world has at its root.',
+      actions: ['Make sure you are importing a world, not a modpack or resource pack']
+    })
+  }
+
+  // Everything above level.dat is the prefix to strip from each entry.
+  const prefix = levelEntry.entryName.slice(0, levelEntry.entryName.length - 'level.dat'.length)
+
+  const suggested =
+    safeName(prefix.replace(/\/$/, '').split('/').pop() || basename(filePath).replace(/\.zip$/i, '')) || 'Imported world'
+
+  const saves = savesDir(instance)
+  await mkdir(saves, { recursive: true })
+
+  // Never overwrite an existing world; suffix until the name is free.
+  let folderName = suggested
+  let suffix = 2
+  while (existsSync(join(saves, folderName))) {
+    folderName = `${suggested} (${suffix})`
+    suffix += 1
+  }
+
+  const destination = assertInside(saves, join(saves, folderName))
+  await mkdir(destination, { recursive: true })
+
+  let written = 0
+  try {
+    for (const entry of entries) {
+      if (prefix && !entry.entryName.startsWith(prefix)) continue
+      const relative = entry.entryName.slice(prefix.length)
+      if (!relative || relative.includes('..')) continue
+
+      const target = assertInside(destination, join(destination, ...relative.split('/')))
+      await mkdir(join(target, '..'), { recursive: true })
+      await writeFile(target, entry.getData())
+      written += 1
+    }
+  } catch (err) {
+    // A half-extracted world is worse than none: Minecraft would list it and
+    // then fail to open it.
+    await rm(destination, { recursive: true, force: true }).catch(() => undefined)
+    throw err
+  }
+
+  log.info(`imported world "${folderName}" into ${instance.name} (${written} files)`)
+
+  const world = await readWorld(saves, folderName)
+  if (!world) throw new LauncherError('INSTANCE_CORRUPT', 'the imported world could not be read back')
+  return world
+}
+
+/**
+ * Puts a backup back, replacing the world it came from.
+ *
+ * The world being replaced is itself backed up first, so restoring the wrong
+ * restore point is undoable — which is the whole point of restore points.
+ */
+export async function restoreBackup(instance: Instance, fileName: string): Promise<WorldInfo> {
+  const dir = backupsDir(instance)
+  const archive = assertInside(dir, join(dir, fileName))
+  if (!existsSync(archive)) throw new LauncherError('NOT_FOUND', 'that backup no longer exists')
+
+  const AdmZip = (await import('adm-zip')).default
+  const zip = new AdmZip(archive)
+  const entries = zip.getEntries().filter((entry) => !entry.isDirectory)
+
+  /*
+   * Which world this goes back into.
+   *
+   * Backups are written from inside the world folder, so level.dat is at the
+   * archive root and the folder name has to come from the file name — but that
+   * name went through `safeName`, which replaces anything outside a small
+   * character set. Restoring "My World!" by its sanitised name would create a
+   * folder called "My World_" beside the original and leave the real world
+   * untouched, having promised to replace it. So the sanitised name is matched
+   * back against the folders that actually exist.
+   */
+  const stamped = fileName.replace(/_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.zip$/, '')
+  const saves = savesDir(instance)
+
+  let existing: string[] = []
+  try {
+    existing = (await readdir(saves, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    /* no saves folder yet; the world is being restored into an empty instance */
+  }
+
+  const worldName =
+    existing.find((folder) => folder === stamped) ??
+    existing.find((folder) => safeName(folder) === stamped) ??
+    stamped
+
+  const destination = assertInside(saves, join(saves, worldName))
+
+  if (existsSync(destination)) {
+    await backupWorld(instance, worldName)
+    await rm(destination, { recursive: true, force: true })
+  }
+
+  await mkdir(destination, { recursive: true })
+  for (const entry of entries) {
+    if (entry.entryName.includes('..')) continue
+    const target = assertInside(destination, join(destination, ...entry.entryName.split('/')))
+    await mkdir(join(target, '..'), { recursive: true })
+    await writeFile(target, entry.getData())
+  }
+
+  log.info(`restored "${worldName}" in ${instance.name} from ${fileName}`)
+
+  const world = await readWorld(saves, worldName)
+  if (!world) throw new LauncherError('INSTANCE_CORRUPT', 'the restored world could not be read back')
+  return world
 }
 
 /**

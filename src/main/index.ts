@@ -13,6 +13,13 @@ import { cancelAll } from './services/downloads/downloadManager'
 import { initAutoUpdate } from './services/update/updateService'
 import { shutdownCompanion } from './services/companion/companionService'
 import { shutdownHostedServers } from './services/servers/hostService'
+import { initTray, destroyTray } from './services/tray/trayService'
+import { initPresence, shutdownPresence } from './services/presence/presenceService'
+import { initStewards } from './services/companion/stewardService'
+import { initBackupScheduler } from './services/backup/backupScheduler'
+import { initTunnels, shutdownTunnels } from './services/servers/tunnelService'
+import { registerProtocol, findLinkInArgv } from './services/links/deepLinks'
+import { handleDeepLink } from './services/links/linkActions'
 
 const log = createLogger('main')
 
@@ -99,6 +106,25 @@ function applySecurityPolicies(): void {
 
 let mainWindow: BrowserWindow | null = null
 
+/**
+ * Set once the app has decided to exit. Until then, closing the window is —
+ * when the setting says so — a request to keep working from the tray, not to
+ * stop: downloads keep going, hosted servers stay up, and closing the launcher
+ * no longer takes a running game's log pipes with it.
+ */
+let quitting = false
+
+/** Brings the (possibly tray-hidden) window back into view. */
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createWindow()
+    return
+  }
+  if (!mainWindow.isVisible()) mainWindow.show()
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1360,
@@ -144,6 +170,15 @@ function createWindow(): BrowserWindow {
     if (isDev) window.webContents.openDevTools({ mode: 'detach' })
   })
 
+  // Closing hides to the tray unless the app is actually quitting or the user
+  // turned the tray off. Hiding — not closing — is what keeps downloads,
+  // hosted servers and companions alive with no window on screen.
+  window.on('close', (event) => {
+    if (quitting || !getSettings().closeToTray) return
+    event.preventDefault()
+    window.hide()
+  })
+
   window.on('closed', () => {
     mainWindow = null
   })
@@ -159,17 +194,40 @@ function createWindow(): BrowserWindow {
 
 /* --------------------------------------------------------------- boot */
 
-// Two launchers sharing one data directory would corrupt instances.
-const gotLock = app.requestSingleInstanceLock()
+/*
+ * Two launchers sharing one data directory would corrupt instances — but that
+ * is the only case worth blocking, and the lock is global to the application.
+ *
+ * A copy told to use its own data directory is a separate launcher by
+ * definition: a portable build, or a test run. Letting the global lock stop it
+ * does not protect anything, and it actively misleads, because the running copy
+ * answers by showing ITS window — so launching your real launcher while a copy
+ * on a scratch directory is open silently presents you with an empty one, and
+ * it looks like every instance you own has been deleted.
+ */
+const separateDataDir = Boolean(process.env.NEXUSCRAFT_DATA_DIR?.trim())
+const gotLock = separateDataDir || app.requestSingleInstanceLock()
+
 if (!gotLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
-    }
+  /*
+   * A second launch is how Windows delivers a `nexuscraft://` link once the
+   * launcher is already open: the shell starts the app again with the URL on
+   * its command line, the single-instance lock sends us here, and the running
+   * copy is the one that has to act on it.
+   */
+  app.on('second-instance', (_event, argv) => {
+    showMainWindow()
+    const link = findLinkInArgv(argv)
+    if (link) void handleDeepLink(link).catch((err) => log.error('a link could not be handled', err))
+  })
+
+  // macOS delivers links through an event rather than argv.
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    showMainWindow()
+    void handleDeepLink(url).catch((err) => log.error('a link could not be handled', err))
   })
 
   app.whenReady().then(async () => {
@@ -185,8 +243,16 @@ if (!gotLock) {
 
     applySecurityPolicies()
     registerIpcHandlers()
+    initStewards()
+    initBackupScheduler()
+    initTunnels()
 
     mainWindow = createWindow()
+
+    initTray({
+      showWindow: showMainWindow,
+      quit: () => app.quit()
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
@@ -197,7 +263,24 @@ if (!gotLock) {
     void restoreSession()
 
     // Checked a few seconds in so it never competes with startup work.
-    setTimeout(() => void initAutoUpdate(), 8000)
+    // Never let an update problem surface as an unhandled rejection.
+    setTimeout(() => {
+      void initAutoUpdate().catch((err) => log.warn('the update check failed to start:', err))
+    }, 8000)
+    initPresence()
+    registerProtocol()
+
+    /*
+     * A link that started the launcher from cold arrives on our own command
+     * line. It waits for the window: the invite prompt and the install toasts
+     * both need a renderer listening, and there is not one yet.
+     */
+    const startupLink = findLinkInArgv(process.argv)
+    if (startupLink) {
+      mainWindow.webContents.once('did-finish-load', () => {
+        void handleDeepLink(startupLink).catch((err) => log.error('a startup link could not be handled', err))
+      })
+    }
   })
 
   app.on('window-all-closed', () => {
@@ -205,12 +288,17 @@ if (!gotLock) {
   })
 
   app.on('before-quit', () => {
+    quitting = true
     log.info('shutting down')
+    destroyTray()
+    shutdownPresence()
     cancelAll()
     // The companion is a child process; it must not outlive the launcher.
     shutdownCompanion()
-    // A hosted server must never outlive the launcher that started it.
+    // A hosted server must never outlive the launcher that started it, and
+    // neither may the relay agent that was making it reachable.
     void shutdownHostedServers()
+    shutdownTunnels()
     // Minecraft keeps running deliberately: closing the launcher should not
     // kill a game the user is in the middle of.
     closeDatabase()

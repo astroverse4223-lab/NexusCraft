@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   FolderOpen,
   Image as ImageIcon,
   Package,
@@ -10,12 +12,22 @@ import {
   Search,
   Sparkles,
   ArrowUpCircle,
-  Trash2
+  Trash2,
+  Undo2
 } from 'lucide-react'
-import type { ContentPack, Instance, LauncherErrorPayload, ModInfo, ModUpdate } from '@shared/types'
+import type {
+  ContentPack,
+  Instance,
+  LauncherErrorPayload,
+  ModChangelog,
+  ModInfo,
+  ModRollback,
+  ModUpdate
+} from '@shared/types'
 import { api, toPayload, type Screenshot } from '../api'
 import { useStore, focusedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Spinner, Toggle } from '../components/ui'
+import { DropZone } from '../components/DropZone'
 import { formatBytes, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
 import { BrowseTab } from './Browse'
 import { DataPacksTab } from './DataPacks'
@@ -113,6 +125,8 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
   const [updates, setUpdates] = useState<ModUpdate[] | null>(null)
   const [checking, setChecking] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
+  const [rollbacks, setRollbacks] = useState<ModRollback[]>([])
+  const [rollingBack, setRollingBack] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -151,10 +165,9 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
     }
   }
 
-  async function importMods(): Promise<void> {
+  async function installJars(files: string[]): Promise<void> {
+    if (files.length === 0) return
     try {
-      const files = await api.app.pickFiles({ title: 'Choose mod .jar files', extensions: ['jar'], multi: true })
-      if (files.length === 0) return
       const result = await api.mods.import(instance.id, files)
       pushToast({
         kind: result.imported > 0 ? 'success' : 'warning',
@@ -162,6 +175,15 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
         message: result.imported > 0 ? undefined : 'Only .jar files can be installed as mods.'
       })
       await load()
+    } catch (err) {
+      setError(toPayload(err))
+    }
+  }
+
+  async function importMods(): Promise<void> {
+    try {
+      const files = await api.app.pickFiles({ title: 'Choose mod .jar files', extensions: ['jar'], multi: true })
+      await installJars(files)
     } catch (err) {
       setError(toPayload(err))
     }
@@ -187,6 +209,7 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       await api.mods.applyUpdate(instance.id, update)
       setUpdates((current) => (current ?? []).filter((u) => u.fileName !== update.fileName))
       await load()
+      await loadRollbacks()
     } catch (err) {
       setError(toPayload(err))
     } finally {
@@ -194,10 +217,36 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
     }
   }
 
-  async function updateAll(): Promise<void> {
+  async function applySelected(chosen: ModUpdate[]): Promise<void> {
     // Sequential rather than parallel: each one replaces a file on disk, and a
     // burst of concurrent writes into the same folder is not worth the risk.
-    for (const update of updates ?? []) await applyUpdate(update)
+    for (const update of chosen) await applyUpdate(update)
+  }
+
+  const loadRollbacks = useCallback(async () => {
+    try {
+      setRollbacks(await api.mods.rollbacks(instance.id))
+    } catch {
+      // Undo history is a convenience; failing to read it must not break the screen.
+      setRollbacks([])
+    }
+  }, [instance.id])
+
+  useEffect(() => {
+    void loadRollbacks()
+  }, [loadRollbacks])
+
+  async function undoUpdate(fileName: string): Promise<void> {
+    setRollingBack(fileName)
+    try {
+      await api.mods.rollback(instance.id, fileName)
+      await load()
+      await loadRollbacks()
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setRollingBack(null)
+    }
   }
 
   async function remove(): Promise<void> {
@@ -227,7 +276,12 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
   }
 
   return (
-    <>
+    <DropZone
+      extensions={['jar']}
+      label={`Drop mods into ${instance.name}`}
+      hint="Release to install every .jar in the drop"
+      onFiles={installJars}
+    >
       <div className="row between mb-16 wrap gap-12">
         <div className="row gap-8">
           <div className="row gap-8 panel" style={{ padding: '0 10px', borderRadius: 10 }}>
@@ -267,44 +321,43 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       )}
 
       {updates && updates.length > 0 && (
-        <div className="panel panel-pad mb-16" style={{ borderColor: 'var(--accent)' }}>
-          <div className="row between mb-12">
-            <div className="row gap-10">
-              <ArrowUpCircle size={17} style={{ color: 'var(--accent)' }} />
-              <span style={{ fontWeight: 650 }}>
-                {updates.length} mod{updates.length === 1 ? ' has' : 's have'} a newer build
-              </span>
-            </div>
-            <button className="btn btn-primary btn-sm" disabled={updating !== null} onClick={() => void updateAll()}>
-              {updating ? <Spinner /> : null} Update all
-            </button>
+        <UpdateReview
+          instance={instance}
+          updates={updates}
+          updating={updating}
+          onApply={applyUpdate}
+          onApplyMany={applySelected}
+        />
+      )}
+
+      {rollbacks.length > 0 && (
+        <div className="panel panel-pad mb-16">
+          <div className="row gap-10 mb-12">
+            <Undo2 size={16} className="dim" />
+            <span style={{ fontWeight: 600 }}>Recent updates you can undo</span>
           </div>
           <div className="col gap-8">
-            {updates.map((update) => (
-              <div key={update.fileName} className="row gap-12">
+            {rollbacks.map((entry) => (
+              <div key={entry.fileName} className="row gap-12">
                 <div className="flex-1" style={{ minWidth: 0 }}>
-                  <div className="truncate" style={{ fontWeight: 600 }}>
-                    {update.modName}
+                  <div className="truncate small" style={{ fontWeight: 600 }}>
+                    {entry.modName}
                   </div>
                   <div className="tiny dim truncate">
-                    {update.currentVersion ? `${update.currentVersion} → ` : ''}
-                    {update.newVersion} · {formatBytes(update.sizeBytes)}
-                    {!update.enabled ? ' · disabled' : ''}
+                    {entry.toVersion} → back to {entry.fromVersion ?? 'the previous build'} ·{' '}
+                    {formatRelative(entry.updatedAt)}
                   </div>
                 </div>
                 <button
                   className="btn btn-sm"
-                  disabled={updating !== null}
-                  onClick={() => void applyUpdate(update)}
+                  disabled={rollingBack !== null}
+                  onClick={() => void undoUpdate(entry.fileName)}
                 >
-                  {updating === update.fileName ? <Spinner /> : <ArrowUpCircle size={13} />} Update
+                  {rollingBack === entry.fileName ? <Spinner /> : <Undo2 size={13} />} Undo
                 </button>
               </div>
             ))}
           </div>
-          <p className="field-hint mt-16">
-            Matched against Modrinth by file hash, so this works for mods added by hand as well as ones installed here.
-          </p>
         </div>
       )}
 
@@ -367,7 +420,207 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
         onConfirm={() => void remove()}
         onCancel={() => setDeleting(null)}
       />
-    </>
+    </DropZone>
+  )
+}
+
+/* ------------------------------------------------------- update review */
+
+/**
+ * The review step between "180 mods have updates" and installing them.
+ *
+ * Batch-updating a modpack is the single most common way to break one, and the
+ * information that would have warned you — this is a beta, this crosses a major
+ * version, here is what the author changed — is all in the API response and
+ * was previously thrown away. Each update starts selected, so the common case
+ * is still one click; the point is that the risky ones are visibly marked
+ * before that click.
+ */
+function UpdateReview({
+  instance,
+  updates,
+  updating,
+  onApply,
+  onApplyMany
+}: {
+  instance: Instance
+  updates: ModUpdate[]
+  updating: string | null
+  onApply: (update: ModUpdate) => Promise<void>
+  onApplyMany: (updates: ModUpdate[]) => Promise<void>
+}): JSX.Element {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(updates.map((u) => u.fileName)))
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [changelogs, setChangelogs] = useState<Record<string, ModChangelog[] | 'loading' | 'failed'>>({})
+
+  // A fresh check replaces the list; everything in it starts selected again.
+  useEffect(() => {
+    setSelected(new Set(updates.map((u) => u.fileName)))
+  }, [updates])
+
+  const chosen = updates.filter((update) => selected.has(update.fileName))
+  const risky = updates.filter((update) => update.majorJump || (update.versionType && update.versionType !== 'release'))
+
+  async function toggleExpanded(update: ModUpdate): Promise<void> {
+    if (expanded === update.fileName) {
+      setExpanded(null)
+      return
+    }
+    setExpanded(update.fileName)
+    if (changelogs[update.fileName]) return
+
+    setChangelogs((current) => ({ ...current, [update.fileName]: 'loading' }))
+    try {
+      const entries = await api.mods.changelog(instance.id, update)
+      setChangelogs((current) => ({ ...current, [update.fileName]: entries }))
+    } catch {
+      setChangelogs((current) => ({ ...current, [update.fileName]: 'failed' }))
+    }
+  }
+
+  return (
+    <div className="panel panel-pad mb-16" style={{ borderColor: 'var(--accent)' }}>
+      <div className="row between mb-12 wrap gap-12">
+        <div className="row gap-10">
+          <ArrowUpCircle size={17} style={{ color: 'var(--accent)' }} />
+          <span style={{ fontWeight: 650 }}>
+            {updates.length} mod{updates.length === 1 ? ' has' : 's have'} a newer build
+          </span>
+          {risky.length > 0 && (
+            <span className="pill" style={{ color: 'var(--warning)' }}>
+              {risky.length} worth a look
+            </span>
+          )}
+        </div>
+        <div className="row gap-8">
+          <button
+            className="btn btn-sm"
+            onClick={() =>
+              setSelected((current) =>
+                current.size === updates.length ? new Set() : new Set(updates.map((u) => u.fileName))
+              )
+            }
+          >
+            {selected.size === updates.length ? 'Select none' : 'Select all'}
+          </button>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={updating !== null || chosen.length === 0}
+            onClick={() => void onApplyMany(chosen)}
+          >
+            {updating ? <Spinner /> : null} Update {chosen.length === updates.length ? 'all' : `${chosen.length}`}
+          </button>
+        </div>
+      </div>
+
+      <div className="col gap-8">
+        {updates.map((update) => {
+          const notes = changelogs[update.fileName]
+          const isOpen = expanded === update.fileName
+
+          return (
+            <div key={update.fileName} className="col gap-8">
+              <div className="row gap-12">
+                <input
+                  type="checkbox"
+                  checked={selected.has(update.fileName)}
+                  onChange={(event) =>
+                    setSelected((current) => {
+                      const next = new Set(current)
+                      if (event.target.checked) next.add(update.fileName)
+                      else next.delete(update.fileName)
+                      return next
+                    })
+                  }
+                  style={{ accentColor: 'var(--accent)', width: 15, height: 15, flexShrink: 0 }}
+                  aria-label={`Update ${update.modName}`}
+                />
+                <div className="flex-1" style={{ minWidth: 0 }}>
+                  <div className="row gap-8" style={{ minWidth: 0 }}>
+                    <span className="truncate" style={{ fontWeight: 600 }}>
+                      {update.modName}
+                    </span>
+                    {update.majorJump && (
+                      <span className="pill tiny" style={{ color: 'var(--warning)' }}>
+                        major version
+                      </span>
+                    )}
+                    {update.versionType && update.versionType !== 'release' && (
+                      <span className="pill tiny" style={{ color: 'var(--info)' }}>
+                        {update.versionType}
+                      </span>
+                    )}
+                  </div>
+                  <div className="tiny dim truncate">
+                    {update.currentVersion ? `${update.currentVersion} → ` : ''}
+                    {update.newVersion} · {formatBytes(update.sizeBytes)}
+                    {update.publishedAt ? ` · ${formatRelative(update.publishedAt)}` : ''}
+                    {!update.enabled ? ' · disabled' : ''}
+                  </div>
+                </div>
+                <button className="btn btn-ghost btn-sm" onClick={() => void toggleExpanded(update)}>
+                  {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />} Changes
+                </button>
+                <button className="btn btn-sm" disabled={updating !== null} onClick={() => void onApply(update)}>
+                  {updating === update.fileName ? <Spinner /> : <ArrowUpCircle size={13} />} Update
+                </button>
+              </div>
+
+              {isOpen && (
+                <div
+                  className="panel panel-pad"
+                  style={{ background: 'var(--bg-2)', maxHeight: 260, overflowY: 'auto' }}
+                >
+                  {notes === 'loading' && (
+                    <div className="row gap-10 muted small">
+                      <Spinner /> Reading the release notes…
+                    </div>
+                  )}
+                  {notes === 'failed' && (
+                    <div className="small muted">Modrinth did not return release notes for this mod.</div>
+                  )}
+                  {Array.isArray(notes) &&
+                    (notes.length === 0 ? (
+                      <div className="small muted">The author published no notes for this build.</div>
+                    ) : (
+                      <div className="col gap-12">
+                        {notes.map((entry) => (
+                          <div key={entry.versionId}>
+                            <div className="row gap-8">
+                              <span className="small" style={{ fontWeight: 600 }}>
+                                {entry.versionNumber}
+                              </span>
+                              {entry.versionType !== 'release' && (
+                                <span className="pill tiny" style={{ color: 'var(--info)' }}>
+                                  {entry.versionType}
+                                </span>
+                              )}
+                              {entry.publishedAt && (
+                                <span className="tiny dim">{formatRelative(entry.publishedAt)}</span>
+                              )}
+                            </div>
+                            <div
+                              className="tiny mt-8"
+                              style={{ whiteSpace: 'pre-wrap', color: 'var(--text-muted)', lineHeight: 1.55 }}
+                            >
+                              {entry.changelog || 'No notes for this build.'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <p className="field-hint mt-16">
+        Matched against Modrinth by file hash, so this works for mods added by hand as well as ones installed here. The
+        jar each update replaces is kept, so any of this can be undone.
+      </p>
+    </div>
   )
 }
 
@@ -483,10 +736,9 @@ function ContentTab({ instance, kind }: { instance: Instance; kind: 'resourcepac
     void load()
   }, [load])
 
-  async function importPacks(): Promise<void> {
+  async function installPacks(files: string[]): Promise<void> {
+    if (files.length === 0) return
     try {
-      const files = await api.app.pickFiles({ title: `Choose ${label} .zip files`, extensions: ['zip'], multi: true })
-      if (files.length === 0) return
       const result = await api.content.import(instance.id, kind, files)
       pushToast({
         kind: result.imported > 0 ? 'success' : 'warning',
@@ -499,8 +751,22 @@ function ContentTab({ instance, kind }: { instance: Instance; kind: 'resourcepac
     }
   }
 
+  async function importPacks(): Promise<void> {
+    try {
+      const files = await api.app.pickFiles({ title: `Choose ${label} .zip files`, extensions: ['zip'], multi: true })
+      await installPacks(files)
+    } catch (err) {
+      setError(toPayload(err))
+    }
+  }
+
   return (
-    <>
+    <DropZone
+      extensions={['zip']}
+      label={`Drop ${label}s here`}
+      hint={`They install into ${instance.name}`}
+      onFiles={installPacks}
+    >
       <div className="row between mb-16">
         <p className="small muted" style={{ maxWidth: '60ch' }}>
           {kind === 'resourcepacks'
@@ -614,7 +880,7 @@ function ContentTab({ instance, kind }: { instance: Instance; kind: 'resourcepac
         }}
         onCancel={() => setDeleting(null)}
       />
-    </>
+    </DropZone>
   )
 }
 

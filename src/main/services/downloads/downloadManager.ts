@@ -9,6 +9,7 @@ import { request, safeUrl } from '../../core/http'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { emit } from '../../core/events'
+import { notifyDesktop } from '../../core/notifications'
 import { openForWrite, removeFile, renameWhenFree } from '../../core/fileLocks'
 
 const log = createLogger('downloads')
@@ -272,15 +273,38 @@ export class DownloadTask {
      */
     try {
       const info = await stat(tempPath)
-      if (item.size != null && info.size !== item.size) {
-        throw new Error(
-          `size mismatch for ${basename(item.destination)}: expected ${item.size} bytes, wrote ${info.size}`
-        )
-      }
+
+      /*
+       * The hash decides. The size is only consulted when there is no hash.
+       *
+       * Modpack manifests state file sizes that are quietly wrong by a byte or
+       * two — a real pack failed to install because four of its mods were
+       * declared as 122777, 1286460, 29962 and 215534 bytes when the files
+       * served were 122778, 1286462, 29961 and 215533. Every one had a matching
+       * checksum and was perfectly good, and every one was deleted for
+       * disagreeing with a number the pack author never checked.
+       *
+       * A cryptographic digest proves the bytes are right; a size field is a
+       * hint someone typed. Where both exist, only one of them is evidence.
+       */
       if (item.sha1) {
         const digest = await sha1OfFile(tempPath)
         if (digest.toLowerCase() !== item.sha1.toLowerCase()) {
           throw new Error(`checksum mismatch for ${basename(item.destination)}`)
+        }
+      } else if (item.size != null && info.size !== item.size) {
+        /*
+         * No hash, so the size is all there is — but it is allowed the same
+         * small inaccuracy seen in the wild, since rejecting a good file is
+         * worse than accepting one a couple of bytes off with nothing better to
+         * judge it by.
+         */
+        const drift = Math.abs(info.size - item.size)
+        const allowed = Math.max(16, Math.floor(item.size * 0.001))
+        if (drift > allowed) {
+          throw new Error(
+            `size mismatch for ${basename(item.destination)}: expected ${item.size} bytes, wrote ${info.size}`
+          )
         }
       }
     } catch (err) {
@@ -302,7 +326,12 @@ export class DownloadTask {
       if (this.verifyMode === 'full' && item.sha1) {
         return (await sha1OfFile(item.destination)) === item.sha1.toLowerCase()
       }
-      if (item.size != null) return info.size === item.size
+      // Same reasoning as above: a size within a whisker of the stated one is
+      // not evidence of damage, and re-downloading it will not change anything.
+      if (item.size != null) {
+        const drift = Math.abs(info.size - item.size)
+        return drift <= Math.max(16, Math.floor(item.size * 0.001))
+      }
       // No size to compare against: only a hash can tell us, so re-download.
       return item.sha1 ? (await sha1OfFile(item.destination)) === item.sha1.toLowerCase() : true
     } catch {
@@ -353,6 +382,17 @@ export class DownloadTask {
     this.finished = true
     this.phase = this.failed.length ? 'error' : 'done'
     this.emitProgress(true)
+
+    // A job big enough that the user plausibly tabbed away while it ran. The
+    // helper stays silent when the launcher window is focused, so this never
+    // duplicates an in-app toast the user is already reading.
+    if (this.totalFiles >= 25 || this.totalBytes >= 64 * 1024 * 1024) {
+      notifyDesktop(
+        this.failed.length
+          ? { title: 'Download finished with problems', body: `${this.label || 'A download'} had ${this.failed.length} failed file${this.failed.length === 1 ? '' : 's'}.` }
+          : { title: 'Download complete', body: `${this.label || 'Your download'} is ready.` }
+      )
+    }
   }
 }
 

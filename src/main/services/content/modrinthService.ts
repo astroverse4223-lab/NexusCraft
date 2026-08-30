@@ -1,9 +1,12 @@
 import { existsSync } from 'node:fs'
-import { readdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import type {
   ContentKindId,
   Instance,
+  ModChangelog,
+  ModRollback,
+  ModUpdate,
   ModrinthInstallResult,
   ModrinthProject,
   ModrinthSearchResult,
@@ -13,6 +16,7 @@ import type {
 import { getJson, request, fetchImageAsDataUrl } from '../../core/http'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
+import { instanceDir } from '../../core/paths'
 import { instanceSubdir } from '../instances/instanceService'
 import { createTask, sha1OfFile, type DownloadItem } from '../downloads/downloadManager'
 
@@ -43,6 +47,8 @@ interface RawSearchResponse {
 
 interface RawVersion {
   id: string
+  /** The project this version belongs to. Distinct from `id`, which is the version. */
+  project_id?: string
   name: string
   version_number: string
   game_versions: string[]
@@ -50,6 +56,8 @@ interface RawVersion {
   version_type: string
   date_published: string
   downloads: number
+  /** The author's release notes, in markdown. Often absent. */
+  changelog?: string | null
   files: Array<{ url: string; filename: string; primary: boolean; size: number; hashes?: { sha1?: string } }>
   dependencies: Array<{ project_id: string | null; version_id: string | null; dependency_type: string }>
 }
@@ -334,25 +342,16 @@ export async function getProjectBody(projectId: string): Promise<{ body: string;
 
 /* ----------------------------------------------------------- mod updates */
 
-/**
+/*
  * Identifying installed mods by file hash rather than by how they were
  * installed means updates work for jars dropped into the folder by hand,
  * imported from a modpack, or installed through this launcher — Modrinth
  * recognises the file either way.
+ *
+ * `ModUpdate` itself lives in the shared types: it crosses IPC, and a second
+ * copy here drifted from that one until the two disagreed about what a field
+ * meant.
  */
-export interface ModUpdate {
-  /** Current file on disk, including any `.disabled` suffix. */
-  fileName: string
-  modName: string
-  projectId: string
-  currentVersion: string | null
-  newVersionId: string
-  newVersion: string
-  newFileName: string
-  sizeBytes: number
-  /** Preserved so an update does not silently re-enable a disabled mod. */
-  enabled: boolean
-}
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await request(url, {
@@ -373,6 +372,26 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
  * Minecraft version and loader. Files Modrinth does not recognise are simply
  * absent from the result rather than being reported as errors.
  */
+/**
+ * Whether a version jump crosses a major boundary — the updates worth pausing
+ * over, because they are the ones that break worlds and configs.
+ *
+ * Mod version strings are not reliably semver ("1.20.1-forge-47.2.0",
+ * "v3.4b", "4.0.0+1.21"), so this only looks at the first run of digits and
+ * treats anything it cannot parse as not-major rather than guessing.
+ */
+function isMajorJump(current: string | null, next: string): boolean {
+  if (!current) return false
+  const first = (value: string): number | null => {
+    const match = /(\d+)/.exec(value)
+    return match ? Number(match[1]) : null
+  }
+  const a = first(current)
+  const b = first(next)
+  if (a === null || b === null) return false
+  return b > a
+}
+
 export async function checkModUpdates(instance: Instance): Promise<ModUpdate[]> {
   const dir = instanceSubdir(instance, 'mods')
 
@@ -424,13 +443,20 @@ export async function checkModUpdates(instance: Instance): Promise<ModUpdate[]> 
     updates.push({
       fileName,
       modName: newest.name || file.filename,
-      projectId: newest.id,
+      // The project, not the version — `newest.id` is the version id, and
+      // labelling it projectId sent anything that followed the field (a
+      // project page link, a changelog lookup) to a URL that does not exist.
+      projectId: newest.project_id ?? installed?.project_id ?? '',
       currentVersion: installed?.version_number ?? null,
+      currentVersionId: installed?.id ?? null,
       newVersionId: newest.id,
       newVersion: newest.version_number,
       newFileName: file.filename,
       sizeBytes: file.size,
-      enabled: !fileName.endsWith('.disabled')
+      enabled: !fileName.endsWith('.disabled'),
+      versionType: (newest.version_type as ModUpdate['versionType']) ?? 'release',
+      publishedAt: Date.parse(newest.date_published) || null,
+      majorJump: isMajorJump(installed?.version_number ?? null, newest.version_number)
     })
   }
 
@@ -467,9 +493,170 @@ export async function applyModUpdate(instance: Instance, update: ModUpdate): Pro
   await task.run()
   task.markDone()
 
-  // Only once the replacement is on disk and verified.
+  /*
+   * Only once the replacement is on disk and verified: move the old jar aside
+   * rather than deleting it. An update that turns out to break the pack is
+   * then one click to undo, which is the difference between trying an update
+   * and committing to one.
+   */
   const old = join(dir, update.fileName)
-  if (old !== destination) await rm(old, { force: true })
+  if (old !== destination) {
+    await stashForRollback(instance, update, old)
+  }
 
   log.info(`updated ${update.fileName} -> ${targetName} in "${instance.name}"`)
+}
+
+/* ------------------------------------------------------- update review */
+
+/** Where replaced jars wait in case an update needs undoing. */
+function rollbackDir(instance: Instance): string {
+  return join(instanceDir(instance.id), 'rollback')
+}
+
+const ROLLBACK_INDEX = 'rollback.json'
+
+async function readRollbackIndex(instance: Instance): Promise<ModRollback[]> {
+  try {
+    const raw = await readFile(join(rollbackDir(instance), ROLLBACK_INDEX), 'utf8')
+    const parsed = JSON.parse(raw) as ModRollback[]
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+async function writeRollbackIndex(instance: Instance, entries: ModRollback[]): Promise<void> {
+  const dir = rollbackDir(instance)
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, ROLLBACK_INDEX), JSON.stringify(entries, null, 2), 'utf8')
+}
+
+/**
+ * Moves the jar an update replaced into the rollback folder and records it.
+ *
+ * Only the most recent replacement of a given file is kept: a mod updated
+ * three times in a row leaves one undo step, not three, because restoring a
+ * build from two updates ago is not a thing anyone asks for and keeping every
+ * jar forever quietly fills the disk.
+ */
+async function stashForRollback(instance: Instance, update: ModUpdate, oldPath: string): Promise<void> {
+  const dir = rollbackDir(instance)
+  await mkdir(dir, { recursive: true })
+
+  const stashed = join(dir, update.fileName)
+  let sizeBytes = 0
+  try {
+    sizeBytes = (await stat(oldPath)).size
+    await rm(stashed, { force: true })
+    await rename(oldPath, stashed)
+  } catch (err) {
+    // A jar that cannot be moved aside is still an update that succeeded —
+    // fall back to removing it so two copies of the mod never both load.
+    log.warn(`could not keep a rollback copy of ${update.fileName}: ${(err as Error).message}`)
+    await rm(oldPath, { force: true }).catch(() => undefined)
+    return
+  }
+
+  const entries = (await readRollbackIndex(instance)).filter((entry) => entry.fileName !== update.fileName)
+  entries.unshift({
+    fileName: update.fileName,
+    modName: update.modName,
+    fromVersion: update.currentVersion,
+    toVersion: update.newVersion,
+    replacedBy: update.enabled ? basename(update.newFileName) : `${basename(update.newFileName)}.disabled`,
+    updatedAt: Date.now(),
+    sizeBytes
+  })
+
+  // Twenty is far more undo history than anyone uses, and bounds the folder.
+  const kept = entries.slice(0, 20)
+  for (const dropped of entries.slice(20)) {
+    await rm(join(dir, dropped.fileName), { force: true }).catch(() => undefined)
+  }
+
+  await writeRollbackIndex(instance, kept)
+}
+
+export async function listRollbacks(instance: Instance): Promise<ModRollback[]> {
+  const dir = rollbackDir(instance)
+  const entries = await readRollbackIndex(instance)
+  // Only offer undo for jars that are actually still there.
+  return entries.filter((entry) => existsSync(join(dir, entry.fileName)))
+}
+
+/** Puts a stashed jar back and removes the build that replaced it. */
+export async function rollbackModUpdate(instance: Instance, fileName: string): Promise<ModRollback> {
+  const entries = await readRollbackIndex(instance)
+  const entry = entries.find((candidate) => candidate.fileName === fileName)
+  if (!entry) throw new LauncherError('NOT_FOUND', 'there is no saved copy of that mod to go back to')
+
+  const dir = rollbackDir(instance)
+  const stashed = join(dir, entry.fileName)
+  if (!existsSync(stashed)) throw new LauncherError('NOT_FOUND', 'the saved copy of that mod is gone')
+
+  const mods = instanceSubdir(instance, 'mods')
+
+  // Remove the newer jar first: both present at once is a duplicate-mod crash.
+  await rm(join(mods, entry.replacedBy), { force: true }).catch(() => undefined)
+  await rename(stashed, join(mods, entry.fileName))
+
+  await writeRollbackIndex(
+    instance,
+    entries.filter((candidate) => candidate.fileName !== fileName)
+  )
+
+  log.info(`rolled ${entry.modName} back to ${entry.fromVersion ?? 'the previous build'} in "${instance.name}"`)
+  return entry
+}
+
+/**
+ * The author's notes for a build, plus every build between it and the one
+ * installed — updating across five releases should show five changelogs, not
+ * only the newest one's.
+ */
+export async function modChangelog(update: ModUpdate): Promise<ModChangelog[]> {
+  if (!update.projectId) {
+    // Without a project id there is nothing to list; fall back to the one build.
+    const single = await fetchVersion(update.newVersionId)
+    return [toChangelog(single)]
+  }
+
+  let versions: RawVersion[]
+  try {
+    versions = await getJson<RawVersion[]>(
+      `${API}/project/${encodeURIComponent(update.projectId)}/version`,
+      { timeoutMs: 20_000, retries: 2 }
+    )
+  } catch {
+    const single = await fetchVersion(update.newVersionId)
+    return [toChangelog(single)]
+  }
+
+  const newestAt = Date.parse(versions.find((v) => v.id === update.newVersionId)?.date_published ?? '') || Date.now()
+  const installedAt = update.currentVersionId
+    ? Date.parse(versions.find((v) => v.id === update.currentVersionId)?.date_published ?? '') || 0
+    : 0
+
+  const between = versions
+    .filter((version) => {
+      const at = Date.parse(version.date_published) || 0
+      return at <= newestAt && at > installedAt
+    })
+    .sort((a, b) => (Date.parse(b.date_published) || 0) - (Date.parse(a.date_published) || 0))
+    .slice(0, 12)
+
+  const list = between.length > 0 ? between : versions.filter((v) => v.id === update.newVersionId)
+  return list.map(toChangelog)
+}
+
+function toChangelog(version: RawVersion): ModChangelog {
+  return {
+    versionId: version.id,
+    versionNumber: version.version_number,
+    name: version.name,
+    versionType: (version.version_type as ModChangelog['versionType']) ?? 'release',
+    publishedAt: Date.parse(version.date_published) || null,
+    changelog: (version.changelog ?? '').trim()
+  }
 }

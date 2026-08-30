@@ -1,3 +1,4 @@
+import type { CrewSnapshot } from '@shared/companion'
 import { chat, LlmError, type ChatMessage, type LlmConfig } from './llm'
 import { findTool, TOOL_SCHEMAS, schemasFor, type ToolContext } from './tools'
 
@@ -31,6 +32,8 @@ export interface AgentOptions {
   /** Which tool list to offer the model; 'core' is the short one. */
   toolSet?: 'full' | 'core'
   memory: string[]
+  /** The crew this bot belongs to, when it is on one. */
+  crew?: CrewSnapshot | null
 }
 
 /** How many tool calls one turn may chain before it is cut off. */
@@ -52,6 +55,16 @@ export class Agent {
   private memory: string[]
   private goal: string | null = null
   private busy = false
+  /**
+   * Aborts the turn in progress without stopping the bot.
+   *
+   * Separate from the lifetime controller on purpose: a player saying "stop" or
+   * giving a new order needs to cut short what the companion is doing now, and
+   * killing the lifetime signal would disconnect it instead. Recreated per turn,
+   * which also stops abort listeners piling up on one long-lived signal — the
+   * MaxListenersExceededWarning this used to produce after a dozen turns.
+   */
+  private turnController: AbortController | null = null
   private lastTurnAt = 0
   private pending: string[] = []
   private controller = new AbortController()
@@ -66,7 +79,35 @@ export class Agent {
   }
 
   update(options: Partial<AgentOptions>): void {
+    const wasAutonomous = this.options.autonomy
     this.options = { ...this.options, ...options }
+
+    /*
+     * Turning "act on its own" off has to stop what it is already doing.
+     *
+     * Only the idle timer checked this flag, so switching it off left a queue of
+     * self-generated tasks draining and the current one running — the companion
+     * carried on building something nobody had asked for, and every new order
+     * queued behind the backlog. The player's own instructions are kept.
+     */
+    if (wasAutonomous && options.autonomy === false) {
+      const dropped = this.pending.filter((task) => task.startsWith('[idle]')).length
+      this.pending = this.pending.filter((task) => !task.startsWith('[idle]'))
+      this.turnController?.abort()
+      if (dropped > 0) this.events.log(`stopped acting on its own; dropped ${dropped} self-set task(s)`)
+      else this.events.log('stopped acting on its own')
+    }
+  }
+
+  /**
+   * Cuts short whatever the companion is doing and clears anything it set
+   * itself, so a person is never queued behind the bot's own daydreaming.
+   */
+  interrupt(): void {
+    const dropped = this.pending.filter((task) => task.startsWith('[idle]')).length
+    this.pending = this.pending.filter((task) => !task.startsWith('[idle]'))
+    this.turnController?.abort()
+    if (dropped > 0) this.events.log(`dropped ${dropped} self-set task(s)`)
   }
 
   stop(): void {
@@ -82,8 +123,16 @@ export class Agent {
   }
 
   /** Something a player said, which the agent should respond to. */
-  queue(message: string): void {
-    this.pending.push(message)
+  /**
+   * Something a player said, which the agent should respond to.
+   *
+   * `urgent` puts it at the front. A person who has just typed an instruction
+   * should not wait behind a backlog of things the companion decided to do on
+   * its own, which is what made it look like it was ignoring chat entirely.
+   */
+  queue(message: string, urgent = false): void {
+    if (urgent) this.pending.unshift(message)
+    else this.pending.push(message)
     void this.drain()
   }
 
@@ -181,14 +230,64 @@ export class Agent {
       '  or a bit of company. Not a running commentary on your own actions.',
       '- Prefer doing over asking. If an instruction is clear, act on it.',
       '- Work in small steps and check results before continuing.',
+      '- To build anything bigger than a couple of blocks — a house, a tower, a wall, a bridge — use',
+      '  "build_structure" with a description. It plans the whole thing and puts it up. Placing a hundred',
+      '  blocks one at a time with "place_block" is slow and comes out wrong.',
       '- Use "set_goal" for anything spanning several turns, and "remember" for facts worth keeping.',
       '  Both are private notes to yourself — there is no need to announce them in chat.',
       '- If a tool fails, read the error and try a different approach rather than repeating it.',
       this.options.owner ? `- Your owner is ${this.options.owner}. Treat their requests as priority.` : '',
+      this.crewPrompt(),
       memory
     ]
       .filter(Boolean)
       .join('\n')
+  }
+
+  /**
+   * What being on a crew adds to the brief.
+   *
+   * A foreman is told to delegate before doing, because the whole value of a
+   * crew is parallel work: a foreman that mines the seam itself while four
+   * idle workers stand watching is five bots doing one bot's job.
+   */
+  private crewPrompt(): string {
+    const crew = this.options.crew
+    if (!crew) return ''
+
+    if (!crew.isForeman) {
+      const foreman = crew.members.find((member) => member.lastTask !== undefined)
+      return [
+        '',
+        `You are part of the crew "${crew.crewName}".`,
+        foreman ? '- Instructions marked as coming from your foreman are jobs; get on with them.' : '',
+        '- Use "crew_note" to tell the others what you found or finished. Keep it to facts they need.'
+      ]
+        .filter(Boolean)
+        .join('\n')
+    }
+
+    const roster =
+      crew.members.length > 0
+        ? crew.members
+            .map(
+              (member) =>
+                `  - ${member.username}${member.routine ? ` (runs the "${member.routine}" routine)` : ' (thinks for itself)'}${member.online ? '' : ' — currently offline'}`
+            )
+            .join('\n')
+        : '  - nobody else is on the crew yet'
+
+    return [
+      '',
+      `You are the foreman of the crew "${crew.crewName}". Your crew:`,
+      roster,
+      '- Split work up and hand it out with "assign_task" before doing it yourself. Several bots working at',
+      '  once is the entire point of having a crew.',
+      '- Check "crew_status" before assigning, so two people are not sent to do the same thing.',
+      '- A crew member on a routine already does that job continuously and cannot be assigned a different',
+      '  one. Only assign work to members that think for themselves; count the routine workers as already busy.',
+      '- Use "crew_note" for anything the whole crew should know.'
+    ].join('\n')
   }
 
   /* ------------------------------------------------------------- turn */
@@ -210,7 +309,8 @@ export class Agent {
         this.goal = goal
         this.events.goalChanged(goal)
       },
-      signal: this.controller.signal
+      signal: this.controller.signal,
+      llm: this.options.llm
     }
 
     this.history.push({ role: 'user', content: `${this.perceive()}\n\n${trigger}` })

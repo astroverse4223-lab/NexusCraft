@@ -5,12 +5,15 @@ import {
   CheckCircle2,
   ExternalLink,
   Copy,
+  Boxes,
   FolderOpen,
   HardDrive,
+  Link2,
   Play,
   Plus,
   Send,
   Globe,
+  Search,
   Server,
   Share2,
   Square,
@@ -29,7 +32,11 @@ import type {
   ServerSoftwareInfo,
   VersionSummary
 } from '@shared/types'
+import type { Companion } from '@shared/companion'
 import { api, subscribe, toPayload } from '../api'
+import { BrowseTab } from './Browse'
+import { ServerBackups } from '../components/ServerBackups'
+import { RelayTunnel } from '../components/RelayTunnel'
 import { activeAccount, useStore } from '../store/useStore'
 import {
   ConfirmDialog,
@@ -48,6 +55,35 @@ function splitAddress(address: string): [string, number] {
   if (at === -1) return [address, 25565]
   const port = Number(address.slice(at + 1))
   return [address.slice(0, at), Number.isFinite(port) && port > 0 ? port : 25565]
+}
+
+/** The human name for a server's software, for headings. */
+function softwareLabelFor(software: string): string {
+  const names: Record<string, string> = {
+    vanilla: 'Vanilla',
+    paper: 'Paper',
+    purpur: 'Purpur',
+    fabric: 'Fabric',
+    forge: 'Forge',
+    neoforge: 'NeoForge'
+  }
+  return names[software] ?? software
+}
+
+/**
+ * What each server software loads, in the terms the content sites use.
+ *
+ * Paper and Purpur take Bukkit-style plugins rather than mods, so they need
+ * their own names here — searching as "forge" offered a Paper owner mods that
+ * their server would never load.
+ */
+const SERVER_LOADERS: Record<string, string> = {
+  vanilla: 'vanilla',
+  paper: 'paper',
+  purpur: 'purpur',
+  fabric: 'fabric',
+  forge: 'forge',
+  neoforge: 'neoforge'
 }
 
 const STATUS_STYLE: Record<HostedServerState['status'], { label: string; className: string }> = {
@@ -114,6 +150,8 @@ export function HostServerScreen(): JSX.Element {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<SaveHostedServerInput | null>(null)
+  /** Open when building a whole new server from a modpack. */
+  const [packBrowsing, setPackBrowsing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<HostedServer | null>(null)
   const [forwarding, setForwarding] = useState<{
     available: boolean
@@ -125,10 +163,15 @@ export function HostServerScreen(): JSX.Element {
   const [checkingRouter, setCheckingRouter] = useState(false)
   const [share, setShare] = useState<ServerShareDetails | null>(null)
   const [gathering, setGathering] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
   const [confirmExpose, setConfirmExpose] = useState(false)
   const [eulaUrl, setEulaUrl] = useState('https://aka.ms/MinecraftEULA')
   const [mods, setMods] = useState<ModInfo[]>([])
   const [joinTargets, setJoinTargets] = useState<Instance[]>([])
+  /** Companions living on the selected server. */
+  const [stewards, setStewards] = useState<Companion[]>([])
+  const [deploying, setDeploying] = useState(false)
+  const [inviting, setInviting] = useState(false)
 
   const consoleRef = useAutoScroll(lines.length)
 
@@ -179,9 +222,14 @@ export function HostServerScreen(): JSX.Element {
   // Mods and joinable instances belong to the selected server.
   const refreshMods = useCallback(async (id: string) => {
     try {
-      const [list, targets] = await Promise.all([api.host.mods(id), api.host.joinTargets(id)])
+      const [list, targets, residents] = await Promise.all([
+        api.host.mods(id),
+        api.host.joinTargets(id),
+        api.host.stewards(id)
+      ])
       setMods(list)
       setJoinTargets(targets)
+      setStewards(residents)
     } catch (err) {
       setError(toPayload(err))
     }
@@ -191,6 +239,7 @@ export function HostServerScreen(): JSX.Element {
     if (!selectedId) {
       setMods([])
       setJoinTargets([])
+      setStewards([])
       return
     }
     void refreshMods(selectedId)
@@ -251,17 +300,16 @@ export function HostServerScreen(): JSX.Element {
   /** Launches a compatible instance straight into this server. */
   async function join(): Promise<void> {
     if (!selected) return
-    if (joinTargets.length === 0) {
-      setError({
-        code: 'NOT_FOUND',
-        title: 'No instance can join this server',
-        message: `You need an instance running ${softwareInfo?.label ?? selected.software} on Minecraft ${selected.minecraftVersion}. A vanilla client cannot join a modded server, and the versions have to match.`,
-        actions: ['Create a matching instance from the Instances screen'],
-        detail: null
-      })
-      return
-    }
-    await run(() => api.host.join(selected.id, joinTargets[0].id), `Launching ${joinTargets[0].name}`)
+    /*
+     * No matching instance is no longer a dead end — the main process makes one
+     * and copies the server's mods into it, which is the only reliable way to
+     * have the two agree on what is installed.
+     */
+    const target = joinTargets[0]
+    await run(
+      () => api.host.join(selected.id, target?.id),
+      target ? `Launching ${target.name}` : 'Setting up a client for this server'
+    )
   }
 
   /**
@@ -337,6 +385,67 @@ export function HostServerScreen(): JSX.Element {
     }
   }
 
+  /**
+   * Copies a one-click invite for this server.
+   *
+   * The friend gets a `nexuscraft://` link: opening it saves the server, builds
+   * or picks a matching client, and joins — instead of them being told an IP,
+   * a version and a loader over voice chat and getting one of the three wrong.
+   */
+  async function copyInvite(): Promise<void> {
+    if (!selected) return
+    setInviting(true)
+    try {
+      const invite = await api.host.inviteLink(selected.id)
+      await navigator.clipboard.writeText(invite.link)
+      pushToast({
+        kind: invite.isPublic ? 'success' : 'info',
+        title: 'Invite link copied',
+        message:
+          invite.note ??
+          `Send it to a friend who has NexusCraft — it points at ${invite.address} and sets up a matching client.`
+      })
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setInviting(false)
+    }
+  }
+
+  /**
+   * Gives this server a resident companion, then keeps it in step with the
+   * server: it joins on start and leaves on stop, handled in the main process.
+   */
+  async function deploySteward(): Promise<void> {
+    if (!selected) return
+    setDeploying(true)
+    try {
+      const result = await api.host.deploySteward(selected.id)
+      setStewards(await api.host.stewards(selected.id))
+      if (result.created) {
+        pushToast({
+          kind: 'info',
+          title: `${result.companion.username} needs a model`,
+          message: 'Open the Companion screen to give it one — until then it can join but not talk.'
+        })
+      }
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setDeploying(false)
+    }
+  }
+
+  async function dismissSteward(companionId: string): Promise<void> {
+    if (!selected) return
+    try {
+      await api.host.dismissSteward(companionId)
+      setStewards(await api.host.stewards(selected.id))
+    } catch (err) {
+      setError(toPayload(err))
+    }
+  }
+
   async function applyToCompanion(): Promise<void> {
     if (!selected) return
     await run(async () => {
@@ -399,13 +508,23 @@ export function HostServerScreen(): JSX.Element {
             between sessions, and gives the AI companion somewhere permanent to join.
           </p>
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => setEditing(blankInput(versions[0]?.id ?? '1.21.11', account?.username))}
-          disabled={busy}
-        >
-          <Plus size={15} /> New server
-        </button>
+        <div className="row gap-8">
+          <button
+            className="btn"
+            onClick={() => setPackBrowsing(true)}
+            disabled={busy}
+            title="Build a server from a modpack, with its mods and config already set up"
+          >
+            <Boxes size={15} /> From a modpack
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => setEditing(blankInput(versions[0]?.id ?? '1.21.11', account?.username))}
+            disabled={busy}
+          >
+            <Plus size={15} /> New server
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -420,9 +539,14 @@ export function HostServerScreen(): JSX.Element {
           title="No servers yet"
           message="Create one and the launcher downloads the official server from Mojang, sets it up, and runs it for you."
           action={
-            <button className="btn btn-primary" onClick={() => setEditing(blankInput(versions[0]?.id ?? '1.21.11', account?.username))}>
-              <Plus size={15} /> Create a server
-            </button>
+            <div className="row gap-8">
+              <button className="btn btn-primary" onClick={() => setEditing(blankInput(versions[0]?.id ?? '1.21.11', account?.username))}>
+                <Plus size={15} /> Create a server
+              </button>
+              <button className="btn" onClick={() => setPackBrowsing(true)}>
+                <Boxes size={15} /> From a modpack
+              </button>
+            </div>
           }
         />
       ) : (
@@ -550,8 +674,15 @@ export function HostServerScreen(): JSX.Element {
                 </div>
 
                 <div className="row gap-8 wrap">
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void deploySteward()}
+                    disabled={busy || deploying}
+                  >
+                    {deploying ? <Spinner /> : <Bot size={14} />} Put a companion on this server
+                  </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => void applyToCompanion()} disabled={busy}>
-                    <Bot size={14} /> Use for the AI companion
+                    <Bot size={14} /> Point every companion here
                   </button>
                   <button
                     className="btn btn-ghost btn-sm"
@@ -559,6 +690,13 @@ export function HostServerScreen(): JSX.Element {
                     disabled={busy || checkingRouter}
                   >
                     <Globe size={14} /> {checkingRouter ? 'Asking the router…' : 'Play with friends online'}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void copyInvite()}
+                    disabled={busy || inviting}
+                  >
+                    <Link2 size={14} /> {inviting ? 'Building the link…' : 'Copy invite link'}
                   </button>
                   <button
                     className="btn btn-ghost btn-sm"
@@ -612,6 +750,32 @@ export function HostServerScreen(): JSX.Element {
                     <Trash2 size={14} /> Delete
                   </button>
                 </div>
+
+                {stewards.length > 0 && (
+                  <div className="panel panel-pad col gap-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                    <div className="row gap-8">
+                      <Bot size={15} style={{ color: 'var(--accent)' }} />
+                      <strong className="small">Lives on this server</strong>
+                    </div>
+                    {stewards.map((steward) => (
+                      <div key={steward.id} className="row gap-12">
+                        <div className="flex-1" style={{ minWidth: 0 }}>
+                          <div className="small truncate" style={{ fontWeight: 600 }}>
+                            {steward.username}
+                          </div>
+                          <div className="tiny dim truncate">
+                            {steward.hasApiKey || steward.routine
+                              ? 'Joins when the server starts, leaves when it stops'
+                              : 'Needs a model on the Companion screen before it can talk'}
+                          </div>
+                        </div>
+                        <button className="btn btn-ghost btn-sm" onClick={() => void dismissSteward(steward.id)}>
+                          Remove from server
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {share && (
                   <div className="panel panel-pad col gap-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
@@ -824,6 +988,20 @@ export function HostServerScreen(): JSX.Element {
                   </span>
                   <div className="row gap-8">
                     <button
+                      className="btn btn-primary btn-sm"
+                      /*
+                       * Only disabled once we know the software takes neither.
+                       * Written the other way round, an unloaded `softwareInfo`
+                       * made both halves true and greyed the button out on a
+                       * server that accepts mods perfectly well.
+                       */
+                      disabled={busy || softwareInfo?.mods === false && softwareInfo?.plugins === false}
+                      onClick={() => setBrowsing(true)}
+                      title="Search Modrinth and CurseForge, and install straight into this server"
+                    >
+                      <Search size={14} /> Browse mods
+                    </button>
+                    <button
                       className="btn btn-ghost btn-sm"
                       disabled={busy}
                       onClick={() =>
@@ -906,6 +1084,27 @@ export function HostServerScreen(): JSX.Element {
                       </div>
                     ))
                   )}
+                </div>
+              </div>
+
+              {/* --------------------------------------------------- relay */}
+              <div className="panel col">
+                <div className="panel-head row gap-8 between">
+                  <span className="small">Reaching your friends</span>
+                </div>
+                <div className="panel-pad">
+                  <RelayTunnel serverId={selected.id} onlineMode={selected.onlineMode} />
+                </div>
+              </div>
+
+              {/* ------------------------------------------------- backups */}
+              <div className="panel col">
+                <div className="panel-head row gap-8 between">
+                  <span className="small">World snapshots</span>
+                  <span className="tiny dim">Restore points for {selected.name}</span>
+                </div>
+                <div className="panel-pad">
+                  <ServerBackups serverId={selected.id} serverName={selected.name} running={live} />
                 </div>
               </div>
 
@@ -1327,6 +1526,71 @@ export function HostServerScreen(): JSX.Element {
             </Field>
           </div>
         )}
+      </Modal>
+
+      {/*
+        * The same browser instances use, pointed at the server.
+        *
+        * Adding a mod to a server used to mean finding the jar yourself,
+        * checking it matched the loader and version, and dropping it in the
+        * right folder. It is the same content from the same places either way,
+        * so it may as well be the same two clicks.
+        */}
+      <Modal
+        open={browsing && Boolean(selected)}
+        title={`Add mods to ${selected?.name ?? ''}`}
+        subtitle={
+          selected
+            ? `Matching ${softwareLabelFor(selected.software)} on Minecraft ${selected.minecraftVersion}. The server must be restarted before it loads anything new.`
+            : undefined
+        }
+        onClose={() => {
+          setBrowsing(false)
+          if (selected) void refreshMods(selected.id)
+        }}
+        width={900}
+      >
+        {selected && (
+          <BrowseTab
+            instance={{ id: selected.id, name: selected.name } as never}
+            destination={{
+              id: selected.id,
+              name: selected.name,
+              minecraftVersion: selected.minecraftVersion,
+              // Paper and Purpur take plugins, not Forge mods; naming them
+              // correctly is what makes this browser show usable results.
+              loader: SERVER_LOADERS[selected.software] ?? 'vanilla',
+              isServer: true
+            }}
+          />
+        )}
+      </Modal>
+
+      {/*
+        * Building a new server from a pack. There is no server to point at yet,
+        * so the destination is a placeholder that only carries `isServer` — the
+        * pack supplies the version and loader, and the browser is locked to
+        * modpacks because nothing else here would create anything.
+        */}
+      <Modal
+        open={packBrowsing}
+        title="Host a modpack"
+        subtitle="Pick a pack and the launcher builds a server for it: the right loader, its mods, and its config. Client-only mods are turned off, since a server cannot run them."
+        onClose={() => setPackBrowsing(false)}
+        width={900}
+      >
+        <BrowseTab
+          instance={{ id: '', name: 'a new server', minecraftVersion: '', loader: 'vanilla' } as never}
+          destination={{
+            id: '',
+            name: 'a new server',
+            minecraftVersion: '',
+            loader: 'vanilla',
+            isServer: true
+          }}
+          initialKind="modpack"
+          lockKind
+        />
       </Modal>
 
       <ConfirmDialog

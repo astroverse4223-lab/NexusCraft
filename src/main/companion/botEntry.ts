@@ -11,6 +11,12 @@
 
 import type { CompanionConfig, CompanionOutbound, CompanionInbound } from '@shared/companion'
 import { Agent } from './agent'
+import { captureFrame } from './camera'
+import { buildBlueprint, describeResult, groundedOrigin } from './build/builder'
+import { blueprintSize } from './build/blueprint'
+import type { ToolContext } from './tools/types'
+import { setCrewSnapshot } from './tools'
+import { findRoutine, RoutineRunner } from './routines'
 
 const send = (message: CompanionOutbound): void => {
   process.send?.(message)
@@ -20,6 +26,9 @@ const log = (message: string): void => send({ type: 'log', message })
 
 let bot: any = null
 let agent: Agent | null = null
+let runner: RoutineRunner | null = null
+/** Lets a routine's tools be cut short when the worker is told to stop. */
+let routineStop = new AbortController()
 let tickTimer: NodeJS.Timeout | null = null
 let stopping = false
 let spawned = false
@@ -49,6 +58,16 @@ const HOSTILE_NAMES = new Set([
 
 const REFLEX_FLEE_HEALTH = 8
 let reflexBusy = false
+/*
+ * The mineflayer helpers, captured at spawn.
+ *
+ * They are created inside the connection sequence but needed later by anything
+ * the launcher asks for out of band — a build started from the interface has no
+ * agent turn to borrow them from.
+ */
+let pathMovements: any = null
+let botData: any = null
+
 /** Pathfinder goals, captured when the bot starts so the reflex can use them. */
 let pathGoals: any = null
 
@@ -117,6 +136,13 @@ const HUNGRY_AT = 16
 const DROWNING_AT = 8
 
 let instinctTimer: NodeJS.Timeout | null = null
+
+/*
+ * The bot cam only runs while somebody is looking at it. Sampling a 41x41
+ * column grid twice a second is cheap next to what the bot does anyway, but
+ * doing it for every idle companion nobody has open would not be.
+ */
+let cameraTimer: NodeJS.Timeout | null = null
 let instinctBusy = false
 
 async function runInstincts(activeBot: any): Promise<void> {
@@ -176,6 +202,7 @@ async function start(config: CompanionConfig): Promise<void> {
   const mineflayer = require('mineflayer')
   const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
   pathGoals = goals
+  pathMovements = Movements
   const minecraftData = require('minecraft-data')
 
   send({ type: 'status', status: 'connecting', detail: `${config.host}:${config.port}` })
@@ -196,6 +223,7 @@ async function start(config: CompanionConfig): Promise<void> {
 
   bot.once('spawn', () => {
     const mcData = minecraftData(bot.version)
+    botData = mcData
     if (!mcData) {
       send({
         type: 'status',
@@ -206,6 +234,54 @@ async function start(config: CompanionConfig): Promise<void> {
     }
 
     bot.pathfinder.setMovements(new Movements(bot))
+
+    /*
+     * A routine takes the model's place entirely.
+     *
+     * Nothing below this point is needed when one is named: no agent, no idle
+     * nudge, no thinking. The worker drives the same tools directly.
+     */
+    if (config.routine) {
+      const routine = findRoutine(config.routine)
+      if (!routine) {
+        send({ type: 'status', status: 'error', detail: `there is no routine called "${config.routine}"` })
+        return
+      }
+
+      spawned = true
+      send({
+        type: 'status',
+        status: 'playing',
+        detail: `working as a ${routine.label.toLowerCase()} on ${bot.version}`
+      })
+
+      runner = new RoutineRunner(
+        routine,
+        {
+          bot,
+          mcData,
+          goals,
+          Movements,
+          owner: config.owner || null,
+          log,
+          addMemory: () => {},
+          setGoal: () => {},
+          signal: routineStop.signal,
+          announce: (text: string) => {
+            try {
+              bot.chat(text.slice(0, 240))
+            } catch {
+              /* not connected */
+            }
+          }
+        } as never,
+        (message) => send({ type: 'agentError', message })
+      )
+
+      void runner.run()
+      instinctTimer = setInterval(() => void runInstincts(bot), 2000)
+      return
+    }
 
     agent = new Agent(
       bot,
@@ -284,7 +360,24 @@ async function start(config: CompanionConfig): Promise<void> {
   })
 
   bot.on('error', (err: Error) => {
-    send({ type: 'status', status: 'error', detail: describeFailure(err, config) })
+    // A version the data library has not caught up with is worth its own words.
+    /*
+     * Two different refusals, both about the version and neither worth showing
+     * raw. The library declines anything past its ceiling before it connects,
+     * and separately has versions it knows of but has no data for yet.
+     */
+    const tooNew = /version '?([^'\s]+)'? is not supported/i.exec(err.message)
+    const missing = /No data available for version (\S+)/i.exec(err.message)
+
+    send({
+      type: 'status',
+      status: 'error',
+      detail: tooNew
+        ? describeUnsupportedVersion(tooNew[1])
+        : missing
+          ? describeMissingVersionData(missing[1])
+          : describeFailure(err, config)
+    })
     /*
      * A failure before the bot ever spawned means there is no session to keep
      * alive. Lingering here left an empty process behind that made the
@@ -303,6 +396,60 @@ async function start(config: CompanionConfig): Promise<void> {
 }
 
 /**
+ * Explains a version the bot library has no data for.
+ *
+ * minecraft-data lists a version as soon as Mojang ships it but publishes the
+ * block and item data later, so a brand new release connects far enough to be
+ * rejected with "No data available for version 26.2" — which reads like a fault
+ * in the launcher rather than a gap upstream that will fill in on its own. The
+ * versions that do work are named, since the useful next step is to run the
+ * server on one of them.
+ */
+function describeUnsupportedVersion(version: string): string {
+  let ceiling = ''
+  try {
+    ceiling = require('mineflayer/lib/version.js').latestSupportedVersion ?? ''
+  } catch {
+    /* the message stands without it */
+  }
+
+  return (
+    `The companion cannot play on Minecraft ${version}. The library it uses to speak the game's protocol ` +
+    `supports up to ${ceiling || 'an earlier version'}, and refuses anything newer outright — the protocol ` +
+    'changes with each release and there is nothing to configure here. Support arrives when that library ' +
+    'updates. Point companions at a server running ' +
+    `${ceiling || 'a supported version'} or older.`
+  )
+}
+
+function describeMissingVersionData(version: string): string {
+  let usable: string[] = []
+  try {
+    const data = require('minecraft-data')
+    usable = data.versions.pc
+      .map((entry: { minecraftVersion: string }) => entry.minecraftVersion)
+      .filter((name: string) => !name.includes('-'))
+      .filter((name: string) => {
+        try {
+          return Boolean(data(name))
+        } catch {
+          return false
+        }
+      })
+      .slice(0, 4)
+  } catch {
+    /* no list to offer; the message still stands without one */
+  }
+
+  return (
+    `The companion cannot play on Minecraft ${version} yet. Its protocol library knows the version exists but ` +
+    'has not published the block and item data for it — that usually follows within a few weeks of a release, ' +
+    'and nothing here needs changing when it does.' +
+    (usable.length > 0 ? ` Versions it can play now include ${usable.join(', ')}.` : '')
+  )
+}
+
+/**
  * Turns a server's kick message into something worth reading.
  *
  * Servers send these as a translation key wrapped in JSON, so what reached the
@@ -312,8 +459,59 @@ async function start(config: CompanionConfig): Promise<void> {
  * companion are spelled out, with the remedy, and anything else is at least
  * stripped of its JSON.
  */
+/**
+ * Strips the tag wrappers off an NBT value.
+ *
+ * Minecraft moved chat components from JSON to NBT, so a kick reason now
+ * arrives as `{type:'compound', value:{extra:{type:'list', value:[...]}}}`
+ * rather than `{extra:[...]}`. Every real word is buried two layers under a
+ * `value` key, which is why the raw structure was reaching the activity feed
+ * looking like a memory dump.
+ */
+function untag(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(untag)
+  if (value && typeof value === 'object') {
+    const node = value as Record<string, unknown>
+    // A tagged node is exactly {type, value} — unwrap it and keep going.
+    if (typeof node.type === 'string' && 'value' in node && Object.keys(node).length <= 3) {
+      return untag(node.value)
+    }
+    const out: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(node)) out[key] = untag(entry)
+    return out
+  }
+  return value
+}
+
+/** Flattens a chat component into the words a person would read. */
+function flattenComponent(node: unknown, depth = 0): string {
+  if (depth > 16) return ''
+  if (typeof node === 'string') return node
+  if (Array.isArray(node)) return node.map((child) => flattenComponent(child, depth + 1)).join('')
+  if (node && typeof node === 'object') {
+    const component = node as { text?: unknown; translate?: unknown; extra?: unknown; with?: unknown }
+    const own =
+      typeof component.text === 'string'
+        ? component.text
+        : typeof component.translate === 'string'
+          ? component.translate
+          : ''
+    const extra = component.extra ? flattenComponent(component.extra, depth + 1) : ''
+    const args = component.with ? flattenComponent(component.with, depth + 1) : ''
+    return `${own}${args}${extra}`
+  }
+  return ''
+}
+
 function describeKick(reason: unknown, config: CompanionConfig): string {
-  const raw = typeof reason === 'string' ? reason : JSON.stringify(reason ?? '')
+  /*
+   * Decode first, then match. The keyword checks below were written against
+   * plain JSON and silently stopped matching when the wire format changed, so a
+   * whitelist kick — which has a perfectly good explanation here — was coming
+   * out as raw NBT alongside everything else.
+   */
+  const decoded = flattenComponent(untag(reason)).trim()
+  const raw = decoded || (typeof reason === 'string' ? reason : JSON.stringify(reason ?? ''))
 
   if (raw.includes('unverified_username')) {
     return (
@@ -335,9 +533,24 @@ function describeKick(reason: unknown, config: CompanionConfig): string {
   }
   if (raw.includes('flying')) return 'The server kicked the companion for flying.'
 
-  // Not one we know: at least pull the words out of the JSON.
-  const spoken = raw.match(/"(?:text|translate)"\s*:\s*"([^"]+)"/)
-  return `The server disconnected the companion: ${spoken ? spoken[1] : raw.slice(0, 160)}`
+  /*
+   * A modded world will not take a plain client.
+   *
+   * The companion speaks vanilla Minecraft, so a Forge or Fabric world that
+   * registers its own blocks, items or network channels refuses it during the
+   * handshake. This is the usual reason a companion that worked on a vanilla
+   * world stops working the moment it is pointed at a modded one.
+   */
+  if (/mod|channel|registry|fml|forge|fabric|handshake|Incompatible|protocol/i.test(raw)) {
+    return (
+      `${config.host}:${config.port} refused the companion because it is a modded world and the companion ` +
+      `is a plain Minecraft client. The server said: "${raw.slice(0, 140)}". A companion can join a vanilla ` +
+      'world or a server whose mods it does not need; it cannot join one that requires mods on the client.'
+    )
+  }
+
+  // Not one we know: at least give back the words rather than the structure.
+  return `The server disconnected the companion: ${raw.slice(0, 200)}`
 }
 
 /**
@@ -361,7 +574,26 @@ function describeFailure(err: unknown, config: CompanionConfig): string {
     case 'ETIMEDOUT':
       return `${where} never answered. Check the port and whether a firewall is blocking it.`
     case 'ECONNRESET':
-      return `${where} closed the connection immediately. An online-mode server will do this unless the companion signs in with its own Microsoft account that owns Minecraft.`
+      /*
+       * Two very different servers close a connection this abruptly, and
+       * asserting the wrong one wastes an afternoon.
+       *
+       * A verified server rejects an offline companion, which is the obvious
+       * case. But so does a Forge server running mods that register network
+       * channels: the companion joins as a plain client, cannot answer the mod
+       * handshake, and Forge drops it — with `online-mode=false` set correctly
+       * the whole time. Blaming authentication there sends someone to check a
+       * setting that was never wrong. Both are named, closest cause first.
+       */
+      return (
+        `${where} closed the connection straight away, without saying why. Two things do this:\n\n` +
+        '• The server runs Forge or NeoForge mods that register their own network channels — worldgen mods ' +
+        'especially. A companion connects as an ordinary client and cannot answer their handshake, so the ' +
+        'server drops it. Its log will name the channel it wanted. Removing those mods from the server, or ' +
+        'hosting a plain or Paper server for the companion, is the way round it.\n\n' +
+        '• The server verifies players with Mojang, and this companion signs in offline. Turn off "Verify ' +
+        'players with Mojang", or give the companion its own Microsoft account that owns the game.'
+      )
     default:
       break
   }
@@ -382,14 +614,39 @@ function shutdown(): void {
   tickTimer = null
   if (instinctTimer) clearInterval(instinctTimer)
   instinctTimer = null
+  if (cameraTimer) clearInterval(cameraTimer)
+  cameraTimer = null
   agent?.stop()
   agent = null
+  runner?.stop()
+  runner = null
+  routineStop.abort()
+  routineStop = new AbortController()
   try {
     bot?.quit?.()
   } catch {
     /* already gone */
   }
   bot = null
+}
+
+/**
+ * A tool context for a build asked for from the launcher rather than by the
+ * model. It carries no `llm`, which is correct: the blueprint is already drawn,
+ * so nothing in this path needs to think.
+ */
+function buildContext(activeBot: any): ToolContext {
+  return {
+    bot: activeBot,
+    mcData: botData,
+    goals: pathGoals,
+    Movements: pathMovements,
+    owner: null,
+    log,
+    addMemory: () => {},
+    setGoal: () => {},
+    signal: routineStop.signal
+  }
 }
 
 process.on('message', (message: CompanionInbound) => {
@@ -401,8 +658,20 @@ process.on('message', (message: CompanionInbound) => {
       break
 
     case 'instruct':
-      if (!agent) return log('not connected yet')
-      agent.queue(`Your owner says: "${message.text}"`)
+      if (agent) {
+        agent.queue(`Your owner says: "${message.text}"`)
+      } else if (runner) {
+        /*
+         * A routine worker has no model to reason with, so it cannot act on
+         * free text. Saying so beats the silence: an instruction that vanished
+         * without a word looked like the bot ignoring its owner, and — once
+         * crews existed — like a foreman's order being carried out when
+         * nothing had happened at all.
+         */
+        log(`cannot act on "${message.text.slice(0, 60)}" while following the ${runner.routineId} routine`)
+      } else {
+        log('not connected yet')
+      }
       break
 
     case 'say':
@@ -421,6 +690,67 @@ process.on('message', (message: CompanionInbound) => {
       })
       log(`settings updated (autonomy ${message.autonomy ? 'on' : 'off'})`)
       break
+
+    /*
+     * The crew, as the launcher currently sees it. Held rather than acted on:
+     * the crew tools read it when the model asks, so a snapshot arriving
+     * mid-turn never interrupts what the bot is doing.
+     */
+    case 'crew':
+      setCrewSnapshot(message.snapshot)
+      agent?.update({ crew: message.snapshot })
+      break
+
+    case 'camera': {
+      if (cameraTimer) clearInterval(cameraTimer)
+      cameraTimer = null
+      if (!message.on) break
+
+      const tick = (): void => {
+        if (!bot) return
+        try {
+          const frame = captureFrame(bot)
+          if (frame) send({ type: 'camera', frame })
+        } catch {
+          /* a frame that cannot be built is not worth reporting every 500ms */
+        }
+      }
+      tick()
+      cameraTimer = setInterval(tick, 500)
+      break
+    }
+
+    /*
+     * A blueprint chosen in the launcher. It goes through the same executor the
+     * model's own builds use, so behaviour — resuming, material checks, the
+     * spawn-protection cutoff — is identical whichever way a build was asked for.
+     */
+    case 'build': {
+      if (!bot) {
+        log('not connected yet')
+        break
+      }
+      const blueprint = message.blueprint as Parameters<typeof buildBlueprint>[1]
+      const position = bot.entity.position
+      const origin = groundedOrigin(
+        bot,
+        {
+          x: Math.floor(position.x) + 2,
+          y: Math.floor(position.y),
+          z: Math.floor(position.z) + 2
+        },
+        blueprintSize(blueprint)
+      )
+      log(`building ${message.label} at ${origin.x} ${origin.y} ${origin.z}`)
+
+      void buildBlueprint(buildContext(bot), blueprint, {
+        origin,
+        onProgress: (progress) => log(`${progress.placed}/${progress.total} blocks placed`)
+      })
+        .then((result) => log(describeResult(blueprint, result)))
+        .catch((err) => log(`the build stopped: ${(err as Error).message}`))
+      break
+    }
 
     case 'stop':
       shutdown()

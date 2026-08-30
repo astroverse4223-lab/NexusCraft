@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { ensureDir } from '../../core/paths'
 import { join, basename } from 'node:path'
 import type { ContentKindId, Instance, ModrinthInstallResult, ModrinthProject, ModrinthSearchResult, ModrinthVersion } from '@shared/types'
 import { request, fetchImageAsDataUrl } from '../../core/http'
@@ -274,6 +275,33 @@ async function installedNames(instance: Instance, kind: ContentKindId): Promise<
 
 const RELEASE_TYPES: Record<number, ModrinthVersion['versionType']> = { 1: 'release', 2: 'beta', 3: 'alpha' }
 
+/**
+ * The loaders a file is genuinely built for.
+ *
+ * CurseForge puts loader names in `gameVersions` alongside the Minecraft
+ * versions — "Forge", "NeoForge", "Fabric" — so the file says what it is. The
+ * listing used to label every result with whatever loader had been *asked* for
+ * instead, which made a NeoForge build appear in a Forge list reading "Forge,
+ * 1.21.11". Their own filter is loose enough to return neighbouring builds, so
+ * that label was the difference between picking the right jar and a client that
+ * cannot synchronise registries with its server.
+ */
+function loadersOf(file: CfFile): string[] {
+  const known: Record<string, string> = {
+    forge: 'forge',
+    neoforge: 'neoforge',
+    fabric: 'fabric',
+    quilt: 'quilt'
+  }
+
+  const found = new Set<string>()
+  for (const entry of file.gameVersions ?? []) {
+    const match = known[entry.trim().toLowerCase()]
+    if (match) found.add(match)
+  }
+  return [...found]
+}
+
 export async function listCurseForgeFiles(
   projectId: string,
   kind: ContentKindId,
@@ -286,12 +314,38 @@ export async function listCurseForgeFiles(
 
   const result = await cfGet<{ data: CfFile[] }>(`/mods/${encodeURIComponent(projectId)}/files`, params)
 
-  return result.data.map((file) => ({
+  /*
+   * Their filter is a hint, not a guarantee. Files that say outright they are
+   * for another loader are dropped here, because offering one is worse than
+   * offering nothing: it installs, it looks right, and the client then fails to
+   * synchronise registries with a server running the correct build.
+   */
+  const wanted = loader?.toLowerCase()
+  const usable = result.data.filter((file) => {
+    /*
+     * The game version has to match as well as the loader.
+     *
+     * Their filter is a hint on both counts, and a build for the wrong version
+     * is every bit as broken as one for the wrong loader — a 26.2 jar in a
+     * 26.1.2 instance is skipped by Forge for wanting a newer language
+     * provider, and the mods depending on it then report it as "not installed",
+     * which sends you looking for a mod that is sitting right there.
+     */
+    if (gameVersion && !(file.gameVersions ?? []).includes(gameVersion)) return false
+
+    if (!wanted || kind !== 'mod') return true
+    const declared = loadersOf(file)
+    // Nothing declared means it is not saying either way; leave it in.
+    return declared.length === 0 || declared.includes(wanted)
+  })
+
+  return usable.map((file) => ({
     versionId: String(file.id),
     name: file.displayName,
     versionNumber: file.displayName,
     gameVersions: file.gameVersions ?? [],
-    loaders: loader ? [loader] : [],
+    // What the file actually is, not what was asked for.
+    loaders: loadersOf(file),
     versionType: RELEASE_TYPES[file.releaseType] ?? 'release',
     datePublished: file.fileDate,
     downloads: file.downloadCount ?? 0,
@@ -340,7 +394,27 @@ export async function installCurseForgeFile(
     })
   }
 
-  const dir = instanceSubdir(instance, subdirFor(kind))
+  return await fetchFileInto(
+    instanceSubdir(instance, subdirFor(kind)),
+    instance.id,
+    instance.name,
+    file
+  )
+}
+
+/**
+ * Downloads a CurseForge file into any folder.
+ *
+ * The work is identical wherever it lands — a hosted server takes the same jar
+ * an instance does — so the folder is the only thing that varies, and asking
+ * for an Instance just to learn a path meant servers could not use this at all.
+ */
+async function fetchFileInto(
+  dir: string,
+  taskId: string,
+  describedAs: string,
+  file: CfFile
+): Promise<ModrinthInstallResult> {
   const destination = join(dir, basename(file.fileName))
   const result: ModrinthInstallResult = { installed: [], dependencies: [], skipped: [] }
 
@@ -351,14 +425,41 @@ export async function installCurseForgeFile(
 
   const sha1 = file.hashes?.find((h) => h.algo === 1)?.value ?? null
 
-  const task = createTask({ instanceId: instance.id, label: `Downloading ${file.displayName}`, phase: 'libraries' })
-  task.add([{ url: file.downloadUrl, destination, sha1, size: file.fileLength, label: file.fileName }])
+  const task = createTask({ instanceId: taskId, label: `Downloading ${file.displayName}`, phase: 'libraries' })
+  task.add([{ url: file.downloadUrl as string, destination, sha1, size: file.fileLength, label: file.fileName }])
   await task.run()
   task.markDone()
 
   result.installed.push(file.fileName)
-  log.info(`installed ${file.fileName} from CurseForge into "${instance.name}"`)
+  log.info(`installed ${file.fileName} from CurseForge into "${describedAs}"`)
   return result
+}
+
+/** Installs a CurseForge file straight into a folder — used for hosted servers. */
+export async function installCurseForgeFileToDir(
+  target: { dir: string; taskId: string },
+  projectId: string,
+  fileId: string,
+  describedAs = 'the server'
+): Promise<ModrinthInstallResult> {
+  const file = await getFile(projectId, fileId)
+
+  if (!file.downloadUrl) {
+    throw new LauncherError('INVALID_INPUT', `file ${fileId} has no download URL (author opt-out)`, {
+      title: 'This mod must be downloaded manually',
+      message:
+        'Its author has turned off third-party downloads on CurseForge, so no launcher is permitted to fetch it ' +
+        'automatically. Download the file from its CurseForge page and add it with "Add files".',
+      actions: [
+        'Open the mod page on CurseForge and download the file',
+        'Return here and use "Add files"',
+        'Or look for the same mod on Modrinth, which has no such restriction'
+      ]
+    })
+  }
+
+  ensureDir(target.dir)
+  return await fetchFileInto(target.dir, target.taskId, describedAs, file)
 }
 
 /** Resolves several CurseForge files at once — used by modpack installs. */

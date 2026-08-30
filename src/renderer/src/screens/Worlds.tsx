@@ -14,6 +14,7 @@ import type { BackupInfo, Instance, LauncherErrorPayload, WorldInfo } from '@sha
 import { api, toPayload } from '../api'
 import { useStore, focusedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Spinner } from '../components/ui'
+import { DropZone } from '../components/DropZone'
 import { formatBytes, formatRelative } from '../format'
 
 export function WorldsScreen(): JSX.Element {
@@ -82,6 +83,9 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
   const [deletingBackup, setDeletingBackup] = useState<BackupInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [showBackups, setShowBackups] = useState(false)
+  /** The backup awaiting confirmation, and the one currently being written back. */
+  const [confirmRestore, setConfirmRestore] = useState<BackupInfo | null>(null)
+  const [restoring, setRestoring] = useState<string | null>(null)
 
   const isRunning = launches[instance.id]?.stage === 'running'
 
@@ -131,8 +135,41 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
     }
   }
 
+  async function restore(): Promise<void> {
+    if (!confirmRestore) return
+    const target = confirmRestore
+    setConfirmRestore(null)
+    setRestoring(target.fileName)
+    try {
+      await api.worlds.restore(instance.id, target.fileName)
+      setShowBackups(false)
+      await load()
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setRestoring(null)
+    }
+  }
+
+  async function importWorlds(paths: string[]): Promise<void> {
+    for (const path of paths) {
+      try {
+        const world = await api.worlds.importArchive(instance.id, path)
+        pushToast({ kind: 'success', title: `${world.name} imported` })
+      } catch (err) {
+        setError(toPayload(err))
+      }
+    }
+    await load()
+  }
+
   return (
-    <>
+    <DropZone
+      extensions={['zip']}
+      label={`Drop a world into ${instance.name}`}
+      hint="A zipped Minecraft world — the one holding level.dat"
+      onFiles={importWorlds}
+    >
       <div className="row between mb-16 wrap gap-12">
         <div className="row gap-8">
           <button className={`btn btn-sm ${showBackups ? '' : 'btn-primary'}`} onClick={() => setShowBackups(false)}>
@@ -203,6 +240,18 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
                     {formatRelative(entry.createdAt)} · {formatBytes(entry.sizeBytes)} · {entry.fileName}
                   </div>
                 </div>
+                <button
+                  className="btn btn-sm"
+                  title={
+                    isRunning
+                      ? 'Quit Minecraft before restoring'
+                      : 'Put this backup back, replacing the current world'
+                  }
+                  disabled={isRunning || restoring === entry.fileName}
+                  onClick={() => setConfirmRestore(entry)}
+                >
+                  {restoring === entry.fileName ? <Spinner /> : <ArchiveRestore size={14} />} Restore
+                </button>
                 <button className="btn btn-ghost btn-icon" title="Delete backup" onClick={() => setDeletingBackup(entry)}>
                   <Trash2 size={15} />
                 </button>
@@ -338,6 +387,16 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
         }}
         onCancel={() => setDeletingBackup(null)}
       />
-    </>
+
+      <ConfirmDialog
+        open={Boolean(confirmRestore)}
+        title={`Restore "${confirmRestore?.worldName}"?`}
+        message={`The world as it stands is backed up first, then replaced with this ${confirmRestore ? formatRelative(confirmRestore.createdAt) : ''} snapshot. Anything built since then is only in that new backup.`}
+        confirmLabel="Restore this backup"
+        busy={Boolean(restoring)}
+        onConfirm={() => void restore()}
+        onCancel={() => setConfirmRestore(null)}
+      />
+    </DropZone>
   )
 }

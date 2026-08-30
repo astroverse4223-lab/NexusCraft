@@ -5,6 +5,7 @@ import {
   Download,
   FileArchive,
   FolderOpen,
+  GitBranch,
   Globe2,
   HardDrive,
   Image,
@@ -12,6 +13,7 @@ import {
   Play,
   Plus,
   Settings2,
+  Share2,
   Trash2,
   Upload,
   Wrench
@@ -22,6 +24,8 @@ import { useStore, selectedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Modal, SettingRow, Spinner, Toggle } from '../components/ui'
 import { formatBytes, formatDuration, formatRam, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
 import { ModpackImportModal } from '../components/ModpackImport'
+import { DropZone } from '../components/DropZone'
+import { SnapshotManager } from '../components/SnapshotManager'
 
 const ACCENTS = ['#5eead4', '#818cf8', '#f472b6', '#fbbf24', '#4ade80', '#60a5fa', '#f87171', '#c084fc']
 
@@ -57,8 +61,48 @@ export function InstancesScreen(): JSX.Element {
     }
   }
 
+  /**
+   * Installs a dropped archive, whatever kind it turns out to be.
+   *
+   * A `.zip` is ambiguous — an exported instance and a CurseForge modpack use
+   * the same extension — so it is offered to the instance importer first and
+   * falls through to the modpack installer when that does not recognise it.
+   */
+  async function importArchives(paths: string[]): Promise<void> {
+    for (const path of paths) {
+      const lower = path.toLowerCase()
+      try {
+        if (lower.endsWith('.mrpack')) {
+          const result = await api.modpacks.installFile(path)
+          pushToast({ kind: 'success', title: `${result.instance.name} installed` })
+        } else if (lower.endsWith('.ncinstance')) {
+          const info = await api.instances.inspectArchive(path)
+          await api.instances.importArchive(path, info.name)
+          pushToast({ kind: 'success', title: `${info.name} imported` })
+        } else {
+          try {
+            const info = await api.instances.inspectArchive(path)
+            await api.instances.importArchive(path, info.name)
+            pushToast({ kind: 'success', title: `${info.name} imported` })
+          } catch {
+            const result = await api.modpacks.installFile(path)
+            pushToast({ kind: 'success', title: `${result.instance.name} installed` })
+          }
+        }
+        await refreshInstances()
+      } catch (err) {
+        setError(toPayload(err))
+      }
+    }
+  }
+
   return (
-    <>
+    <DropZone
+      extensions={['mrpack', 'ncinstance', 'zip']}
+      label="Drop a modpack or exported instance"
+      hint=".mrpack, .ncinstance or a CurseForge .zip"
+      onFiles={importArchives}
+    >
       <div className="screen-header">
         <div>
           <div className="eyebrow">Library</div>
@@ -161,7 +205,7 @@ export function InstancesScreen(): JSX.Element {
         onConfirm={() => void handleDelete()}
         onCancel={() => setDeleting(null)}
       />
-    </>
+    </DropZone>
   )
 }
 
@@ -188,7 +232,8 @@ function InstanceCard({
 }): JSX.Element {
   const navigate = useStore((s) => s.navigate)
   const [stats, setStats] = useState<InstanceStats | null>(null)
-  const [working, setWorking] = useState<'install' | 'repair' | 'duplicate' | null>(null)
+  const [working, setWorking] = useState<'install' | 'repair' | 'duplicate' | 'pack' | null>(null)
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false)
 
   useEffect(() => {
     void api.instances.stats(instance.id).then(setStats).catch(() => setStats(null))
@@ -309,6 +354,9 @@ function InstanceCard({
           >
             {working === 'repair' ? <Spinner /> : <Wrench size={15} />}
           </IconAction>
+          <IconAction title="Snapshots — save and restore this setup" onClick={() => setSnapshotsOpen(true)}>
+            <GitBranch size={15} />
+          </IconAction>
           <IconAction title="Edit" onClick={onEdit}><Settings2 size={15} /></IconAction>
           <IconAction
             title="Export this instance"
@@ -334,10 +382,36 @@ function InstanceCard({
           >
             <Upload size={15} />
           </IconAction>
+          <IconAction
+            title="Share as a modpack (.mrpack)"
+            disabled={working !== null}
+            onClick={() => {
+              void (async () => {
+                const target = await api.app.pickSavePath({
+                  title: `Share ${instance.name} as a modpack`,
+                  defaultName: `${instance.name.replace(/[^A-Za-z0-9._ -]/g, '_')}.mrpack`,
+                  extensions: ['mrpack']
+                })
+                if (!target) return
+                setWorking('pack')
+                try {
+                  await api.instances.exportPack(instance.id, target, { name: instance.name })
+                } catch (err) {
+                  onError(toPayload(err))
+                } finally {
+                  setWorking(null)
+                }
+              })()
+            }}
+          >
+            {working === 'pack' ? <Spinner /> : <Share2 size={15} />}
+          </IconAction>
           <div className="flex-1" />
           <IconAction title="Delete" danger disabled={isRunning} onClick={onDelete}><Trash2 size={15} /></IconAction>
         </div>
       </div>
+
+      <SnapshotManager instance={instance} open={snapshotsOpen} onClose={() => setSnapshotsOpen(false)} />
     </div>
   )
 }

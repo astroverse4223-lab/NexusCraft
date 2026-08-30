@@ -4,6 +4,7 @@ import { Background } from './components/Background'
 import { Sidebar, TitleBar } from './components/Shell'
 import { ErrorView, Modal, ScreenTransition, Spinner, ToastStack } from './components/ui'
 import { LogoLockup } from './components/Logo'
+import { InvitePrompt } from './components/InvitePrompt'
 import { useStore } from './store/useStore'
 
 import { HomeScreen } from './screens/Home'
@@ -13,6 +14,8 @@ import { VersionsScreen } from './screens/Versions'
 import { ModsScreen } from './screens/Mods'
 import { WorldsScreen } from './screens/Worlds'
 import { ServersScreen } from './screens/Servers'
+import { DiscoverScreen } from './screens/Discover'
+import { BlueprintsScreen } from './screens/Blueprints'
 import { HostServerScreen } from './screens/HostServer'
 import { SkinsScreen } from './screens/Skins'
 import { AccountScreen } from './screens/Account'
@@ -70,6 +73,8 @@ export default function App(): JSX.Element {
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
 
+      <InvitePrompt />
+
       <Modal open={Boolean(errorModal)} title="" onClose={dismissError} width={540}>
         {errorModal && <ErrorView error={errorModal} onDismiss={dismissError} />}
       </Modal>
@@ -93,6 +98,10 @@ function renderRoute(route: string): JSX.Element {
       return <WorldsScreen />
     case 'servers':
       return <ServersScreen />
+    case 'discover':
+      return <DiscoverScreen />
+    case 'blueprints':
+      return <BlueprintsScreen />
     case 'host':
       return <HostServerScreen />
     case 'skins':

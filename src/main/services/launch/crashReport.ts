@@ -49,6 +49,27 @@ const KNOWN: Array<{
     ]
   },
   {
+    /*
+     * Leaving a server takes the client down with it.
+     *
+     * On logout Forge unloads mod configs, and a config that was synced from
+     * the server is held in memory rather than backed by a file. `ModConfig.save`
+     * casts it to the file-backed type without checking, so the disconnect that
+     * should have returned you to the menu ends in a crash report instead. The
+     * world is already saved by then, which is why this looks alarming and costs
+     * nothing.
+     */
+    test: /SimpleCommentedConfig cannot be cast|nightconfig.*ClassCastException|ClassCastException.*nightconfig/i,
+    explanation:
+      'The game crashed while disconnecting, not while playing. Forge tried to save a config that the server had sent it, which is held in memory and has no file to be saved to. Your world and everything in it were already saved before this happened.',
+    actions: [
+      'Nothing is lost — this happens after the world is saved',
+      'It comes from Forge Config API Port, which is installed because another mod asks for it',
+      'Find the mod that needs it on the Mods screen; removing both stops the crash',
+      'Or leave it: the only symptom is the crash report on the way out'
+    ]
+  },
+  {
     test: /Mixin apply failed|MixinApplyError|Mixin transformation of/i,
     explanation:
       'A mod tried to patch game code that did not look the way it expected. This nearly always means a mod does not match this Minecraft version, or two mods are patching the same thing.',

@@ -5,6 +5,7 @@ import { api, toPayload } from '../api'
 import { useStore, activeAccount } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Modal, Spinner } from '../components/ui'
 import { SkinBody, SkinTexture } from '../components/SkinView'
+import { DropZone } from '../components/DropZone'
 import { formatRelative } from '../format'
 
 export function SkinsScreen(): JSX.Element {
@@ -20,6 +21,8 @@ export function SkinsScreen(): JSX.Element {
   const [resetting, setResetting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<SavedSkin | null>(null)
+  /** A PNG dropped onto the screen, waiting for the import dialog to name it. */
+  const [dropped, setDropped] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -60,7 +63,16 @@ export function SkinsScreen(): JSX.Element {
   }
 
   return (
-    <>
+    <DropZone
+      extensions={['png']}
+      label="Drop a skin PNG"
+      hint="You will be asked to name it and pick the arm model"
+      onFiles={(paths) => {
+        if (!paths[0]) return
+        setDropped(paths[0])
+        setImportOpen(true)
+      }}
+    >
       <div className="screen-header">
         <div>
           <div className="eyebrow">You</div>
@@ -218,9 +230,14 @@ export function SkinsScreen(): JSX.Element {
 
       <ImportSkinModal
         open={importOpen}
-        onClose={() => setImportOpen(false)}
+        initialPath={dropped}
+        onClose={() => {
+          setImportOpen(false)
+          setDropped(null)
+        }}
         onImported={() => {
           setImportOpen(false)
+          setDropped(null)
           void load()
           pushToast({ kind: 'success', title: 'Skin saved to your library' })
         }}
@@ -280,7 +297,7 @@ export function SkinsScreen(): JSX.Element {
         }}
         onCancel={() => setResetting(false)}
       />
-    </>
+    </DropZone>
   )
 }
 
@@ -289,11 +306,14 @@ export function SkinsScreen(): JSX.Element {
 function ImportSkinModal({
   open,
   onClose,
-  onImported
+  onImported,
+  initialPath
 }: {
   open: boolean
   onClose: () => void
   onImported: () => void
+  /** Pre-selected file, set when the user dropped a PNG onto the screen. */
+  initialPath?: string | null
 }): JSX.Element {
   const [filePath, setFilePath] = useState('')
   const [name, setName] = useState('')
@@ -306,8 +326,14 @@ function ImportSkinModal({
       setFilePath('')
       setName('')
       setError(null)
+      return
     }
-  }, [open])
+    if (initialPath) {
+      setFilePath(initialPath)
+      const base = initialPath.split(/[\\/]/).pop() ?? ''
+      setName((current) => current || base.replace(/\.png$/i, ''))
+    }
+  }, [open, initialPath])
 
   async function pick(): Promise<void> {
     const files = await api.app.pickFiles({ title: 'Choose a skin PNG', extensions: ['png'], multi: false })

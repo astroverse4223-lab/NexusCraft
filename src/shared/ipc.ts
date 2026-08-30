@@ -17,6 +17,19 @@ export type { IpcChannel, EventChannel }
 const id = z.string().min(1).max(128)
 const path = z.string().min(1).max(4096)
 
+/*
+ * A modpack's own title, which is often long.
+ *
+ * Capped at 64 characters these refused real packs outright: one called
+ * "Cobblemon - Mega Pokemon + Cobblemon Gyms + Cobblemon Friends + Cobblemon MMO
+ * RPG + Legendary Cobblemon + Cobblemon Server" runs to 120, was rejected before
+ * the main process ever saw it, and surfaced to the user as an internal bug. The
+ * installer already shortens whatever it receives into a sensible instance name,
+ * so this only has to be generous enough not to lie about what a pack may be
+ * called.
+ */
+const modpackName = z.string().max(256).optional()
+
 /** Rejects path fragments that try to escape their parent directory. */
 export const safeSegment = z
   .string()
@@ -98,13 +111,38 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     includeScreenshots: z.boolean()
   }),
   'instances:inspectArchive': z.object({ filePath: path }),
-  'instances:import': z.object({ filePath: path, name: z.string().max(64).optional() }),
+  'instances:import': z.object({ filePath: path, name: modpackName }),
+  'instances:snapshots': z.object({ id }),
+  'instances:snapshot': z.object({ id, name: z.string().min(1).max(60), note: z.string().max(300).optional() }),
+  'instances:restoreSnapshot': z.object({ id, snapshotId: id }),
+  'instances:deleteSnapshot': z.object({ id, snapshotId: id }),
+  'instances:diffSnapshot': z.object({ id, snapshotId: id }),
+  'instances:exportPack': z.object({
+    id,
+    outputPath: path,
+    name: z.string().max(120).optional(),
+    version: z.string().max(32).optional(),
+    summary: z.string().max(400).optional(),
+    includeConfigs: z.boolean().optional(),
+    includeWorlds: z.boolean().optional()
+  }),
 
   /* --------------------------------------------------------------- launch */
   'launch:start': z.object({ instanceId: id, serverAddress: z.string().max(255).optional() }),
   'launch:stop': z.object({ instanceId: id }),
   'launch:state': z.void(),
   'launch:logs': z.object({ instanceId: id, limit: z.number().int().min(1).max(5000).optional() }),
+  'launch:autopsy': z.object({ instanceId: id }),
+  'launch:autopsyAvailable': z.void(),
+  'launch:applyFix': z.object({
+    instanceId: id,
+    fix: z.object({
+      kind: z.enum(['disable-mod', 'update-mod', 'more-memory', 'less-memory', 'repair', 'manual']),
+      label: z.string().max(80),
+      detail: z.string().max(300),
+      modFileName: safeSegment.nullable()
+    })
+  }),
 
   /* ------------------------------------------------------------ downloads */
   'downloads:state': z.void(),
@@ -173,15 +211,42 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   }),
   'modrinth:project': z.object({ projectId: z.string().min(1).max(64) }),
   'modpack:inspect': z.object({ filePath: path }),
-  'modpack:installFile': z.object({ filePath: path, name: z.string().max(64).optional() }),
-  'modpack:installModrinth': z.object({ versionId: z.string().min(1).max(64), name: z.string().max(64).optional() }),
+  'modpack:installFile': z.object({ filePath: path, name: modpackName }),
+  'modpack:installModrinth': z.object({ versionId: z.string().min(1).max(64), name: modpackName }),
+  /*
+   * Hosting a pack rather than playing it. The options mirror what a new server
+   * needs and are all optional: left out, the pack's own name is used, the port
+   * is the first one free, and the memory is a modded-server default.
+   */
+  'modpack:serverFromFile': z.object({
+    filePath: path,
+    name: modpackName,
+    port: z.number().int().min(1024).max(65535).optional(),
+    memoryMb: z.number().int().min(512).max(65536).optional()
+  }),
+  'modpack:serverFromModrinth': z.object({
+    versionId: z.string().min(1).max(64),
+    name: modpackName,
+    port: z.number().int().min(1024).max(65535).optional(),
+    memoryMb: z.number().int().min(512).max(65536).optional()
+  }),
+  'modpack:serverFromCurseForge': z.object({
+    projectId: z.string().min(1).max(32),
+    fileId: z.string().min(1).max(32),
+    name: modpackName,
+    port: z.number().int().min(1024).max(65535).optional(),
+    memoryMb: z.number().int().min(512).max(65536).optional()
+  }),
   'modpack:installCurseForge': z.object({
     projectId: z.string().min(1).max(32),
     fileId: z.string().min(1).max(32),
-    name: z.string().max(64).optional()
+    name: modpackName
   }),
   'mods:checkUpdates': z.object({ instanceId: id }),
   'mods:applyUpdate': z.object({ instanceId: id, update: z.record(z.string(), z.unknown()) }),
+  'mods:changelog': z.object({ instanceId: id, update: z.record(z.string(), z.unknown()) }),
+  'mods:rollbacks': z.object({ instanceId: id }),
+  'mods:rollback': z.object({ instanceId: id, fileName: safeSegment }),
   'curseforge:verify': z.object({ key: z.string().optional() }).optional(),
   'curseforge:status': z.void(),
   'datapacks:list': z.void(),
@@ -199,6 +264,7 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'datapacks:installed': z.object({ instanceId: id, worldFolder: safeSegment }),
   'datapacks:remove': z.object({ instanceId: id, worldFolder: safeSegment, fileName: safeSegment }),
   /* ---------------------------------------------------------- companion */
+  'companion:routines': z.undefined(),
   'companion:list': z.void(),
   'companion:create': z.object({ name: z.string().max(16).optional() }),
   'companion:delete': z.object({ id: z.string().min(1) }),
@@ -210,9 +276,42 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'companion:state': z.object({ id: z.string().min(1) }),
   'companion:states': z.void(),
   'companion:clearMemory': z.object({ id: z.string().min(1) }),
+  'companion:camera': z.object({ id: z.string().min(1), on: z.boolean() }),
+  'companion:blueprints': z.void(),
+  'companion:importSchematic': z.object({ filePath: path }),
+  'companion:build': z.object({ id: z.string().min(1), blueprintId: z.string().min(1).max(128) }),
+  'blueprints:export': z.object({
+    blueprintId: z.string().min(1).max(128),
+    /** Where it goes: a client instance, or a hosted server's world. */
+    instanceId: id.optional(),
+    serverId: id.optional(),
+    format: z.enum(['schem', 'nbt'])
+  }),
+  'blueprints:setupLitematica': z.object({ instanceId: id }),
   'companion:testModel': z.object({ id: z.string().min(1) }),
   'companion:listModels': z.object({ id: z.string().min(1) }),
 
+  'crew:list': z.void(),
+  'crew:create': z.object({
+    name: z.string().min(1).max(40),
+    foremanId: z.string().min(1),
+    memberIds: z.array(z.string().min(1)).max(8)
+  }),
+  'crew:update': z.object({
+    id: z.string().min(1),
+    patch: z.object({
+      name: z.string().max(40).optional(),
+      memberIds: z.array(z.string().min(1)).max(8).optional()
+    })
+  }),
+  'crew:delete': z.object({ id: z.string().min(1) }),
+  'crew:start': z.object({ id: z.string().min(1) }),
+  'crew:stop': z.object({ id: z.string().min(1) }),
+  'crew:notes': z.object({ id: z.string().min(1) }),
+  'crew:clearNotes': z.object({ id: z.string().min(1) }),
+
+  'host:installModrinth': z.object({ id: z.string(), versionId: z.string(), kind: z.string() }),
+  'host:installCurseForge': z.object({ id: z.string(), projectId: z.string(), fileId: z.string(), kind: z.string() }),
   'host:share': z.object({ id: z.string() }),
   'host:forwardStatus': z.object({ id: z.string() }),
   'host:openPort': z.object({ id: z.string(), acceptUnverified: z.boolean().optional() }),
@@ -250,9 +349,49 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'host:deleteMod': z.object({ id: z.string().min(1), fileName: z.string().min(1).max(255) }),
   'host:installMod': z.object({ id: z.string().min(1), versionId: z.string().min(1).max(64) }),
   'host:joinTargets': z.object({ id: z.string().min(1) }),
-  'host:join': z.object({ id: z.string().min(1), instanceId: z.string().min(1) }),
+  'host:join': z.object({ id: z.string().min(1), instanceId: z.string().min(1).optional() }),
   'host:openFolder': z.object({ id: z.string().min(1) }),
   'host:syncMods': z.object({ id: z.string().min(1), instanceId: z.string().min(1) }),
+  'host:deploySteward': z.object({ id: z.string().min(1), companionId: z.string().min(1).optional() }),
+  'host:dismissSteward': z.object({ companionId: z.string().min(1) }),
+  'host:stewards': z.object({ id: z.string().min(1) }),
+  'host:backup': z.object({ id: z.string().min(1) }),
+  'host:backups': z.object({ id: z.string().min(1) }),
+  'host:restoreBackup': z.object({ id: z.string().min(1), fileName: safeSegment }),
+  'host:deleteBackup': z.object({ id: z.string().min(1), fileName: safeSegment }),
+  'host:backupSettings': z.object({ id: z.string().min(1) }),
+  'host:inviteLink': z.object({ id: z.string().min(1) }),
+  'host:tunnelSettings': z.object({ id: z.string().min(1) }),
+  'host:setTunnelSettings': z.object({
+    id: z.string().min(1),
+    patch: z.object({
+      agentPath: path.optional(),
+      provider: z.enum(['playit', 'custom']).optional(),
+      args: z.string().max(500).optional()
+    })
+  }),
+  'host:startTunnel': z.object({ id: z.string().min(1) }),
+  'host:stopTunnel': z.object({ id: z.string().min(1) }),
+  'host:tunnelState': z.object({ id: z.string().min(1) }),
+  'links:pendingInvite': z.void(),
+  'links:acceptInvite': z.object({
+    host: z.string().min(1).max(255),
+    port: z.number().int().min(1).max(65535),
+    name: z.string().max(64).nullable().optional(),
+    minecraftVersion: z.string().max(32).nullable().optional(),
+    loader: z.string().max(16).nullable().optional(),
+    packVersionId: z.string().max(64).nullable().optional(),
+    instanceId: id.nullable().optional()
+  }),
+  'host:setBackupSettings': z.object({
+    id: z.string().min(1),
+    patch: z.object({
+      enabled: z.boolean().optional(),
+      intervalMinutes: z.number().int().min(5).max(1440).optional(),
+      keep: z.number().int().min(1).max(50).optional(),
+      onStop: z.boolean().optional()
+    })
+  }),
 
   'datapacks:export': z.object({
     instanceId: id,
@@ -288,7 +427,30 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'worlds:backup': z.object({ instanceId: id, folderName: safeSegment }),
   'worlds:listBackups': z.object({ instanceId: id }),
   'worlds:deleteBackup': z.object({ instanceId: id, fileName: safeSegment }),
+  'worlds:restore': z.object({ instanceId: id, fileName: safeSegment }),
+  'worlds:import': z.object({ instanceId: id, filePath: path }),
   'worlds:delete': z.object({ instanceId: id, folderName: safeSegment }),
+
+  /* --------------------------------------------------- public directory */
+  'directory:list': z.void(),
+  'directory:refresh': z.object({ force: z.boolean().optional() }).optional(),
+  'directory:ping': z.object({ id: z.string().min(1).max(64) }),
+  /* A typed-in address, parsed and bounds-checked in the service. */
+  'directory:lookup': z.object({ address: z.string().min(1).max(300) }),
+  'directory:add': z.object({
+    name: z.string().min(1).max(64),
+    address: z.string().min(1).max(255),
+    port: z.number().int().min(1).max(65535)
+  }),
+  'directory:joinTargets': z.object({
+    address: z.string().min(1).max(255),
+    port: z.number().int().min(1).max(65535)
+  }),
+  'directory:join': z.object({
+    address: z.string().min(1).max(255),
+    port: z.number().int().min(1).max(65535),
+    instanceId: id.optional()
+  }),
 
   /* -------------------------------------------------------------- servers */
   'servers:list': z.void(),

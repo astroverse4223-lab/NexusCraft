@@ -46,6 +46,7 @@ import {
   suggestedExportName
 } from '../services/instances/transferService'
 import { launchInstance, launchStates, recentLogs, stopInstance, isRunning } from '../services/launch/launchService'
+import { autopsyAvailable, diagnoseWithModel } from '../services/launch/crashAutopsy'
 import { activeTasks, getTask } from '../services/downloads/downloadManager'
 import {
   detectJavaInstallations,
@@ -68,10 +69,22 @@ import {
   backupWorld,
   deleteBackup,
   deleteWorld,
+  importWorldArchive,
   listBackups,
   listWorlds,
+  restoreBackup,
   savesDir
 } from '../services/worlds/worldService'
+import { rankInstancesForServer } from '../services/servers/joinMatch'
+import {
+  catalogue as directoryCatalogue,
+  categories as directoryCategories,
+  cachedDirectoryStatuses,
+  loadRemoteCatalogue,
+  lookupAddress,
+  pingDirectoryServer,
+  refreshDirectory
+} from '../services/servers/directoryService'
 import {
   checkAllServers,
   checkServer,
@@ -106,8 +119,10 @@ import {
   hostedServerDir,
   serverAddress,
   connectAddress,
+  serverModTarget,
   shareDetails,
   syncServerModsToInstance,
+  serverUsesPlugins,
   saveHostedServer,
   sendHostedServerCommand,
   startHostedServer,
@@ -125,14 +140,39 @@ import {
   stopCompanion,
   instructCompanion,
   getCompanionState,
-  clearCompanionMemory
+  clearCompanionMemory,
+  setCameraEnabled,
+  rememberImport,
+  listImports,
+  getImport,
+  buildWithCompanion
 } from '../services/companion/companionService'
+import { deploySteward, dismissSteward, stewardsFor } from '../services/companion/stewardService'
+import {
+  listCrews,
+  createCrew,
+  updateCrew,
+  deleteCrew,
+  startCrew,
+  stopCrew,
+  crewNotes,
+  clearCrewNotes
+} from '../services/companion/crewService'
+import {
+  backupHostedServer,
+  deleteServerBackup,
+  listServerBackups,
+  restoreServerBackup,
+  serverBackupSettings,
+  setServerBackupSettings
+} from '../services/backup/backupScheduler'
 import { chat as llmChat, listModels, LlmError } from '../companion/llm'
 import { getSecret } from '../services/auth/secureStore'
 import {
   searchProjects,
   listVersions,
   installVersionToInstance,
+  installVersionToDir,
   getProjectBody
 } from '../services/content/modrinthService'
 import {
@@ -141,20 +181,64 @@ import {
   installModpackFromModrinth,
   installCurseForgeModpack
 } from '../services/content/modpackService'
+import { exportInstanceAsPack } from '../services/content/packExport'
+import {
+  listSnapshots,
+  createSnapshot,
+  restoreSnapshot,
+  deleteSnapshot,
+  diffSnapshot
+} from '../services/instances/snapshotService'
+import {
+  tunnelSettings,
+  setTunnelSettings,
+  tunnelState,
+  startTunnel,
+  stopTunnel
+} from '../services/servers/tunnelService'
+import { buildJoinLink } from '../services/links/deepLinks'
+import { acceptInvite, currentPendingInvite, takePendingInvite } from '../services/links/linkActions'
+import {
+  installModpackAsServerFromFile,
+  installModpackAsServerFromModrinth,
+  installModpackAsServerFromCurseForge
+} from '../services/content/modpackServer'
 import {
   searchCurseForge,
   listCurseForgeFiles,
   installCurseForgeFile,
+  installCurseForgeFileToDir,
   isConfigured as curseForgeConfigured,
   verifyApiKey as verifyCurseForgeKey
 } from '../services/content/curseforgeService'
+import { ROUTINES } from '../companion/routines'
+import { BLUEPRINT_LIBRARY, findLibraryBlueprint } from '../companion/build/library'
+import { blueprintSize, billOfMaterials } from '../companion/build/blueprint'
+import { loadSchematic } from '../companion/build/schematic'
+import {
+  exportBlueprint,
+  safeFileName,
+  schematicsDir,
+  structuresDir,
+  serverWorldName
+} from '../companion/build/schematicExport'
+import { randomUUID } from 'node:crypto'
+import { clearPresence, showIdlePresence } from '../services/presence/presenceService'
 import {
   discoverGateway,
   openPort,
   closePort,
-  forwardingStatus
+  forwardingStatus,
+  keepPortOpen,
+  stopKeepingPortOpen
 } from '../services/servers/portForwarding'
-import { checkModUpdates, applyModUpdate } from '../services/content/modrinthService'
+import {
+  checkModUpdates,
+  applyModUpdate,
+  modChangelog,
+  listRollbacks,
+  rollbackModUpdate
+} from '../services/content/modrinthService'
 import {
   listDataPacks,
   buildDataPack,
@@ -163,9 +247,9 @@ import {
   removeDataPack,
   exportDataPack
 } from '../services/content/datapackService'
-import type { ModUpdate, DataPackOptionValues } from '@shared/types'
-import type { ContentKindId, ModpackInstallResult } from '@shared/types'
-import type { SaveHostedServerInput } from '@shared/types'
+import type { CrashFix, ModUpdate, DataPackOptionValues } from '@shared/types'
+import type { ContentKindId, LoaderId, ModpackInstallResult } from '@shared/types'
+import type { SaveHostedServerInput, ModpackServerInstallResult } from '@shared/types'
 
 /** Announces a finished modpack install, including anything it had to skip. */
 function reportModpack(result: ModpackInstallResult): void {
@@ -175,6 +259,28 @@ function reportModpack(result: ModpackInstallResult): void {
     `${result.installedFiles} files and ${result.overrides} config files installed.` +
       (result.skipped.length > 0 ? ` ${result.skipped.length} were skipped as untrusted downloads.` : '')
   )
+}
+
+/**
+ * Announces a pack installed as a server.
+ *
+ * This says more than the instance version because more was decided on the
+ * user's behalf: a client-only mod that was turned off is a change they did not
+ * ask for and would otherwise discover by wondering where their minimap went.
+ */
+function reportModpackServer(result: ModpackServerInstallResult): void {
+  const notes: string[] = [`${result.installedFiles} files and ${result.overrides} config files installed.`]
+  if (result.clientOnlyMods.length > 0) {
+    notes.push(
+      `${result.clientOnlyMods.length} client-only mod${result.clientOnlyMods.length === 1 ? '' : 's'} ` +
+        `turned off (${result.clientOnlyMods.slice(0, 3).join(', ')}${result.clientOnlyMods.length > 3 ? '…' : ''}).`
+    )
+  }
+  if (result.skipped.length > 0) {
+    notes.push(`${result.skipped.length} could not be downloaded automatically.`)
+  }
+  notes.push('Accept the EULA on the server to start it.')
+  toast('success', `${result.server.name} is ready to host`, notes.join(' '))
 }
 
 const log = createLogger('handlers')
@@ -209,13 +315,34 @@ const ALLOWED_EXTERNAL_DOMAINS = [
   'neoforged.net',
   'modrinth.com',
   'curseforge.com',
-  'github.com'
+  'github.com',
+  // Where to get the relay agent the launcher can drive, for people whose
+  // router cannot forward a port at all.
+  'playit.gg'
 ]
 
 /** True when `hostname` is one of the allowed domains, or a subdomain of one. */
 function isAllowedExternalHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.$/, '')
   return ALLOWED_EXTERNAL_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))
+}
+
+/**
+ * Refuses content a server has no way to use.
+ *
+ * Resource packs and shaders are drawn by the client; a server that was handed
+ * one filed it away in `mods/` and loaded nothing, which looks like an install
+ * that worked and a mod that does not function.
+ */
+function assertServerCanUse(kind: ContentKindId, serverName: string): void {
+  if (kind === 'mod' || kind === 'modpack') return
+
+  const what = kind === 'resourcepack' ? 'Resource packs' : 'Shaders'
+  throw new LauncherError('INVALID_INPUT', `a server cannot use a ${kind}`, {
+    title: `A server cannot use that`,
+    message: `${what} are drawn by the game on each player's own machine, so installing one into "${serverName}" would do nothing.`,
+    actions: [`Install it into the instance you play with instead`]
+  })
 }
 
 export function registerIpcHandlers(): void {
@@ -231,7 +358,13 @@ export function registerIpcHandlers(): void {
     dataDir: dataRoot(),
     logsDir: logsRoot(),
     secureStorage: isEncryptionAvailable(),
-    isPackaged: app.isPackaged
+    isPackaged: app.isPackaged,
+    /*
+     * True when this copy was pointed at a throwaway data directory. Such a
+     * window is empty by design and otherwise indistinguishable from the real
+     * launcher, which has already caused one "where did all my instances go".
+     */
+    scratchData: Boolean(process.env.NEXUSCRAFT_DATA_DIR?.trim())
   }))
 
   handle('app:openExternal', async (payload: { url: string }) => {
@@ -361,7 +494,14 @@ export function registerIpcHandlers(): void {
       toast('info', 'Data folder updated', 'Restart NexusCraft for the new location to take effect.')
       delete patch.dataDir
     }
-    return { ...updateSettings(patch), dataDir: dataRoot() }
+
+    const next = updateSettings(patch)
+
+    // Turning presence off should take effect now, not at the next launch.
+    if (patch.discordPresence === false) clearPresence()
+    else if (patch.discordPresence === true) void showIdlePresence()
+
+    return { ...next, dataDir: dataRoot() }
   })
 
   /* --------------------------------------------------------------- auth */
@@ -477,6 +617,69 @@ export function registerIpcHandlers(): void {
     await importInstance(payload.filePath, payload.name)
   )
 
+  /* -------------------------------------------------- instance snapshots */
+
+  handle('instances:snapshots', async (payload: { id: string }) => await listSnapshots(payload.id))
+
+  handle('instances:snapshot', async (payload: { id: string; name: string; note?: string }) => {
+    const snapshot = await createSnapshot(payload.id, payload.name, payload.note ?? '')
+    toast(
+      'success',
+      `Snapshot "${snapshot.name}" taken`,
+      snapshot.linked
+        ? `${snapshot.files} files, using almost no extra disk.`
+        : `${snapshot.files} files copied (${(snapshot.bytes / 1024 / 1024).toFixed(0)} MB — this drive does not support hard links).`
+    )
+    return snapshot
+  })
+
+  handle('instances:restoreSnapshot', async (payload: { id: string; snapshotId: string }) => {
+    const snapshot = await restoreSnapshot(payload.id, payload.snapshotId)
+    toast('success', `Restored "${snapshot.name}"`, 'What was there before was snapshotted first.')
+    return snapshot
+  })
+
+  handle('instances:deleteSnapshot', async (payload: { id: string; snapshotId: string }) => {
+    await deleteSnapshot(payload.id, payload.snapshotId)
+    return true
+  })
+
+  handle('instances:diffSnapshot', async (payload: { id: string; snapshotId: string }) =>
+    await diffSnapshot(payload.id, payload.snapshotId)
+  )
+
+  handle(
+    'instances:exportPack',
+    async (payload: {
+      id: string
+      outputPath: string
+      name?: string
+      version?: string
+      summary?: string
+      includeConfigs?: boolean
+      includeWorlds?: boolean
+    }) => {
+      const instance = getInstance(payload.id)
+      const result = await exportInstanceAsPack(instance, payload.outputPath, {
+        name: payload.name,
+        version: payload.version,
+        summary: payload.summary,
+        includeConfigs: payload.includeConfigs,
+        includeWorlds: payload.includeWorlds
+      })
+
+      const detail =
+        `${result.linked} mod${result.linked === 1 ? '' : 's'} linked to Modrinth, ` +
+        `${result.overrides} file${result.overrides === 1 ? '' : 's'} bundled.` +
+        (result.unmatched.length > 0
+          ? ` ${result.unmatched.length} jar${result.unmatched.length === 1 ? ' was' : 's were'} not on Modrinth and shipped as copies.`
+          : '')
+
+      toast('success', `${instance.name} exported as a modpack`, detail)
+      return result
+    }
+  )
+
   /* ------------------------------------------------------------- launch */
 
   handle('launch:start', async (payload: { instanceId: string; serverAddress?: string }) => {
@@ -493,6 +696,87 @@ export function registerIpcHandlers(): void {
   handle('launch:logs', (payload: { instanceId: string; limit?: number }) =>
     recentLogs(payload.instanceId, payload.limit ?? 500)
   )
+
+  handle('launch:autopsyAvailable', () => ({ available: autopsyAvailable() }))
+
+  handle('launch:autopsy', async (payload: { instanceId: string }) => {
+    const instance = getInstance(payload.instanceId)
+    const state = launchStates().find((entry) => entry.instanceId === payload.instanceId)
+    return await diagnoseWithModel(instance, state?.crash ?? null)
+  })
+
+  /**
+   * Carries out one of the autopsy's fixes.
+   *
+   * Deliberately narrow: each branch is something the launcher already exposes
+   * as a button elsewhere. A model suggesting a change is not the same as a
+   * model being allowed to make one, so anything outside this list stays advice.
+   */
+  handle('launch:applyFix', async (payload: { instanceId: string; fix: CrashFix }) => {
+    const instance = getInstance(payload.instanceId)
+    const { fix } = payload
+
+    switch (fix.kind) {
+      case 'disable-mod': {
+        if (!fix.modFileName) throw new LauncherError('INVALID_INPUT', 'no mod named')
+        await setModEnabled(instance, fix.modFileName, false)
+        toast('success', 'Mod disabled', `${fix.modFileName} is turned off. Try launching again.`)
+        return { applied: 'disable-mod' }
+      }
+
+      case 'update-mod': {
+        if (!fix.modFileName) throw new LauncherError('INVALID_INPUT', 'no mod named')
+        const updates = await checkModUpdates(instance)
+        const match = updates.find((update) => update.fileName === fix.modFileName)
+        if (!match) {
+          throw new LauncherError('NOT_FOUND', 'no newer build', {
+            title: 'There is no newer build of that mod',
+            message: `Modrinth has nothing newer than the ${fix.modFileName} you already have for this version.`,
+            actions: ['Try disabling it instead', 'Or check the mod page for a build matching this Minecraft version']
+          })
+        }
+        await applyModUpdate(instance, match)
+        toast('success', `${match.modName} updated`, `Now on ${match.newVersion}. Try launching again.`)
+        return { applied: 'update-mod' }
+      }
+
+      case 'more-memory':
+      case 'less-memory': {
+        const recommended = recommendedRamMb()
+        const current = instance.java.maxRamMb
+        const step = 1024
+        const next =
+          fix.kind === 'more-memory'
+            ? Math.min(current + step, recommended.ceiling)
+            : Math.max(current - step, 1024)
+
+        if (next === current) {
+          throw new LauncherError('INVALID_INPUT', 'memory already at the limit', {
+            title: 'Memory is already as far as it goes',
+            message:
+              fix.kind === 'more-memory'
+                ? `This instance already has ${current} MB, which is the most this machine can safely give it.`
+                : `This instance is already at ${current} MB; lowering it further would not leave enough to start.`,
+            actions: ['Try one of the other fixes']
+          })
+        }
+
+        updateInstance(instance.id, { java: { ...instance.java, maxRamMb: next } })
+        toast('success', 'Memory changed', `${instance.name} now has ${next} MB. Try launching again.`)
+        return { applied: fix.kind, maxRamMb: next }
+      }
+
+      case 'repair': {
+        await repairInstance(instance.id)
+        toast('success', 'Instance repaired', 'Missing and damaged files were downloaded again.')
+        return { applied: 'repair' }
+      }
+
+      default:
+        // 'manual' is advice; there is nothing for the launcher to do.
+        return { applied: 'manual' }
+    }
+  })
 
   /* ---------------------------------------------------------- downloads */
 
@@ -705,13 +989,88 @@ export function registerIpcHandlers(): void {
       throw new LauncherError('INVALID_INPUT', 'malformed update payload')
     }
     await applyModUpdate(instance, update)
-    toast('success', `${update.modName} updated`, `Now on ${update.newVersion}.`)
+    toast('success', `${update.modName} updated`, `Now on ${update.newVersion}. The old jar is kept so you can undo this.`)
     return true
+  })
+
+  handle('mods:changelog', async (payload: { instanceId: string; update: Record<string, unknown> }) => {
+    getInstance(payload.instanceId)
+    const update = payload.update as unknown as ModUpdate
+    if (typeof update?.newVersionId !== 'string') {
+      throw new LauncherError('INVALID_INPUT', 'malformed update payload')
+    }
+    return await modChangelog(update)
+  })
+
+  handle('mods:rollbacks', async (payload: { instanceId: string }) =>
+    await listRollbacks(getInstance(payload.instanceId))
+  )
+
+  handle('mods:rollback', async (payload: { instanceId: string; fileName: string }) => {
+    const entry = await rollbackModUpdate(getInstance(payload.instanceId), payload.fileName)
+    toast('success', `${entry.modName} rolled back`, `Back on ${entry.fromVersion ?? 'the previous build'}.`)
+    return entry
   })
 
   /* -------------------------------------------------------- curseforge */
 
   /* ------------------------------------------------------- port forwarding */
+
+  /*
+   * Mods for a server, from the same places instances get them.
+   *
+   * A server takes exactly the same jars an instance does, so this hands the
+   * existing installer the server's mods folder rather than teaching it about
+   * servers. Dependencies are resolved the same way, which is the part that
+   * makes dropping jars in by hand miserable.
+   */
+  handle(
+    'host:installModrinth',
+    async (payload: { id: string; versionId: string; kind: ContentKindId }) => {
+      const server = getHostedServer(payload.id)
+      assertServerCanUse(payload.kind, server.name)
+      const target = serverModTarget(server)
+
+      const result = await installVersionToDir(
+        { dir: target.dir, taskId: server.id, loader: target.loader, minecraftVersion: target.minecraftVersion },
+        payload.versionId,
+        payload.kind
+      )
+
+      const total = result.installed.length + result.dependencies.length
+      if (total === 0 && result.skipped.length > 0) {
+        toast('info', 'Already on the server', `${result.skipped[0]} is already there.`)
+      } else {
+        toast(
+          'success',
+          `Added to ${server.name}`,
+          result.dependencies.length > 0
+            ? `${result.installed.join(', ')} plus ${result.dependencies.length} required dependenc${result.dependencies.length === 1 ? 'y' : 'ies'}. Restart the server to load it.`
+            : `${result.installed.join(', ')}. Restart the server to load it.`
+        )
+      }
+      return result
+    }
+  )
+
+  handle(
+    'host:installCurseForge',
+    async (payload: { id: string; projectId: string; fileId: string; kind: ContentKindId }) => {
+      const server = getHostedServer(payload.id)
+      assertServerCanUse(payload.kind, server.name)
+      const target = serverModTarget(server)
+
+      const result = await installCurseForgeFileToDir(
+        { dir: target.dir, taskId: server.id },
+        payload.projectId,
+        payload.fileId,
+        server.name
+      )
+
+      toast('success', `Added to ${server.name}`, `${result.installed.join(', ')}. Restart the server to load it.`)
+      return result
+    }
+  )
 
   handle('host:share', async (payload: { id: string }) => await shareDetails(payload.id))
 
@@ -762,14 +1121,21 @@ export function registerIpcHandlers(): void {
     }
 
     const [host] = connectAddress(server).split(':')
-    await openPort(gateway, server.port, host, `NexusCraft — ${server.name}`)
+    const label = `NexusCraft — ${server.name}`
+    await openPort(gateway, server.port, host, label)
     log.info(`opened port ${server.port} for "${server.name}" via ${gateway.description}`)
+
+    // The mapping is asked for with a twelve-hour lease rather than a permanent
+    // one, so it has to be renewed or an overnight server quietly goes dark.
+    keepPortOpen(server.port, host, label)
 
     return await forwardingStatus(server.port, host)
   })
 
   handle('host:closePort', async (payload: { id: string }) => {
     const server = getHostedServer(payload.id)
+    stopKeepingPortOpen(server.port)
+
     const gateway = await discoverGateway()
     if (!gateway) return { closed: false }
 
@@ -893,6 +1259,45 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  handle(
+    'modpack:serverFromFile',
+    async (payload: { filePath: string; name?: string; port?: number; memoryMb?: number }) => {
+      const result = await installModpackAsServerFromFile(payload.filePath, {
+        name: payload.name,
+        port: payload.port,
+        memoryMb: payload.memoryMb
+      })
+      reportModpackServer(result)
+      return result
+    }
+  )
+
+  handle(
+    'modpack:serverFromModrinth',
+    async (payload: { versionId: string; name?: string; port?: number; memoryMb?: number }) => {
+      const result = await installModpackAsServerFromModrinth(payload.versionId, {
+        name: payload.name,
+        port: payload.port,
+        memoryMb: payload.memoryMb
+      })
+      reportModpackServer(result)
+      return result
+    }
+  )
+
+  handle(
+    'modpack:serverFromCurseForge',
+    async (payload: { projectId: string; fileId: string; name?: string; port?: number; memoryMb?: number }) => {
+      const result = await installModpackAsServerFromCurseForge(payload.projectId, payload.fileId, {
+        name: payload.name,
+        port: payload.port,
+        memoryMb: payload.memoryMb
+      })
+      reportModpackServer(result)
+      return result
+    }
+  )
+
   handle('modpack:installCurseForge', async (payload: { projectId: string; fileId: string; name?: string }) => {
     const result = await installCurseForgeModpack(payload.projectId, payload.fileId, payload.name)
     reportModpack(result)
@@ -936,6 +1341,25 @@ export function registerIpcHandlers(): void {
     return true
   })
 
+  handle('worlds:restore', async (payload: { instanceId: string; fileName: string }) => {
+    if (isRunning(payload.instanceId)) {
+      throw new LauncherError('ALREADY_RUNNING', 'cannot restore while the game is running', {
+        title: 'Close Minecraft first',
+        message: 'Replacing a world Minecraft has open would corrupt the save it writes on exit.',
+        actions: ['Quit Minecraft, then restore the backup']
+      })
+    }
+    const world = await restoreBackup(getInstance(payload.instanceId), payload.fileName)
+    toast('success', `${world.name} restored`, 'The world it replaced was backed up first.')
+    return world
+  })
+
+  handle('worlds:import', async (payload: { instanceId: string; filePath: string }) => {
+    const world = await importWorldArchive(getInstance(payload.instanceId), payload.filePath)
+    toast('success', `${world.name} imported`, 'It is in your world list, ready to play.')
+    return world
+  })
+
   handle('worlds:delete', async (payload: { instanceId: string; folderName: string }) => {
     if (isRunning(payload.instanceId)) {
       throw new LauncherError('ALREADY_RUNNING', 'cannot delete a world while the game is running')
@@ -943,6 +1367,146 @@ export function registerIpcHandlers(): void {
     const backup = await deleteWorld(getInstance(payload.instanceId), payload.folderName)
     toast('info', 'World deleted', `A backup was kept: ${backup.fileName}`)
     return backup
+  })
+
+  /* -------------------------------------------------- public directory */
+
+  /*
+   * The Discover screen. Note what is and is not served here: the catalogue is
+   * a list of entries, and every live figure beside one comes from an actual
+   * ping. Nothing is reported online that did not answer.
+   */
+  handle('directory:list', async () => {
+    let source: 'bundled' | 'remote' = 'bundled'
+    try {
+      source = (await loadRemoteCatalogue()).source
+    } catch (err) {
+      // A broken custom feed must not empty the screen — fall back and say so.
+      log.warn(`custom server directory failed, using the built-in list: ${(err as Error).message}`)
+      toast('warning', 'Could not load your server list', 'Showing the built-in list instead.')
+    }
+    return {
+      servers: directoryCatalogue(),
+      categories: directoryCategories(),
+      statuses: cachedDirectoryStatuses(),
+      source
+    }
+  })
+
+  handle('directory:refresh', async (payload: { force?: boolean } | undefined) =>
+    await refreshDirectory(payload?.force ?? false)
+  )
+
+  handle('directory:ping', async (payload: { id: string }) => await pingDirectoryServer(payload.id))
+
+  handle('directory:lookup', async (payload: { address: string }) => await lookupAddress(payload.address))
+
+  /** Copies a directory entry into the user's own saved server list. */
+  handle('directory:add', (payload: { name: string; address: string; port: number }) => {
+    const existing = listServers().find(
+      (server) => server.address.toLowerCase() === payload.address.toLowerCase() && server.port === payload.port
+    )
+    if (existing) {
+      toast('info', 'Already saved', `${existing.name} is already in your servers.`)
+      return existing
+    }
+    const saved = saveServer({
+      id: null,
+      name: payload.name,
+      address: payload.address,
+      port: payload.port
+    })
+    toast('success', `${saved.name} saved`, 'Find it on the Servers screen.')
+    return saved
+  })
+
+  /** Which instances could join a given server, best first. */
+  handle('directory:joinTargets', async (payload: { address: string; port: number }) => {
+    const status = await lookupAddress(`${payload.address}:${payload.port}`).then(
+      (found) => found.status,
+      () => null
+    )
+    const { candidates, serverVersions } = rankInstancesForServer(status, listInstances())
+    return {
+      serverVersions,
+      protocol: status?.protocol ?? null,
+      versionName: status?.versionName ?? null,
+      candidates: candidates.map((c) => ({ instance: c.instance, reason: c.reason }))
+    }
+  })
+
+  /**
+   * Joins a public server.
+   *
+   * The version the server speaks decides which instance launches. An earlier
+   * version of this took whichever instance happened to be selected, which
+   * meant every server in the Discover list opened the same modpack — and a
+   * client on the wrong version fails with "Outdated server" or a registry
+   * mismatch that names no cause. An explicit choice from the user is still
+   * honoured as-is; only the automatic pick is version-matched.
+   */
+  handle('directory:join', async (payload: { address: string; port: number; instanceId?: string }) => {
+    const instances = listInstances()
+    if (instances.length === 0) {
+      throw new LauncherError('NOT_FOUND', 'no instances exist', {
+        title: 'There is no instance to join with',
+        message: 'Joining a server means launching Minecraft, and no instance has been created yet.',
+        actions: ['Open the Instances screen and create one', 'Then come back and press Join']
+      })
+    }
+
+    const address = `${payload.address}:${payload.port}`
+
+    // An instance the user named is used as given — they may know something
+    // about the server that a ping does not say.
+    if (payload.instanceId) {
+      const chosen = instances.find((i) => i.id === payload.instanceId)
+      if (!chosen) throw new LauncherError('NOT_FOUND', 'that instance no longer exists')
+      return await launchInstance({ instanceId: chosen.id, serverAddress: address })
+    }
+
+    // Otherwise ask the server what it speaks and match against it.
+    const status = await lookupAddress(address).then(
+      (found) => found.status,
+      () => null
+    )
+
+    if (status?.online !== true) {
+      throw new LauncherError('NETWORK_ERROR', 'the server did not answer a ping', {
+        title: 'That server is not answering',
+        message:
+          status?.error ??
+          'The launcher could not reach it just now, so it cannot tell which version to join with.',
+        actions: ['Press Refresh and try again', 'Check the address is still right']
+      })
+    }
+
+    const { candidates, serverVersions } = rankInstancesForServer(status, instances)
+
+    if (candidates.length === 0) {
+      const wanted = serverVersions[0] ?? status.versionName ?? 'an unknown version'
+      const have = [...new Set(instances.map((i) => i.minecraftVersion))].sort().join(', ')
+
+      throw new LauncherError('INVALID_INPUT', `no instance matches protocol ${status.protocol ?? '?'}`, {
+        title: `Nothing installed can join a ${wanted} server`,
+        message:
+          `${payload.address} is running Minecraft ${wanted}` +
+          (status.versionName ? ` (it calls itself "${status.versionName}")` : '') +
+          `, and the instances on this machine are ${have || 'none'}. Joining with the wrong version fails ` +
+          'during connection with an error that does not say why, so the launcher stopped here instead.',
+        actions: [
+          `Create an instance on ${wanted} and press Join again`,
+          'Or pick an instance yourself with the selector next to Join'
+        ]
+      })
+    }
+
+    const best = candidates[0]
+    log.info(
+      `joining ${payload.address} (${serverVersions[0] ?? 'unknown'}) with "${best.instance.name}" — ${best.reason}`
+    )
+
+    return await launchInstance({ instanceId: best.instance.id, serverAddress: address })
   })
 
   /* ------------------------------------------------------------ servers */
@@ -1012,6 +1576,19 @@ export function registerIpcHandlers(): void {
     updateCompanion(payload.id, payload.patch as never)
   )
 
+  /*
+   * The scripted workers on offer. Listed from the routines themselves so the
+   * interface never drifts out of step with what actually exists.
+   */
+  handle('companion:routines', () =>
+    ROUTINES.map((routine) => ({
+      id: routine.id,
+      label: routine.label,
+      description: routine.description,
+      needs: routine.needs
+    }))
+  )
+
   handle('companion:start', (payload: { id: string }) => startCompanion(payload.id))
   handle('companion:stop', (payload: { id: string }) => stopCompanion(payload.id))
   handle('companion:state', (payload: { id: string }) => getCompanionState(payload.id))
@@ -1019,6 +1596,225 @@ export function registerIpcHandlers(): void {
   handle('companion:instruct', (payload: { id: string; text: string }) => {
     instructCompanion(payload.id, payload.text)
     return true
+  })
+
+  handle('companion:camera', (payload: { id: string; on: boolean }) => {
+    setCameraEnabled(payload.id, payload.on)
+    return true
+  })
+
+  /** The structures on offer: bundled ones, plus anything imported this session. */
+  handle('companion:blueprints', () => {
+    const bundled = BLUEPRINT_LIBRARY.map((entry) => {
+      const size = blueprintSize(entry.blueprint)
+      const bill = [...billOfMaterials(entry.blueprint)].sort((a, b) => b[1] - a[1])
+      return {
+        id: entry.id,
+        name: entry.blueprint.name,
+        blurb: entry.blurb,
+        width: size.width,
+        height: size.height,
+        depth: size.depth,
+        blocks: bill.reduce((total, [, count]) => total + count, 0),
+        materials: bill.slice(0, 12).map(([block, count]) => ({ block, count }))
+      }
+    })
+    return [...bundled, ...listImports()]
+  })
+
+  /**
+   * Reads a WorldEdit-style schematic off disk.
+   *
+   * The file is parsed and summarised here rather than handed to the bot,
+   * because a player wants to see what a downloaded structure is — how big,
+   * what it costs, what was lost on the way in — before a companion starts
+   * placing several thousand blocks in their world.
+   */
+  handle('companion:importSchematic', async (payload: { filePath: string }) => {
+    const name = payload.filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? 'Imported structure'
+    const loaded = await loadSchematic(payload.filePath, name)
+
+    const id = `import:${randomUUID()}`
+    const summary = {
+      id,
+      name: loaded.info.name,
+      blurb: `Imported — ${loaded.info.width}x${loaded.info.height}x${loaded.info.length}, ${loaded.info.blockCount} blocks`,
+      width: loaded.info.width,
+      height: loaded.info.height,
+      depth: loaded.info.length,
+      blocks: loaded.info.blockCount,
+      materials: loaded.info.materials.slice(0, 12),
+      imported: true,
+      notes: loaded.info.notes
+    }
+    rememberImport(id, loaded.blueprint, summary)
+
+    toast('success', `${summary.name} imported`, `${summary.blocks} blocks. Pick a companion and press Build.`)
+    return summary
+  })
+
+  /** Tells a running companion to build one of them. */
+  handle('companion:build', (payload: { id: string; blueprintId: string }) => {
+    const imported = getImport(payload.blueprintId)
+    if (imported) {
+      buildWithCompanion(payload.id, imported.blueprint, imported.summary.name)
+      return true
+    }
+
+    const entry = findLibraryBlueprint(payload.blueprintId)
+    if (!entry) throw new LauncherError('NOT_FOUND', `no blueprint called ${payload.blueprintId}`)
+
+    buildWithCompanion(payload.id, entry.blueprint, entry.blueprint.name)
+    return true
+  })
+
+  /**
+   * Writes a blueprint into an instance's `schematics/` folder.
+   *
+   * That is where Litematica's browser looks, so the file is already listed
+   * when the game opens — the copying-files-around step is the one that makes
+   * this feel like homework rather than a feature.
+   */
+  handle(
+    'blueprints:export',
+    async (payload: {
+      blueprintId: string
+      instanceId?: string
+      serverId?: string
+      format: 'schem' | 'nbt'
+    }) => {
+      const imported = getImport(payload.blueprintId)
+      const entry = imported ? null : findLibraryBlueprint(payload.blueprintId)
+      if (!imported && !entry) {
+        throw new LauncherError('NOT_FOUND', `no blueprint called ${payload.blueprintId}`)
+      }
+
+      const blueprint = (imported?.blueprint ?? entry?.blueprint) as Parameters<typeof exportBlueprint>[0]
+      const name = imported?.summary.name ?? entry?.blueprint.name ?? 'structure'
+      const fileName = `${safeFileName(name)}.${payload.format}`
+
+      /*
+       * A hosted server: the file goes into that server's own world, because
+       * that is where a structure block on it reads from. Writing into the
+       * client instance instead leaves the block reporting an unknown name.
+       */
+      if (payload.serverId) {
+        const server = getHostedServer(payload.serverId)
+        const root = hostedServerDir(payload.serverId)
+        const world = await serverWorldName(root)
+        const target = join(structuresDir(join(root, world)), fileName)
+        const written = await exportBlueprint(blueprint, target, payload.format)
+
+        toast(
+          'success',
+          `${name} sent to ${server.name}`,
+          payload.format === 'nbt'
+            ? `Place a structure block, set it to Load, and enter "${safeFileName(name).toLowerCase()}".`
+            : 'Saved into the server world. Note that a structure block only reads .nbt.'
+        )
+        return written
+      }
+
+      if (!payload.instanceId) throw new LauncherError('INVALID_INPUT', 'no export target given')
+
+      const instance = getInstance(payload.instanceId)
+      await ensureInstanceLayout(instance)
+      const target = join(schematicsDir(instance.gameDir), fileName)
+      const written = await exportBlueprint(blueprint, target, payload.format)
+
+      toast(
+        'success',
+        `${name} exported`,
+        payload.format === 'schem'
+          ? `Saved to the instance's schematics folder. Open Litematica in game (M) and load it.`
+          : `Saved to the instance's schematics folder. For a structure block, export to a server instead.`
+      )
+      return written
+    }
+  )
+
+  /**
+   * Installs Litematica and its library into an instance.
+   *
+   * The launcher cannot draw a ghost projection inside Minecraft — that needs
+   * code in the game's own renderer — so it does the next best thing and sets
+   * up the mod that can, matched to the instance's version and loader.
+   */
+  handle('blueprints:setupLitematica', async (payload: { instanceId: string }) => {
+    const instance = getInstance(payload.instanceId)
+
+    if (instance.loader === 'vanilla') {
+      throw new LauncherError('INVALID_INPUT', 'litematica needs a mod loader', {
+        title: 'That instance has no mod loader',
+        message:
+          `Litematica is a client mod, so it needs Fabric, Forge or NeoForge. "${instance.name}" is vanilla.`,
+        actions: ['Make a Fabric instance on the same Minecraft version', 'Then set Litematica up on that one']
+      })
+    }
+
+    const installed: string[] = []
+    const missing: string[] = []
+
+    // MaLiLib first: Litematica does not load without it.
+    for (const [label, projectId] of [
+      ['MaLiLib', 'GcWjdA9I'],
+      ['Litematica', 'bEpr0Arc']
+    ] as const) {
+      const versions = await listVersions(projectId, 'mod', instance.minecraftVersion, instance.loader)
+      if (versions.length === 0) {
+        missing.push(label)
+        continue
+      }
+      await installVersionToInstance(instance, versions[0].versionId, 'mod')
+      installed.push(`${label} ${versions[0].versionNumber}`)
+    }
+
+    if (missing.length > 0 && installed.length === 0) {
+      /*
+       * Distinguish "not out yet" from "never coming".
+       *
+       * Asking again without the loader filter separates the two cases, and
+       * they need opposite advice. Litematica dropped Forge after 1.16.5 and is
+       * Fabric-only on anything modern, so telling a Forge user to wait a few
+       * weeks — which an earlier version of this message did — sends them off
+       * to check for a build that is never going to appear.
+       */
+      const anyLoader = await listVersions('bEpr0Arc', 'mod', instance.minecraftVersion, null).catch(() => [])
+      const loadersAvailable = [...new Set(anyLoader.flatMap((version) => version.loaders))]
+
+      if (loadersAvailable.length > 0) {
+        throw new LauncherError('NOT_FOUND', `litematica has no ${instance.loader} build`, {
+          title: `Litematica does not support ${instance.loader} on ${instance.minecraftVersion}`,
+          message:
+            `There are builds for ${instance.minecraftVersion}, but only for ${loadersAvailable.join(' and ')} — ` +
+            `"${instance.name}" is ${instance.loader}. Litematica stopped shipping Forge builds after 1.16.5, and ` +
+            'no equivalent projection mod exists for modern Forge.',
+          actions: [
+            'Export the blueprint as .nbt instead and place it with a structure block — that needs no mods at all',
+            'Or have a companion build it, which works on any loader',
+            `Litematica would work on a ${loadersAvailable[0]} instance, but a ${loadersAvailable[0]} client cannot join a ${instance.loader} server`
+          ]
+        })
+      }
+
+      throw new LauncherError('NOT_FOUND', 'no litematica build for this version', {
+        title: `No Litematica build for Minecraft ${instance.minecraftVersion}`,
+        message:
+          `${missing.join(' and ')} ${missing.length === 1 ? 'has' : 'have'} no release for this Minecraft version yet. ` +
+          'Litematica usually follows a new Minecraft release by a few weeks.',
+        actions: [
+          'Export as .nbt and use a structure block in the meantime',
+          'Or have a companion build it instead'
+        ]
+      })
+    }
+
+    toast(
+      'success',
+      `Litematica set up on ${instance.name}`,
+      `${installed.join(', ')}. Launch the game and press M to open it.`
+    )
+    return { installed, missing }
   })
 
   handle('companion:clearMemory', (payload: { id: string }) => {
@@ -1064,6 +1860,50 @@ export function registerIpcHandlers(): void {
       model: settings.model,
       reply: (reply.content ?? '').trim().slice(0, 120)
     }
+  })
+
+  /* -------------------------------------------------------------- crews */
+
+  handle('crew:list', () => listCrews())
+
+  handle('crew:create', (payload: { name: string; foremanId: string; memberIds: string[] }) => {
+    const crew = createCrew(payload.name, payload.foremanId, payload.memberIds)
+    toast('success', `Crew "${crew.name}" formed`, `${crew.memberIds.length + 1} companions, one in charge.`)
+    return crew
+  })
+
+  handle('crew:update', (payload: { id: string; patch: { name?: string; memberIds?: string[] } }) =>
+    updateCrew(payload.id, payload.patch)
+  )
+
+  handle('crew:delete', (payload: { id: string }) => {
+    deleteCrew(payload.id)
+    toast('info', 'Crew disbanded', 'The companions themselves are untouched.')
+    return true
+  })
+
+  handle('crew:start', (payload: { id: string }) => {
+    const result = startCrew(payload.id)
+    if (result.started.length > 0) {
+      toast('success', `${result.started.length} joining`, result.started.join(', '))
+    }
+    for (const failure of result.failed) {
+      toast('warning', `${failure.username} could not start`, failure.reason)
+    }
+    return result
+  })
+
+  handle('crew:stop', (payload: { id: string }) => {
+    const stopped = stopCrew(payload.id)
+    if (stopped.length > 0) toast('info', `${stopped.length} leaving`, stopped.join(', '))
+    return stopped
+  })
+
+  handle('crew:notes', (payload: { id: string }) => crewNotes(payload.id))
+
+  handle('crew:clearNotes', (payload: { id: string }) => {
+    clearCrewNotes(payload.id)
+    return true
   })
 
   /* ------------------------------------------------------- hosted servers */
@@ -1123,8 +1963,165 @@ export function registerIpcHandlers(): void {
     instancesThatCanJoin(getHostedServer(payload.id), listInstances())
   )
 
-  handle('host:join', async (payload: { id: string; instanceId: string }) => {
+  /* ------------------------------------------------- hosted server backups */
+
+  handle('host:backups', async (payload: { id: string }) => await listServerBackups(payload.id))
+
+  handle('host:backup', async (payload: { id: string }) => {
+    const info = await backupHostedServer(payload.id)
+    toast('success', 'Snapshot taken', `${info.fileName} — ${(info.sizeBytes / 1024 / 1024).toFixed(1)} MB.`)
+    return info
+  })
+
+  handle('host:restoreBackup', async (payload: { id: string; fileName: string }) => {
+    await restoreServerBackup(payload.id, payload.fileName)
+    toast('success', 'World restored', 'The world it replaced was snapshotted first. Start the server to play it.')
+    return true
+  })
+
+  handle('host:deleteBackup', async (payload: { id: string; fileName: string }) => {
+    await deleteServerBackup(payload.id, payload.fileName)
+    return true
+  })
+
+  handle('host:backupSettings', (payload: { id: string }) => serverBackupSettings(payload.id))
+
+  /**
+   * The invite a host sends a friend.
+   *
+   * Prefers the public address when the port is open — an invite that only
+   * works inside the house is not much of an invite — and says so either way,
+   * so the host can see which one they are about to send.
+   */
+  handle('host:inviteLink', async (payload: { id: string }) => {
     const server = getHostedServer(payload.id)
+    const share = await shareDetails(payload.id)
+    const address = share.publicAddress ?? share.localAddress
+    const [host, portText] = address.split(':')
+
+    const loader =
+      server.software === 'fabric' || server.software === 'forge' || server.software === 'neoforge'
+        ? server.software
+        : 'vanilla'
+
+    return {
+      link: buildJoinLink({
+        host,
+        port: Number(portText) || server.port,
+        name: server.name,
+        minecraftVersion: server.minecraftVersion,
+        loader
+      }),
+      address,
+      isPublic: Boolean(share.publicAddress),
+      note: share.publicAddress
+        ? share.reachable === false
+          ? 'The public address did not answer from this machine, which is normal from inside your own network. Ask your friend to try it.'
+          : null
+        : 'This link only works for people on your network. Use "Play with friends online" to open the port first.'
+    }
+  })
+
+  /* --------------------------------------------------------- relay tunnel */
+
+  handle('host:tunnelSettings', (payload: { id: string }) => tunnelSettings(payload.id))
+
+  handle('host:setTunnelSettings', (payload: { id: string; patch: Record<string, unknown> }) =>
+    setTunnelSettings(payload.id, payload.patch)
+  )
+
+  handle('host:tunnelState', (payload: { id: string }) => tunnelState(payload.id))
+
+  handle('host:startTunnel', (payload: { id: string }) => {
+    const server = getHostedServer(payload.id)
+
+    // A relay makes the server reachable by anyone who has the address, which
+    // is the same danger as an open port on a server that does not check who
+    // joins: anyone can arrive under any name, including an operator's.
+    if (!server.onlineMode) {
+      throw new LauncherError('INVALID_INPUT', 'refusing to relay an unverified server', {
+        title: 'This server does not check who joins',
+        message:
+          `"${server.name}" has "Verify players with Mojang" switched off. Putting it behind a relay means ` +
+          'anyone with the address can join under any name they like — including yours.',
+        actions: [
+          'Turn "Verify players with Mojang" back on before opening it up',
+          'A companion needs it off, so run the companion on a server you keep to your own network'
+        ]
+      })
+    }
+
+    return startTunnel(payload.id, server.port)
+  })
+
+  handle('host:stopTunnel', (payload: { id: string }) => stopTunnel(payload.id))
+
+  handle('links:pendingInvite', () => currentPendingInvite())
+
+  handle(
+    'links:acceptInvite',
+    async (payload: {
+      host: string
+      port: number
+      name?: string | null
+      minecraftVersion?: string | null
+      loader?: string | null
+      packVersionId?: string | null
+      instanceId?: string | null
+    }) => {
+      const result = await acceptInvite(payload)
+      // Clear it so a refused-then-accepted invite cannot fire twice.
+      takePendingInvite()
+      return { instanceId: result.instance.id, instanceName: result.instance.name, address: result.address }
+    }
+  )
+
+  handle('host:setBackupSettings', (payload: { id: string; patch: Record<string, unknown> }) =>
+    setServerBackupSettings(payload.id, payload.patch)
+  )
+
+  /* -------------------------------------------------------- server steward */
+
+  handle('host:stewards', (payload: { id: string }) => stewardsFor(payload.id))
+
+  handle('host:deploySteward', (payload: { id: string; companionId?: string }) => {
+    const result = deploySteward(payload.id, payload.companionId)
+    if (result.warning) {
+      toast('info', `${result.companion.username} is assigned`, result.warning)
+    } else {
+      toast(
+        'success',
+        `${result.companion.username} is on the server`,
+        result.created
+          ? 'Set up a model for it on the Companion screen so it can talk.'
+          : 'It joins and leaves with the server from now on.'
+      )
+    }
+    return result
+  })
+
+  handle('host:dismissSteward', (payload: { companionId: string }) => {
+    const companion = dismissSteward(payload.companionId)
+    toast('info', `${companion.username} left the server`, 'The companion itself is still set up.')
+    return companion
+  })
+
+  /**
+   * Joins a hosted server, making a client for it if there is not one already.
+   *
+   * Matching a client to a server by hand is the part that goes wrong: same
+   * Minecraft version, same loader, and the same mods in the same builds. Get
+   * the last of those wrong — a NeoForge jar where the server has the Forge one
+   * — and the connection dies during setup with "failed to synchronise registry
+   * data", which says nothing about which mod is at fault.
+   *
+   * So the launcher does it. An instance that already matches is used as it is;
+   * otherwise one is made. Either way the server's own mods are copied in first,
+   * which is the only way to be certain the two agree.
+   */
+  handle('host:join', async (payload: { id: string; instanceId?: string }) => {
+    const server = getHostedServer(payload.id)
+
     if (!isHostedServerRunning(payload.id)) {
       throw new LauncherError('NOT_FOUND', 'that server is not running', {
         title: 'Start the server first',
@@ -1132,7 +2129,57 @@ export function registerIpcHandlers(): void {
         actions: ['Press Start, wait for it to say ready, then Join']
       })
     }
-    return await launchInstance({ instanceId: payload.instanceId, serverAddress: serverAddress(server) })
+
+    // Which client loader a server's software needs. Vanilla and the plugin
+    // servers take an ordinary client, which is what 'vanilla' means here.
+    const loader: LoaderId =
+      server.software === 'fabric'
+        ? 'fabric'
+        : server.software === 'neoforge'
+          ? 'neoforge'
+          : server.software === 'forge'
+            ? 'forge'
+            : 'vanilla' 
+
+    // Whatever was asked for, else anything already suitable.
+    let instance = payload.instanceId
+      ? getInstance(payload.instanceId)
+      : listInstances().find(
+          (entry) => entry.minecraftVersion === server.minecraftVersion && entry.loader === loader
+        )
+
+    if (!instance) {
+      log.info(`no client for "${server.name}"; making one on ${server.minecraftVersion} ${loader}`)
+      instance = await createInstance({
+        name: `${server.name} (client)`,
+        minecraftVersion: server.minecraftVersion,
+        loader
+      })
+      toast('info', 'Made a client for this server', `${instance.name} — matching ${server.minecraftVersion} ${loader}.`)
+    }
+
+    /*
+     * Copy the server's mods across every time, not just when the instance is
+     * new. They drift: a mod added to the server after this client was made is
+     * exactly the case that breaks the next join.
+     */
+    if (!serverUsesPlugins(server)) {
+      try {
+        const synced = await syncServerModsToInstance(server.id, instance)
+        if (synced.copied.length > 0) {
+          toast(
+            'success',
+            'Matched the server\'s mods',
+            `Copied ${synced.copied.length} into ${instance.name}: ${synced.copied.slice(0, 3).join(', ')}${synced.copied.length > 3 ? '…' : ''}`
+          )
+        }
+      } catch (err) {
+        // Worth saying, not worth blocking a join that may work anyway.
+        log.warn(`could not copy server mods into "${instance.name}": ${(err as Error).message}`)
+      }
+    }
+
+    return await launchInstance({ instanceId: instance.id, serverAddress: serverAddress(server) })
   })
   handle('host:console', (payload: { id: string }) => getHostedServerConsole(payload.id))
 

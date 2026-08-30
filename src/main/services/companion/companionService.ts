@@ -16,14 +16,15 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { app } from 'electron'
-import type {
+import type { BlueprintSummary,
   Companion,
   CompanionConfig,
   CompanionEvent,
   CompanionInbound,
   CompanionOutbound,
   CompanionSettings,
-  CompanionState
+  CompanionState,
+  CrewSnapshot
 } from '@shared/companion'
 import { DEFAULT_PERSONALITY } from '@shared/companion'
 import { db } from '../../core/database'
@@ -62,6 +63,8 @@ function defaults(): CompanionSettings {
     autonomy: true,
     idleIntervalSec: 45,
     toolSet: 'full',
+    routine: '',
+    stewardOf: '',
     hasApiKey: false
   }
 }
@@ -444,19 +447,34 @@ export function startCompanion(id: string): CompanionState {
 
   const apiKey = getSecret(apiKeyName(id)) ?? ''
 
-  if (!settings.baseUrl.trim()) {
-    throw new LauncherError('INVALID_INPUT', 'no model endpoint configured', {
-      title: 'No model endpoint set',
-      message: 'The companion needs somewhere to send its decisions — a local Ollama server or a hosted API.',
-      actions: ['Choose a provider in the Companion screen', 'Ollama runs locally and needs no key']
-    })
-  }
-  if (!settings.model.trim()) {
-    throw new LauncherError('INVALID_INPUT', 'no model selected', {
-      title: 'No model chosen',
-      message: 'Choose the model to use. Press Load models to see what your endpoint serves rather than typing a name.',
-      actions: ['Set a model name in the Companion screen']
-    })
+  /*
+   * A model is only needed by a companion that thinks.
+   *
+   * A scripted worker follows a routine and never calls a model at all — that
+   * is the whole point of routines, and of the crews built on them. Demanding
+   * an endpoint and a model name before it could start contradicted the
+   * interface, which offers routines as the option that needs neither.
+   */
+  if (!settings.routine.trim()) {
+    if (!settings.baseUrl.trim()) {
+      throw new LauncherError('INVALID_INPUT', 'no model endpoint configured', {
+        title: 'No model endpoint set',
+        message: 'The companion needs somewhere to send its decisions — a local Ollama server or a hosted API.',
+        actions: [
+          'Choose a provider in the Companion screen',
+          'Ollama runs locally and needs no key',
+          'Or set it to follow a routine, which needs no model at all'
+        ]
+      })
+    }
+    if (!settings.model.trim()) {
+      throw new LauncherError('INVALID_INPUT', 'no model selected', {
+        title: 'No model chosen',
+        message:
+          'Choose the model to use. Press Load models to see what your endpoint serves rather than typing a name.',
+        actions: ['Set a model name in the Companion screen', 'Or set it to follow a routine, which needs no model']
+      })
+    }
   }
 
   const config: CompanionConfig = {
@@ -471,7 +489,9 @@ export function startCompanion(id: string): CompanionState {
     idleIntervalSec: settings.idleIntervalSec,
     toolSet: settings.toolSet ?? 'full',
     llm: { baseUrl: settings.baseUrl, apiKey, model: settings.model, timeoutMs: 90_000 },
-    memory: loadMemory(id)
+    memory: loadMemory(id),
+    // Empty means think with the model; a name makes it a scripted worker.
+    routine: settings.routine ?? ''
   }
 
   const script = botScriptPath()
@@ -553,6 +573,13 @@ function handleMessage(id: string, message: CompanionOutbound): void {
       if (message.status === 'playing') {
         const version = message.detail.match(/on ([\d.]+\w*)/)?.[1] ?? null
         if (version) entry.state.connectedVersion = version
+        // Now that it is in the world, tell it who else is.
+        void import('./crewService').then(({ refreshFor, crewOf, broadcast }) => {
+          refreshFor(id)
+          // And tell the rest of the crew that this one has arrived.
+          const crew = crewOf(id)
+          if (crew) broadcast(crew.id)
+        })
       }
       break
 
@@ -586,7 +613,76 @@ function handleMessage(id: string, message: CompanionOutbound): void {
     case 'agentError':
       pushEvent(id, 'error', message.message)
       break
+
+    /*
+     * Crew messages are the only ones that leave this bot's own world, so they
+     * are routed through the crew service, which is what knows whether this
+     * companion is entitled to give the order at all. Loaded lazily: the crew
+     * service reads this module back, and a static import would be a cycle.
+     */
+    case 'assign': {
+      pushEvent(id, 'action', `assigned ${message.toUsername}: ${message.task}`, { tool: 'assign_task' })
+      void import('./crewService').then(({ assignTask }) => assignTask(id, message.toUsername, message.task))
+      break
+    }
+
+    case 'crewNote': {
+      pushEvent(id, 'log', `crew note: ${message.text}`)
+      void import('./crewService').then(({ noteFromCompanion }) => noteFromCompanion(id, message.text))
+      break
+    }
+
+    /*
+     * Camera frames go straight out to the renderer and are deliberately not
+     * kept: they are large, they are worthless a second later, and holding them
+     * in the event feed would push everything the player actually wants to read
+     * off the top of it.
+     */
+    case 'camera':
+      emit('companion:camera', { companionId: id, frame: message.frame })
+      break
   }
+}
+
+/**
+ * Schematics read off disk this session, keyed by a generated id.
+ *
+ * Deliberately not persisted: a schematic is large, the file it came from is
+ * still on the user's disk, and re-importing costs one read. Keeping them in
+ * the store would grow it without end for no benefit.
+ */
+const importedBlueprints = new Map<string, { blueprint: unknown; summary: BlueprintSummary }>()
+
+export function rememberImport(id: string, blueprint: unknown, summary: BlueprintSummary): void {
+  importedBlueprints.set(id, { blueprint, summary })
+  // A session's worth of imports, not a lifetime's.
+  if (importedBlueprints.size > 24) {
+    const oldest = importedBlueprints.keys().next().value
+    if (oldest) importedBlueprints.delete(oldest)
+  }
+}
+
+export function listImports(): BlueprintSummary[] {
+  return [...importedBlueprints.values()].map((entry) => entry.summary)
+}
+
+export function getImport(id: string): { blueprint: unknown; summary: BlueprintSummary } | undefined {
+  return importedBlueprints.get(id)
+}
+
+/** Sends a chosen blueprint to a running companion to build. */
+export function buildWithCompanion(id: string, blueprint: unknown, label: string): void {
+  post(id, { type: 'build', blueprint, label })
+}
+
+/** Starts or stops the bot cam for one companion. */
+export function setCameraEnabled(id: string, on: boolean): void {
+  post(id, { type: 'camera', on })
+}
+
+/** Hands a bot the current picture of its crew. */
+export function pushCrewSnapshot(id: string, snapshot: CrewSnapshot): void {
+  post(id, { type: 'crew', snapshot })
 }
 
 export function stopCompanion(id: string): CompanionState {
@@ -614,6 +710,19 @@ export function instructCompanion(id: string, text: string): void {
   }
   pushEvent(id, 'chat', text, { from: 'you' })
   post(id, { type: 'instruct', text: text.slice(0, 500) })
+}
+
+/**
+ * Makes a running companion say something in chat verbatim.
+ *
+ * Distinct from `instructCompanion`, which hands text to the model as an order
+ * to think about. This is for lines the launcher itself has decided on — a
+ * steward's greeting when someone joins — where a round trip to a language
+ * model would add latency, cost and the chance of it saying something else.
+ */
+export function sayAsCompanion(id: string, text: string): void {
+  if (!running.has(id)) return
+  post(id, { type: 'say', text: text.slice(0, 240) })
 }
 
 export function clearCompanionMemory(id: string): void {

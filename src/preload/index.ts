@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import { IPC_CHANNELS, EVENT_CHANNELS, type IpcChannel, type EventChannel } from '@shared/channels'
 
 /**
@@ -42,6 +42,23 @@ const api = {
     const wrapped = (_event: IpcRendererEvent, payload: unknown): void => listener(payload)
     ipcRenderer.on(channel, wrapped)
     return () => ipcRenderer.removeListener(channel, wrapped)
+  },
+
+  /**
+   * The on-disk path of a dropped file.
+   *
+   * Electron removed the non-standard `File.path` property, and a sandboxed
+   * renderer cannot ask the filesystem anything itself, so a dropped file is
+   * otherwise unusable by the importers — which all take paths. `webUtils`
+   * answers only for files the user actually dropped or picked, so this hands
+   * out nothing the user did not choose to give.
+   */
+  filePath(file: File): string {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
   },
 
   /** Static values the UI needs before its first IPC round trip. */

@@ -30,6 +30,7 @@ import type {
   ServerReachability,
   ServerShareDetails,
   Instance,
+  LoaderId,
   ModInfo,
   ModrinthInstallResult,
   HostedServer,
@@ -138,6 +139,35 @@ export function getHostedServerConsole(id: string): HostedServerConsoleLine[] {
 
 export function isHostedServerRunning(id: string): boolean {
   return running.has(id)
+}
+
+/**
+ * Lifecycle notifications for anything that has to follow a server without
+ * this module having to know about it.
+ *
+ * The resident companion is the reason this exists: it must join when the
+ * server is ready and leave when it stops, and wiring that in here directly
+ * would make servers depend on companions, which is backwards.
+ */
+export type HostedServerEvent = 'ready' | 'stopped' | 'player-joined' | 'player-left'
+
+type HostedServerListener = (event: HostedServerEvent, serverId: string, player?: string) => void
+
+const lifecycleListeners = new Set<HostedServerListener>()
+
+export function onHostedServerEvent(listener: HostedServerListener): () => void {
+  lifecycleListeners.add(listener)
+  return () => lifecycleListeners.delete(listener)
+}
+
+function notifyLifecycle(event: HostedServerEvent, serverId: string, player?: string): void {
+  for (const listener of lifecycleListeners) {
+    try {
+      listener(event, serverId, player)
+    } catch (err) {
+      log.warn(`a hosted-server listener threw: ${(err as Error).message}`)
+    }
+  }
 }
 
 function setState(id: string, patch: Partial<HostedServerState>): void {
@@ -612,6 +642,7 @@ export async function startHostedServer(id: string): Promise<HostedServerState> 
         ? 'The server shut down.'
         : `The server exited unexpectedly (code ${code ?? signal}).`
     emit('host:state', { ...blankState(id), status: wasStopping || code === 0 ? 'stopped' : 'error', detail })
+    notifyLifecycle('stopped', id)
     log.info(`${server.name} exited with code ${code ?? signal}`)
   })
 
@@ -634,6 +665,7 @@ function interpret(id: string, text: string): void {
   if (/Done \([\d.]+s\)! For help/.test(text)) {
     setState(id, { status: 'running', detail: 'Ready for players.' })
     grantOperators(id)
+    notifyLifecycle('ready', id)
     return
   }
 
@@ -651,12 +683,14 @@ function interpret(id: string, text: string): void {
   if (joined) {
     const players = [...new Set([...entry.state.players, joined[1]])]
     setState(id, { players })
+    notifyLifecycle('player-joined', id, joined[1])
     return
   }
 
   const left = /\]: ([A-Za-z0-9_]{3,16}) left the game/.exec(text)
   if (left) {
     setState(id, { players: entry.state.players.filter((p) => p !== left[1]) })
+    notifyLifecycle('player-left', id, left[1])
   }
 }
 
@@ -751,12 +785,54 @@ export function sendHostedServerCommand(id: string, command: string): void {
  * mods, so the folder differs — putting a mod in a plugin folder does nothing,
  * and vice versa.
  */
+/**
+ * Which content site "loader" to search a server's add-ons under.
+ *
+ * Distinct from `ModTarget.loader`, which describes what a *jar* must be built
+ * against and so only has the five real mod loaders to choose from. Paper and
+ * Purpur load Bukkit-style plugins, which are not built against any of them —
+ * calling them "forge", as this did, offered a Paper owner Forge mods and put
+ * the jars they picked into `plugins/`, where nothing would ever load them.
+ */
+export function serverSearchLoader(software: HostedServer['software']): string {
+  switch (software) {
+    case 'fabric':
+    case 'neoforge':
+    case 'forge':
+    case 'paper':
+    case 'purpur':
+      return software
+    default:
+      // Vanilla loads neither mods nor plugins; no facet means no filter.
+      return 'vanilla'
+  }
+}
+
+/**
+ * The mod loader a server's jars must be built against.
+ *
+ * A plugin is not built against one at all, so a plugin server answers
+ * 'vanilla' — meaning "impose no loader requirement". Saying 'forge', as this
+ * did, made every plugin look mismatched to the jar analyser.
+ */
+function serverJarLoader(software: HostedServer['software']): LoaderId {
+  switch (software) {
+    case 'fabric':
+      return 'fabric'
+    case 'forge':
+      return 'forge'
+    case 'neoforge':
+      return 'neoforge'
+    default:
+      return 'vanilla'
+  }
+}
+
 export function serverModTarget(server: HostedServer): ModTarget {
   const usesPlugins = server.software === 'paper' || server.software === 'purpur'
   return {
     dir: join(hostedServerDir(server.id), usesPlugins ? 'plugins' : 'mods'),
-    // Vanilla accepts neither, but the loader still describes what a jar must be.
-    loader: server.software === 'neoforge' ? 'neoforge' : server.software === 'fabric' ? 'fabric' : 'forge',
+    loader: serverJarLoader(server.software),
     minecraftVersion: server.minecraftVersion,
     description: 'this server'
   }

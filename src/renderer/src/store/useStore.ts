@@ -20,6 +20,8 @@ export type Route =
   | 'versions'
   | 'mods'
   | 'servers'
+  | 'discover'
+  | 'blueprints'
   | 'host'
   | 'worlds'
   | 'skins'

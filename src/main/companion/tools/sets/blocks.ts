@@ -12,6 +12,35 @@ import { itemCounts, withTimeout } from '../support/players'
 import { nearbyThreats, watchForDanger } from '../support/combat'
 import { watchForDeath } from '../support/farming'
 
+/**
+ * Blocks that could not be reached, so the next attempt does not pick them again.
+ *
+ * Each call to mine picks its targets afresh, which means a log high in a spruce
+ * canopy is chosen, failed on, and chosen again the moment the job restarts —
+ * the bot spends its afternoon shuffling under the same branch. Remembering the
+ * ones that defeated it turns that loop into progress.
+ *
+ * Entries lapse after a few minutes because the world changes: the tree may come
+ * down, someone may build a staircase, and a block that was unreachable at
+ * ground level is not unreachable from a roof.
+ */
+const unreachableUntil = new Map<string, number>()
+const UNREACHABLE_MEMORY_MS = 3 * 60_000
+
+function markUnreachable(position: { x: number; y: number; z: number }): void {
+  unreachableUntil.set(`${position.x},${position.y},${position.z}`, Date.now() + UNREACHABLE_MEMORY_MS)
+}
+
+function recentlyUnreachable(position: { x: number; y: number; z: number }): boolean {
+  const until = unreachableUntil.get(`${position.x},${position.y},${position.z}`)
+  if (!until) return false
+  if (Date.now() > until) {
+    unreachableUntil.delete(`${position.x},${position.y},${position.z}`)
+    return false
+  }
+  return true
+}
+
 export const TOOLS: Tool[] = [
   {
     schema: {
@@ -94,7 +123,10 @@ export const TOOLS: Tool[] = [
       const costFromBot = (p: any): number =>
         Math.hypot(p.x - here.x, p.z - here.z) + Math.abs(p.y - here.y) * VERTICAL_PENALTY
 
-      const candidates = [...found].sort((a, b) => costFromBot(a) - costFromBot(b))
+      const candidates = [...found]
+        // Anything that defeated us recently is not worth trying again yet.
+        .filter((position) => !recentlyUnreachable(position))
+        .sort((a, b) => costFromBot(a) - costFromBot(b))
       const sawBlock = candidates.length > 0
       const death = watchForDeath(bot)
       const danger = watchForDanger(bot)
@@ -192,6 +224,8 @@ export const TOOLS: Tool[] = [
         } catch (err) {
           failure = (err as Error).message
           unreachable++
+          // Do not pick this one again for a while; it just defeated us.
+          markUnreachable(position)
           context.log(`could not mine the ${name} at ${position.x} ${position.y} ${position.z}: ${failure}`)
         }
       }

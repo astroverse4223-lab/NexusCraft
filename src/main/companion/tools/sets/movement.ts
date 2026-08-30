@@ -212,17 +212,41 @@ export const TOOLS: Tool[] = [
       parameters: {
         type: 'object',
         properties: {
-          toY: { type: 'number', description: 'Depth to stop at, e.g. 12 for diamonds or -20 for deepslate' }
+          toY: { type: 'number', description: 'Height to stop at, e.g. 12 for diamonds or -20 for deepslate' },
+          depth: { type: 'number', description: 'Or simply how many blocks to go down from here' }
         },
-        required: ['toY']
+        required: []
       }
     },
-    execute: async (context, { toY }) => {
+    execute: async (context, { toY, depth }) => {
       const { bot, signal } = context
       const { Vec3 } = require('vec3')
 
-      const target = Math.max(-60, Math.min(Number(toY), 320))
       const start = Math.floor(bot.entity.position.y)
+
+      /*
+       * Take a height to stop at, or a number of blocks to go down.
+       *
+       * "Dig down 5" and "dig down to y 5" are both natural ways to ask, and
+       * only one of them was understood. The other arrived as `undefined`,
+       * became NaN, and quietly failed the loop's own condition — so the tool
+       * reported "dug down 0 blocks" and looked broken while doing exactly what
+       * it was told. A wrong argument should say so.
+       */
+      const asked = Number(toY ?? NaN)
+      const relative = Number(depth ?? NaN)
+
+      const wanted = Number.isFinite(asked)
+        ? asked
+        : Number.isFinite(relative)
+          ? start - Math.abs(relative)
+          : NaN
+
+      if (!Number.isFinite(wanted)) {
+        return 'dig_down needs either toY (a height to stop at) or depth (how many blocks to go down).'
+      }
+
+      const target = Math.max(-60, Math.min(wanted, 320))
       if (target >= start) return `already at y ${start}, which is at or below ${target}`
 
       let dug = 0

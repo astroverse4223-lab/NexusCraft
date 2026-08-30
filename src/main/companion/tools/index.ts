@@ -9,6 +9,8 @@ import { TOOLS as CRAFTING_TOOLS } from './sets/crafting'
 import { TOOLS as INVENTORY_TOOLS } from './sets/inventory'
 import { TOOLS as COMBAT_TOOLS } from './sets/combat'
 import { TOOLS as FARMING_TOOLS } from './sets/farming'
+import { TOOLS as CREW_TOOLS } from './sets/crew'
+import { TOOLS as BUILDING_TOOLS } from './sets/building'
 
 /**
  * The complete set of things the companion can do.
@@ -28,7 +30,9 @@ export const TOOLS: Tool[] = [
   ...CRAFTING_TOOLS,
   ...INVENTORY_TOOLS,
   ...COMBAT_TOOLS,
-  ...FARMING_TOOLS
+  ...FARMING_TOOLS,
+  ...BUILDING_TOOLS,
+  ...CREW_TOOLS
 ]
 
 // Published so the tools that call other tools can resolve them by name
@@ -39,6 +43,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = TOOLS.map((t) => t.schema)
 
 export type { Tool, ToolContext } from './types'
 export { findTool } from './registry'
+export { setCrewSnapshot, currentCrew } from './sets/crew'
 
 /* ------------------------------------------------------------ tool sets */
 
@@ -63,6 +68,9 @@ export const CORE_TOOL_NAMES = [
   'collect_nearby_items',
   'craft_item',
   'place_block',
+  // Worth its schema even in the short list: one call builds a whole
+  // structure, where place_block builds one block.
+  'build_structure',
   'equip',
   'attack_nearest',
   'eat_food',

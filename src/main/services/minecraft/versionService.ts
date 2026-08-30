@@ -491,8 +491,35 @@ export function buildClasspath(versionId: string, version: VersionJson): string[
     entries.push(library.path)
   }
 
-  const jar = versionJarPath(version.inheritsFrom ?? versionId)
-  if (existsSync(jar)) entries.push(jar)
+  /*
+   * The client jar lives under the ROOT version, not this one.
+   *
+   * `resolveVersion` flattens the inheritance chain and clears `inheritsFrom`
+   * once it is done, leaving the root id in `resolvedBaseId` — so reading
+   * `inheritsFrom` here always found undefined and fell back to the profile's
+   * own id. For a loader profile that means looking for a jar that never
+   * exists: `fabric-loader-0.17.3-1.21.1.jar` instead of `1.21.1.jar`.
+   *
+   * The jar was then quietly left off the classpath. Forge tolerates that,
+   * because BootstrapLauncher locates the game through its own module path,
+   * but Fabric's Knot looks for Minecraft on the classpath and finds nothing:
+   *
+   *     Minecraft game provider couldn't locate the game!
+   *
+   * which reads as a corrupt install and is nothing of the kind. The same
+   * `resolvedBaseId` is already used to decide which jar to download, so the
+   * file was always present — this was only ever looking in the wrong place.
+   */
+  const jar = versionJarPath(version.resolvedBaseId ?? version.inheritsFrom ?? versionId)
+  if (!existsSync(jar)) {
+    // Never silently. A classpath without the game is not a classpath, and the
+    // error the loader gives for it points nowhere near the cause.
+    throw new LauncherError(
+      'MISSING_LIBRARIES',
+      `the Minecraft client jar is missing: ${jar}. Reinstall this version.`
+    )
+  }
+  entries.push(jar)
   return entries
 }
 

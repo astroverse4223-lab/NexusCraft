@@ -51,12 +51,21 @@ export const IPC_CHANNELS = [
   'instances:export',
   'instances:inspectArchive',
   'instances:import',
+  'instances:exportPack',
+  'instances:snapshots',
+  'instances:snapshot',
+  'instances:restoreSnapshot',
+  'instances:deleteSnapshot',
+  'instances:diffSnapshot',
 
   /* launch */
   'launch:start',
   'launch:stop',
   'launch:state',
   'launch:logs',
+  'launch:autopsy',
+  'launch:autopsyAvailable',
+  'launch:applyFix',
 
   /* downloads */
   'downloads:state',
@@ -95,8 +104,14 @@ export const IPC_CHANNELS = [
   'modpack:installFile',
   'modpack:installModrinth',
   'modpack:installCurseForge',
+  'modpack:serverFromFile',
+  'modpack:serverFromModrinth',
+  'modpack:serverFromCurseForge',
   'mods:checkUpdates',
   'mods:applyUpdate',
+  'mods:changelog',
+  'mods:rollbacks',
+  'mods:rollback',
   'curseforge:verify',
   'curseforge:search',
   'curseforge:files',
@@ -110,6 +125,7 @@ export const IPC_CHANNELS = [
   'datapacks:export',
 
   /* AI companion */
+  'companion:routines',
   'companion:list',
   'companion:create',
   'companion:delete',
@@ -120,11 +136,27 @@ export const IPC_CHANNELS = [
   'companion:instruct',
   'companion:state',
   'companion:states',
+  'companion:blueprints',
+  'companion:importSchematic',
+  'companion:build',
+  'blueprints:export',
+  'blueprints:setupLitematica',
   'companion:clearMemory',
+  'companion:camera',
   'companion:testModel',
   'companion:listModels',
+  'crew:list',
+  'crew:create',
+  'crew:update',
+  'crew:delete',
+  'crew:start',
+  'crew:stop',
+  'crew:notes',
+  'crew:clearNotes',
 
   /* self-hosted servers */
+  'host:installModrinth',
+  'host:installCurseForge',
   'host:share',
   'host:forwardStatus',
   'host:openPort',
@@ -150,6 +182,25 @@ export const IPC_CHANNELS = [
   'host:join',
   'host:openFolder',
   'host:syncMods',
+  'host:deploySteward',
+  'host:dismissSteward',
+  'host:stewards',
+  'host:backup',
+  'host:backups',
+  'host:restoreBackup',
+  'host:deleteBackup',
+  'host:backupSettings',
+  'host:setBackupSettings',
+  'host:inviteLink',
+  'host:tunnelSettings',
+  'host:setTunnelSettings',
+  'host:startTunnel',
+  'host:stopTunnel',
+  'host:tunnelState',
+
+  /* invite and install links */
+  'links:acceptInvite',
+  'links:pendingInvite',
 
   /* worlds */
   'worlds:list',
@@ -157,7 +208,18 @@ export const IPC_CHANNELS = [
   'worlds:backup',
   'worlds:listBackups',
   'worlds:deleteBackup',
+  'worlds:restore',
+  'worlds:import',
   'worlds:delete',
+
+  /* public server directory */
+  'directory:list',
+  'directory:refresh',
+  'directory:ping',
+  'directory:lookup',
+  'directory:add',
+  'directory:join',
+  'directory:joinTargets',
 
   /* servers */
   'servers:list',
@@ -183,6 +245,7 @@ export const EVENT_CHANNELS = [
   'companion:event',
   'companion:status',
   'companion:memory',
+  'companion:camera',
   'companion:list',
   'host:changed',
   'host:state',
@@ -195,7 +258,11 @@ export const EVENT_CHANNELS = [
   'launch:log',
   'instances:changed',
   'servers:status',
+  'directory:status',
   'settings:changed',
+  'link:invite',
+  'link:install-mod',
+  'tunnel:state',
   'toast'
 ] as const
 

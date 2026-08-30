@@ -1,5 +1,7 @@
 import { Minus, Square, X, Copy } from 'lucide-react'
 import {
+  Compass,
+  Hammer,
   Home,
   Play,
   Boxes,
@@ -24,12 +26,28 @@ import { useStore, activeAccount, type Route } from '../store/useStore'
 export function TitleBar(): JSX.Element {
   const [maximized, setMaximized] = useState(false)
   const launches = useStore((s) => s.launches)
+  const info = useStore((s) => s.info)
   const running = Object.values(launches).filter((l) => l.stage === 'running').length
 
   return (
     <div className="titlebar">
       <Logo size={17} glow={false} />
       <span className="titlebar-title">NEXUSCRAFT LAUNCHER</span>
+
+      {/*
+       * A copy running on a throwaway data directory looks exactly like the
+       * real one and is empty by design, which reads as "everything is gone".
+       * Say so plainly rather than letting the window lie by omission.
+       */}
+      {info?.scratchData && (
+        <span
+          className="pill"
+          style={{ marginLeft: 6, color: 'var(--warning)', borderColor: 'var(--warning)' }}
+          title={`Test window on a scratch data folder: ${info.dataDir}. Your real instances are not here.`}
+        >
+          TEST DATA FOLDER
+        </span>
+      )}
 
       {running > 0 && (
         <span className="pill success" style={{ marginLeft: 6 }}>
@@ -79,8 +97,10 @@ const LIBRARY: NavEntry[] = [
   { route: 'instances', label: 'Instances', icon: Boxes },
   { route: 'versions', label: 'Versions', icon: Layers },
   { route: 'mods', label: 'Mods & Packs', icon: Package },
+  { route: 'blueprints', label: 'Blueprints', icon: Hammer },
   { route: 'worlds', label: 'Worlds', icon: Globe2 },
   { route: 'servers', label: 'Servers', icon: Server },
+  { route: 'discover', label: 'Discover', icon: Compass },
   { route: 'host', label: 'Host a Server', icon: HardDrive }
 ]
 

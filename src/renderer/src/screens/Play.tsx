@@ -23,6 +23,7 @@ import { useStore, activeAccount, selectedInstance } from '../store/useStore'
 import { ErrorView, Modal, ProgressBar, Spinner, useAutoScroll } from '../components/ui'
 import { SkinBody } from '../components/SkinView'
 import { DeviceCodePanel } from '../components/DeviceCodePanel'
+import { CrashAutopsyPanel } from '../components/CrashAutopsyPanel'
 import { MicrosoftMark } from './Onboarding'
 import { formatBytes, formatDuration, formatEta, formatRam, formatRelative, formatSpeed, LOADER_COLORS, LOADER_LABELS } from '../format'
 
@@ -320,6 +321,7 @@ export function PlayScreen(): JSX.Element {
               }))
             }
           />
+          <CrashAutopsyPanel instance={instance} />
           {state.crash?.reportPath && (
             <button
               className="btn btn-ghost btn-sm mt-8"

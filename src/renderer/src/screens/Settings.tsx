@@ -32,6 +32,7 @@ export function SettingsScreen(): JSX.Element {
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [clientId, setClientId] = useState('')
   const [curseKey, setCurseKey] = useState('')
+  const [directoryUrl, setDirectoryUrl] = useState('')
   const [checkingKey, setCheckingKey] = useState(false)
   const [detecting, setDetecting] = useState(false)
 
@@ -44,6 +45,7 @@ export function SettingsScreen(): JSX.Element {
     if (settings) {
       setClientId(settings.clientId)
       setCurseKey(settings.curseForgeApiKey)
+      setDirectoryUrl(settings.directoryUrl)
     }
   }, [settings])
 
@@ -108,6 +110,54 @@ export function SettingsScreen(): JSX.Element {
               checked={settings.restoreOnGameExit}
               onChange={(value) => void patch({ restoreOnGameExit: value })}
             />
+          </SettingRow>
+
+          <SettingRow
+            name="Keep running in the tray when the window closes"
+            description="Downloads, hosted servers and companions carry on with the window shut. Quit from the tray icon to stop everything."
+          >
+            <Toggle checked={settings.closeToTray} onChange={(value) => void patch({ closeToTray: value })} />
+          </SettingRow>
+
+          <SettingRow
+            name="Desktop notifications"
+            description="Tells you about crashes and finished downloads while you are in the game or another app."
+          >
+            <Toggle
+              checked={settings.desktopNotifications}
+              onChange={(value) => void patch({ desktopNotifications: value })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            name="Show what you are playing in Discord"
+            description="Puts the instance name, loader and elapsed time on your Discord profile. Does nothing if Discord is not running."
+          >
+            <Toggle
+              checked={settings.discordPresence}
+              onChange={(value) => void patch({ discordPresence: value })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            name="Public server list"
+            description="The Discover screen ships with a starter list of public servers. Point this at an https JSON feed to use your own instead — an array of { name, address, port, category, description }."
+          >
+            <div className="row gap-8" style={{ width: 340 }}>
+              <input
+                className="input mono"
+                value={directoryUrl}
+                placeholder="Built-in list"
+                onChange={(event) => setDirectoryUrl(event.target.value)}
+              />
+              <button
+                className="btn"
+                disabled={directoryUrl.trim() === settings.directoryUrl}
+                onClick={() => void patch({ directoryUrl: directoryUrl.trim() })}
+              >
+                Save
+              </button>
+            </div>
           </SettingRow>
 
           <SettingRow

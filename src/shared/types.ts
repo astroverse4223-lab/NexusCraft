@@ -120,6 +120,42 @@ export interface CreateInstanceInput {
   iconColor?: string
 }
 
+/**
+ * A restore point for an instance's setup — its mods, configs and packs, but
+ * not its worlds. Files are hard-linked where the filesystem allows, so one
+ * costs almost no disk.
+ */
+export interface InstanceSnapshot {
+  id: string
+  instanceId: string
+  name: string
+  note: string
+  createdAt: number
+  files: number
+  /** Logical size of what was captured; the real disk cost is far lower when linked. */
+  bytes: number
+  /** False when the filesystem forced real copies instead of hard links. */
+  linked: boolean
+  /** The loader as it was, so restoring an older setup restores its loader too. */
+  minecraftVersion: string
+  loader: LoaderId
+  loaderVersion: string | null
+}
+
+export interface SnapshotDiffEntry {
+  /** Path relative to the game directory, e.g. "mods/sodium-0.6.jar". */
+  path: string
+  sizeBytes: number
+}
+
+/** What changed between a snapshot and the instance as it stands now. */
+export interface SnapshotDiff {
+  snapshotId: string
+  added: SnapshotDiffEntry[]
+  removed: SnapshotDiffEntry[]
+  changed: SnapshotDiffEntry[]
+}
+
 export interface InstanceStats {
   mods: number
   worlds: number
@@ -232,6 +268,12 @@ export interface ModInfo {
   authors: string[]
   /** Loaders this jar declares support for. */
   loaders: LoaderId[]
+  /**
+   * Side the jar says it runs on, or null when it did not say. Only Fabric and
+   * newer NeoForge manifests state this, so null is common and means "assume
+   * both" rather than "unknown, exclude it".
+   */
+  environment: 'client' | 'server' | 'both' | null
   /** Minecraft version range the mod declares, when present. */
   mcVersionRange: string | null
   enabled: boolean
@@ -249,6 +291,7 @@ export interface ModIssue {
     | 'duplicate-mod-id'
     | 'unreadable'
     | 'mc-version-mismatch'
+    | 'loader-version-too-old'
     | 'missing-dependency'
     | 'not-a-jar'
   message: string
@@ -432,6 +475,21 @@ export interface HostedServerConsoleLine {
   stream: 'out' | 'err' | 'in'
 }
 
+/** What installing a modpack as a hosted server produced. */
+export interface ModpackServerInstallResult {
+  server: HostedServer
+  /** Files fetched from the pack's manifest. */
+  installedFiles: number
+  /** Config files copied out of the pack archive. */
+  overrides: number
+  /** Files the launcher could not fetch, usually an author's download opt-out. */
+  skipped: string[]
+  /** Mods disabled because they declared themselves client-only. */
+  clientOnlyMods: string[]
+  /** Override files left behind because a server cannot use them. */
+  clientOverridesSkipped: number
+}
+
 export interface SaveHostedServerInput {
   id: string | null
   name: string
@@ -474,6 +532,71 @@ export interface ServerStatus {
   motd: string | null
   faviconDataUrl: string | null
   error: string | null
+}
+
+/* ---------------------------------------------------------- server directory */
+
+/** Broad groupings the Discover screen filters by. */
+export type DirectoryCategory =
+  | 'minigames'
+  | 'survival'
+  | 'skyblock'
+  | 'anarchy'
+  | 'prison'
+  | 'adventure'
+  | 'creative'
+  | 'modded'
+
+/**
+ * A public server offered in the Discover screen.
+ *
+ * This is only the entry — who the server is and where to find it. Everything
+ * live about it (whether it is up, its players, MOTD, version and icon) arrives
+ * separately as a `ServerStatus` from an actual ping, keyed by this `id`.
+ */
+export interface DirectoryServer {
+  id: string
+  name: string
+  address: string
+  port: number
+  category: DirectoryCategory
+  description: string
+  /** Version the entry was written against; a hint for picking an instance. */
+  version: string | null
+  tags: string[]
+}
+
+export interface DirectoryCategoryInfo {
+  id: DirectoryCategory
+  label: string
+  blurb: string
+}
+
+/** The catalogue plus whatever has already been pinged. */
+export interface DirectoryListing {
+  servers: DirectoryServer[]
+  categories: DirectoryCategoryInfo[]
+  statuses: ServerStatus[]
+  /** Whether the list is the bundled one or came from `directoryUrl`. */
+  source: 'bundled' | 'remote'
+}
+
+/** Instances that could join a given server, best first. */
+export interface DirectoryJoinTargets {
+  /** Minecraft versions the server's protocol number maps to. */
+  serverVersions: string[]
+  protocol: number | null
+  versionName: string | null
+  candidates: Array<{ instance: Instance; reason: string }>
+}
+
+/** The result of pinging an address the user typed in. */
+export interface DirectoryLookup {
+  address: string
+  port: number
+  resolvedAddress: string
+  resolvedPort: number
+  status: ServerStatus
 }
 
 /* --------------------------------------------------------------------- skins */
@@ -579,13 +702,48 @@ export interface ModrinthVersion {
 export interface ModUpdate {
   fileName: string
   modName: string
+  /** Modrinth project id — the mod itself, not this build of it. */
   projectId: string
   currentVersion: string | null
+  /** Version id of the build on disk, when Modrinth recognised it. */
+  currentVersionId?: string | null
   newVersionId: string
   newVersion: string
   newFileName: string
   sizeBytes: number
   enabled: boolean
+  /** Whether the author marked the new build stable. */
+  versionType?: 'release' | 'beta' | 'alpha'
+  /** Unix ms the new build was published. */
+  publishedAt?: number | null
+  /** True when the leading version number went up — the risky kind of update. */
+  majorJump?: boolean
+}
+
+/** An author's release notes for one build, shown before updating to it. */
+export interface ModChangelog {
+  versionId: string
+  versionNumber: string
+  name: string
+  versionType: 'release' | 'beta' | 'alpha'
+  publishedAt: number | null
+  /** Markdown, as the author wrote it. Empty when they published none. */
+  changelog: string
+}
+
+/** A replaced jar kept on disk so an update can be undone. */
+export interface ModRollback {
+  /** File name of the jar that was replaced. */
+  fileName: string
+  modName: string
+  /** The version that was on disk before the update. */
+  fromVersion: string | null
+  /** The version installed over it. */
+  toVersion: string
+  /** File name the update wrote, which a rollback removes. */
+  replacedBy: string
+  updatedAt: number
+  sizeBytes: number
 }
 
 export interface ModrinthSearchResult {
@@ -674,6 +832,37 @@ export interface CrashDiagnosis {
   excerpt: string | null
 }
 
+/**
+ * What a language model made of a crash: the ranked suspects and the fixes
+ * worth trying, on top of the pattern-matched `CrashDiagnosis`.
+ */
+export interface CrashAutopsy {
+  /** Plain-language account of what went wrong. */
+  summary: string
+  confidence: 'high' | 'medium' | 'low'
+  suspects: CrashSuspect[]
+  fixes: CrashFix[]
+  /** Which model produced this, so the reader can weigh it. */
+  model: string
+}
+
+export interface CrashSuspect {
+  /** File name of the mod blamed, when it is one the instance actually has. */
+  modFileName: string | null
+  modName: string
+  why: string
+  confidence: 'high' | 'medium' | 'low'
+}
+
+/** A fix the launcher can carry out, or explain when it cannot. */
+export interface CrashFix {
+  kind: 'disable-mod' | 'update-mod' | 'more-memory' | 'less-memory' | 'repair' | 'manual'
+  label: string
+  detail: string
+  /** The mod this acts on; null for anything not mod-specific. */
+  modFileName: string | null
+}
+
 export interface GameLogLine {
   instanceId: string
   stream: 'stdout' | 'stderr' | 'launcher'
@@ -694,6 +883,12 @@ export interface AppSettings {
   /** Bring the launcher back to the front when the game exits. */
   restoreOnGameExit: boolean
   keepLauncherOpen: boolean
+  /** Closing the window hides to the tray instead of quitting. */
+  closeToTray: boolean
+  /** Show what you are playing in Discord. */
+  discordPresence: boolean
+  /** Native notifications for crashes and finished work while the window is away. */
+  desktopNotifications: boolean
   maxConcurrentDownloads: number
   showSnapshots: boolean
   authFlow: 'device-code' | 'browser-redirect'
@@ -706,6 +901,8 @@ export interface AppSettings {
   accentColor: string
   onboardingComplete: boolean
   selectedInstanceId: string | null
+  /** https JSON feed replacing the built-in public server list. Empty = built-in. */
+  directoryUrl: string
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -756,7 +953,7 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: LauncherErro
 
 /* -------------------------------------------------------------- ipc events */
 
-import type { Companion, CompanionEvent, CompanionStatus } from './companion'
+import type { CameraFrame, Companion, CompanionEvent, CompanionStatus } from './companion'
 
 export interface EventMap {
   'companion:event': CompanionEvent
@@ -770,6 +967,7 @@ export interface EventMap {
     alive: boolean
   }
   'companion:memory': { companionId: string; notes: string[] }
+  'companion:camera': { companionId: string; frame: CameraFrame }
   'companion:list': Companion[]
   'host:changed': HostedServer[]
   'host:state': HostedServerState
@@ -782,8 +980,33 @@ export interface EventMap {
   'launch:log': GameLogLine
   'instances:changed': Instance[]
   'servers:status': ServerStatus
+  'directory:status': ServerStatus
   'settings:changed': AppSettings
+  /** A `nexuscraft://join/…` link arrived and is waiting on the user. */
+  'link:invite': ServerInvite
+  /** A `nexuscraft://mod/…` link arrived; the user picks where it goes. */
+  'link:install-mod': { versionId: string }
+  /** A relay agent's state changed — starting, up at an address, or gone. */
+  'tunnel:state': {
+    serverId: string
+    status: 'stopped' | 'starting' | 'running' | 'error'
+    address: string | null
+    detail: string
+    output: string[]
+  }
   'toast': { kind: 'info' | 'success' | 'warning' | 'error'; title: string; message?: string }
+}
+
+/** Everything an invite link carries about the server it points at. */
+export interface ServerInvite {
+  host: string
+  port: number
+  /** The server's name, as the host wrote it. */
+  name: string | null
+  minecraftVersion: string | null
+  loader: string | null
+  /** Modrinth modpack version the server runs, when the host named one. */
+  packVersionId: string | null
 }
 
 /** Everything needed to advertise a hosted server somewhere. */

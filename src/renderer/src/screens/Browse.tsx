@@ -26,11 +26,58 @@ function compactNumber(value: number): string {
  */
 type Source = 'modrinth' | 'curseforge'
 
-export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
+/**
+ * Where searched content should be installed.
+ *
+ * Servers take the same mods instances do, from the same places, so the browser
+ * works for both — it only needs to know what to match against and where to put
+ * what it finds. Adding a mod to a server used to mean finding the jar yourself,
+ * checking it suited the loader, and dropping it in a folder by hand.
+ */
+export interface BrowseDestination {
+  id: string
+  name: string
+  minecraftVersion: string
+  loader: string
+  /**
+   * Whether this destination is a hosted server rather than an instance.
+   *
+   * It changes what a modpack means as well as where mods go: browsing from a
+   * server, installing a pack builds a new server to host, keeping only what a
+   * dedicated server can actually use.
+   */
+  isServer: boolean
+}
+
+export function BrowseTab({
+  instance,
+  destination,
+  initialKind,
+  lockKind
+}: {
+  instance: Instance
+  destination?: BrowseDestination
+  /** What to search for when the browser opens. Defaults to mods. */
+  initialKind?: ContentKindId
+  /**
+   * Hides the content-type tabs. Used where only one kind makes sense — building
+   * a new server from a pack has nothing to offer under "Shaders".
+   */
+  lockKind?: boolean
+}): JSX.Element {
+  // Falls back to the instance, which is what every existing caller passes.
+  const target: BrowseDestination = destination ?? {
+    id: instance.id,
+    name: instance.name,
+    minecraftVersion: instance.minecraftVersion,
+    loader: instance.loader,
+    isServer: false
+  }
+
   const navigate = useStore((s) => s.navigate)
   const [source, setSource] = useState<Source>('modrinth')
   const [cfConfigured, setCfConfigured] = useState<boolean | null>(null)
-  const [kind, setKind] = useState<ContentKindId>('mod')
+  const [kind, setKind] = useState<ContentKindId>(initialKind ?? 'mod')
   const [query, setQuery] = useState('')
   const [projects, setProjects] = useState<ModrinthProject[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -50,11 +97,17 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
         const input = {
           query,
           kind,
-          gameVersion: matchVersion ? instance.minecraftVersion : null,
-          loader: matchVersion && kind !== 'modpack' ? instance.loader : null,
+          gameVersion: matchVersion ? target.minecraftVersion : null,
+          loader: matchVersion && kind !== 'modpack' ? target.loader : null,
           offset,
           limit: 20,
-          instanceId: instance.id
+          /*
+           * Null, not an empty string, when there is nowhere to install to yet.
+           * "Host a modpack" browses before the server exists, and an empty id
+           * fails validation on the way in — so every search in that modal
+           * came back as an internal error instead of results.
+           */
+          instanceId: target.id || null
         }
         const result =
           source === 'curseforge' ? await api.curseforge.search(input) : await api.modrinth.search(input)
@@ -91,14 +144,25 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
   return (
     <>
       <div className="row between mb-16 wrap gap-12">
-        <div className="tabs">
-          {KIND_TABS.map(({ kind: k, label, icon: Icon }) => (
-            <button key={k} className={`tab ${kind === k ? 'active' : ''}`} onClick={() => setKind(k)}>
-              <Icon size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
-              {label}
-            </button>
-          ))}
-        </div>
+        {lockKind ? (
+          <div />
+        ) : (
+          <div className="tabs">
+            {KIND_TABS
+              /*
+               * A server runs neither resource packs nor shaders — both are
+               * client-side. Offering them installed a zip into the server's
+               * mods folder, where nothing would ever read it.
+               */
+              .filter(({ kind: k }) => !target.isServer || k === 'mod' || k === 'modpack')
+              .map(({ kind: k, label, icon: Icon }) => (
+                <button key={k} className={`tab ${kind === k ? 'active' : ''}`} onClick={() => setKind(k)}>
+                  <Icon size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
+                  {label}
+                </button>
+              ))}
+          </div>
+        )}
 
         <div className="row gap-8">
           <div className="tabs">
@@ -167,8 +231,18 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
         <div className="panel panel-pad row gap-12 mb-16">
           <Boxes size={17} style={{ color: 'var(--accent)', flexShrink: 0 }} />
           <div className="small muted">
-            Installing a modpack creates a <strong style={{ color: 'var(--text)' }}>new instance</strong> with its own
-            Minecraft version, loader and mods. Your existing instances are untouched.
+            {target.isServer ? (
+              <>
+                Installing a modpack creates a <strong style={{ color: 'var(--text)' }}>new server</strong> with its own
+                Minecraft version, loader and mods. Client-only mods, such as minimaps and shaders, are turned off
+                because a server cannot run them. Your existing servers are untouched.
+              </>
+            ) : (
+              <>
+                Installing a modpack creates a <strong style={{ color: 'var(--text)' }}>new instance</strong> with its
+                own Minecraft version, loader and mods. Your existing instances are untouched.
+              </>
+            )}
           </div>
         </div>
       )}
@@ -287,6 +361,7 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
         <InstallDialog
           project={selected}
           instance={instance}
+          target={target}
           kind={kind}
           source={source}
           matchVersion={matchVersion}
@@ -303,6 +378,7 @@ export function BrowseTab({ instance }: { instance: Instance }): JSX.Element {
 function InstallDialog({
   project,
   instance,
+  target,
   kind,
   source,
   matchVersion,
@@ -311,6 +387,8 @@ function InstallDialog({
 }: {
   project: ModrinthProject
   instance: Instance
+  /** Where the download lands — an instance, or a hosted server. */
+  target: BrowseDestination
   kind: ContentKindId
   source: Source
   matchVersion: boolean
@@ -329,8 +407,11 @@ function InstallDialog({
   useEffect(() => {
     void (async () => {
       try {
-        const gameVersion = matchVersion ? instance.minecraftVersion : null
-        const loader = matchVersion && kind !== 'modpack' ? instance.loader : null
+        // Match the destination, not the instance the screen happens to sit in.
+        // Reading the instance here meant a server browse filtered by nothing at
+        // all, and offered builds for the wrong loader and the wrong version.
+        const gameVersion = matchVersion ? target.minecraftVersion : null
+        const loader = matchVersion && kind !== 'modpack' ? target.loader : null
         setVersions(
           source === 'curseforge'
             ? await api.curseforge.files(project.projectId, kind, gameVersion, loader)
@@ -348,8 +429,30 @@ function InstallDialog({
     setError(null)
     try {
       if (kind === 'modpack') {
-        // A modpack declares its own Minecraft version and loader, so it becomes
-        // a new instance rather than being merged into the current one.
+        /*
+         * A modpack declares its own Minecraft version and loader, so it becomes
+         * something new rather than being merged into the current destination —
+         * a server when browsing from one, an instance otherwise.
+         */
+        if (target.isServer) {
+          const result =
+            source === 'curseforge'
+              ? await api.modpacks.serverFromCurseForge(project.projectId, version.versionId, { name: project.title })
+              : await api.modpacks.serverFromModrinth(version.versionId, { name: project.title })
+          setDone(true)
+          onClose()
+          onInstalled()
+          navigate('host')
+          if (result.clientOnlyMods.length > 0) {
+            pushToast({
+              kind: 'info',
+              title: `${result.clientOnlyMods.length} client-only mod${result.clientOnlyMods.length === 1 ? '' : 's'} turned off`,
+              message: `A server cannot run ${result.clientOnlyMods.slice(0, 4).join(', ')}. They are still there, switched off, if you disagree.`
+            })
+          }
+          return
+        }
+
         const result =
           source === 'curseforge'
             ? await api.modpacks.installFromCurseForge(project.projectId, version.versionId, project.title)
@@ -362,10 +465,13 @@ function InstallDialog({
         return
       }
 
-      const result =
-        source === 'curseforge'
-          ? await api.curseforge.install(instance.id, project.projectId, version.versionId, kind)
-          : await api.modrinth.install(instance.id, version.versionId, kind)
+      const result = target.isServer
+        ? source === 'curseforge'
+          ? await api.host.installCurseForge(target.id, project.projectId, version.versionId, kind)
+          : await api.host.installModrinth(target.id, version.versionId, kind)
+        : source === 'curseforge'
+          ? await api.curseforge.install(target.id, project.projectId, version.versionId, kind)
+          : await api.modrinth.install(target.id, version.versionId, kind)
       setDone(true)
       onInstalled()
       if (result.installed.length === 0 && result.skipped.length > 0) {
@@ -382,7 +488,19 @@ function InstallDialog({
     <Modal
       open
       title={project.title}
-      subtitle={`by ${project.author}`}
+      // Name the destination outright: the same browser fills instances and
+      // servers now, and once it is open the two look identical.
+      /*
+       * A modpack brings its own Minecraft version and loader and becomes a new
+       * instance, so naming the current destination is not just unhelpful but
+       * wrong — a Fabric 1.20.1 pack was reading as "installing into AI World
+       * (server, forge 1.21.11)", which describes something that never happens.
+       */
+      subtitle={
+        kind === 'modpack'
+          ? `by ${project.author} — creates its own new ${target.isServer ? 'server' : 'instance'}`
+          : `by ${project.author} — installing into ${target.name} (${target.isServer ? 'server' : 'instance'}, ${target.loader} ${target.minecraftVersion})`
+      }
       onClose={onClose}
       width={640}
       footer={

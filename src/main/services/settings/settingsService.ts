@@ -41,20 +41,44 @@ function defaults(): AppSettings {
     closeLauncherOnLaunch: false,
     restoreOnGameExit: true,
     keepLauncherOpen: true,
+    closeToTray: true,
+    desktopNotifications: true,
+    discordPresence: true,
     maxConcurrentDownloads: 8,
     showSnapshots: false,
     authFlow: 'device-code',
     curseForgeApiKey: process.env.NEXUSCRAFT_CURSEFORGE_KEY?.trim() ?? '',
-    clientId: process.env.NEXUSCRAFT_CLIENT_ID?.trim() ?? '',
+    /*
+     * The Microsoft application this launcher signs in as.
+     *
+     * Not a secret. Sign-in is the authorization code flow with PKCE and no
+     * client secret, which is the pattern Microsoft publishes for desktop apps
+     * precisely so the identifier can ship inside one. Every player still signs
+     * in with their own Microsoft account and still has to own the game — this
+     * only says which application is asking.
+     *
+     * BUNDLED_CLIENT_ID is replaced at build time from NEXUSCRAFT_CLIENT_ID, so
+     * a build made with that set works for whoever installs it without them
+     * registering anything. Left unset it stays empty and each person supplies
+     * their own in Settings, which is the right default for source builds.
+     */
+    clientId: (process.env.NEXUSCRAFT_CLIENT_ID?.trim() || BUNDLED_CLIENT_ID).trim(),
     animatedBackground: true,
     particles: true,
     accentColor: '#5eead4',
     onboardingComplete: false,
-    selectedInstanceId: null
+    selectedInstanceId: null,
+    directoryUrl: ''
   }
 }
 
 let cached: AppSettings | null = null
+
+/**
+ * Filled in at build time by electron-vite's `define`, from NEXUSCRAFT_CLIENT_ID.
+ * An empty string when the build was made without one.
+ */
+declare const BUNDLED_CLIENT_ID: string
 
 export function getSettings(): AppSettings {
   if (cached) return cached

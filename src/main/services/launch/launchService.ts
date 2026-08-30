@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
 import type { GameLogLine, LaunchStage, LaunchState } from '@shared/types'
 import { emit, toast } from '../../core/events'
+import { notifyDesktop } from '../../core/notifications'
+import { updatePresenceFromLaunch } from '../presence/presenceService'
 import { LauncherError } from '../../core/errors'
 import { createLogger, redact } from '../../core/logger'
 import { getSettings } from '../settings/settingsService'
@@ -60,6 +62,7 @@ function setState(instanceId: string, stage: LaunchStage, message: string, extra
   state.message = message
   states.set(instanceId, state)
   emit('launch:state', state)
+  void updatePresenceFromLaunch(state)
 }
 
 export function launchStates(): LaunchState[] {
@@ -224,9 +227,9 @@ export async function launchInstance(options: LaunchOptions): Promise<LaunchStat
 
     const child = spawn(executable, built.args, {
       cwd: instance.gameDir,
-      // A detached child keeps running if the launcher is closed, and lets the
-      // launcher stay fully responsive while the game runs.
-      detached: false,
+      // Its own process group, so quitting the launcher — or a Ctrl+C aimed at
+      // it — never takes a running game down with it.
+      detached: true,
       windowsHide: false,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, APPDATA: process.env.APPDATA }
@@ -368,6 +371,12 @@ function handleExit(game: RunningGame, code: number | null, signal: NodeJS.Signa
 
   if (!clean) {
     toast('error', 'Minecraft closed unexpectedly', `Exit code ${code ?? 'unknown'}. Open the log for details.`)
+    // The player is usually looking at the game, not the launcher, when this
+    // happens — that is exactly what the desktop notification is for.
+    notifyDesktop({
+      title: 'Minecraft crashed',
+      body: 'The game closed unexpectedly. Open NexusCraft to see what went wrong.'
+    })
   }
 }
 

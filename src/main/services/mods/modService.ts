@@ -31,10 +31,40 @@ export function modsDir(instance: Instance): string {
  * Minecraft version — everything the analysis needs — but only the instance is
  * an `Instance`. Naming the target directly lets both use the same code.
  */
+/** The lowest build a Maven-style range will accept, e.g. "[65,)" -> 65. */
+function lowestVersionIn(range: string | null | undefined): number | null {
+  if (!range) return null
+  const found = range.match(/(\d+)/)
+  return found ? Number(found[1]) : null
+}
+
+/**
+ * The major number of an installed loader build.
+ *
+ * Forge records its version as the Minecraft version and its own joined by a
+ * dash — "26.1.2-64.1.2" is Forge 64 for Minecraft 26.1.2. Reading the first
+ * number in that string gives 26, which compared against a mod wanting Forge 62
+ * failed every jar in the instance with the numbers plainly disagreeing on
+ * screen. The loader version is the part after the last dash.
+ */
+function majorVersionOf(version: string | null | undefined): number | null {
+  if (!version) return null
+  const ownPart = version.includes('-') ? version.slice(version.lastIndexOf('-') + 1) : version
+  const found = ownPart.match(/(\d+)/)
+  return found ? Number(found[1]) : null
+}
+
 export interface ModTarget {
   dir: string
   loader: LoaderId
   minecraftVersion: string
+  /**
+   * Which build of the loader is installed, when it is known.
+   *
+   * Some mods declare nothing about Minecraft and only what they need of the
+   * loader, so without this there is no way to tell that a jar will be skipped.
+   */
+  loaderVersion?: string | null
   /** How to refer to the destination in messages, e.g. "this server". */
   description: string
 }
@@ -44,6 +74,7 @@ export function instanceTarget(instance: Instance): ModTarget {
     dir: modsDir(instance),
     loader: instance.loader,
     minecraftVersion: instance.minecraftVersion,
+    loaderVersion: instance.loaderVersion,
     description: 'this instance'
   }
 }
@@ -131,6 +162,7 @@ export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
           description: null,
           authors: [],
           loaders: [],
+          environment: null,
           mcVersionRange: null,
           enabled,
           sizeBytes: await stat(full).then((s) => s.size).catch(() => 0),
@@ -188,6 +220,28 @@ export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
           message: `Declares support for ${metadata.mcVersionRange}, but ${target.description} is Minecraft ${target.minecraftVersion}.`
         })
       }
+
+      /*
+       * What the mod asks of the loader itself.
+       *
+       * Plenty of mods name no Minecraft version and only a loader build — a
+       * jar wanting Forge 65 in an instance running Forge 64 is skipped
+       * silently, and the mods depending on it then report it as "not
+       * installed", which sends you hunting for something sitting right there
+       * in the folder. This is an error rather than a warning because the mod
+       * definitely will not load.
+       */
+      const needsLoader = lowestVersionIn(metadata.loaderVersionRange)
+      const haveLoader = majorVersionOf(target.loaderVersion)
+      if (needsLoader !== null && haveLoader !== null && haveLoader < needsLoader) {
+        issues.push({
+          severity: 'error',
+          code: 'loader-version-too-old',
+          message:
+            `Needs ${target.loader} ${needsLoader} or newer, but ${target.description} runs ${target.loaderVersion}. ` +
+            'This is usually a jar built for a later Minecraft version — look for the build that matches.'
+        })
+      }
     }
 
     mods.push({
@@ -199,6 +253,7 @@ export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
       description: metadata?.description ?? null,
       authors: metadata?.authors ?? [],
       loaders: metadata?.loaders ?? [],
+      environment: metadata?.environment ?? null,
       mcVersionRange: metadata?.mcVersionRange ?? null,
       enabled,
       sizeBytes: await stat(full).then((s) => s.size).catch(() => 0),
