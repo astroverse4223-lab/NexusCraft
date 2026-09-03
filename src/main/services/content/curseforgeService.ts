@@ -28,6 +28,11 @@ const LOADER_IDS: Record<string, number> = {
   neoforge: 6
 }
 
+/** CurseForge's numeric id for a loader, or null for vanilla and unknowns. */
+export function loaderIdFor(loader: string): number | null {
+  return LOADER_IDS[loader] ?? null
+}
+
 function classIdFor(kind: ContentKindId): number {
   switch (kind) {
     case 'resourcepack':
@@ -135,7 +140,7 @@ async function readApiComplaint(response: Response): Promise<string> {
   }
 }
 
-async function cfGet<T>(path: string, params?: URLSearchParams): Promise<T> {
+export async function cfGet<T>(path: string, params?: URLSearchParams): Promise<T> {
   const url = `${API}${path}${params ? `?${params}` : ''}`
   const response = await request(url, {
     headers: { 'x-api-key': apiKey(), Accept: 'application/json' },
@@ -189,7 +194,7 @@ async function cfGet<T>(path: string, params?: URLSearchParams): Promise<T> {
   return (await response.json()) as T
 }
 
-async function cfPost<T>(path: string, body: unknown): Promise<T> {
+export async function cfPost<T>(path: string, body: unknown): Promise<T> {
   const response = await request(`${API}${path}`, {
     method: 'POST',
     headers: { 'x-api-key': apiKey(), 'Content-Type': 'application/json', Accept: 'application/json' },

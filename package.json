@@ -1,6 +1,6 @@
 {
   "name": "nexuscraft-launcher",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "NexusCraft Launcher — a modern custom launcher for Minecraft: Java Edition",
   "main": "./out/main/index.js",
   "author": "NexusCraft",
@@ -35,7 +35,7 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^12.4.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

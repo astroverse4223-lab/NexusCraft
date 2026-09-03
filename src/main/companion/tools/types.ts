@@ -18,6 +18,17 @@ export interface ToolContext {
   /** Aborts long-running actions when the user stops the bot. */
   signal: AbortSignal
   /**
+   * Where the owner last died, when anything has been seen.
+   *
+   * Optional because the watcher is started by the bot process and tools are
+   * also exercised in tests, where there is no live player to die.
+   */
+  deathWatch?: {
+    site: () => { x: number; y: number; z: number; dimension: string; at: number; cause: string | null } | null
+    timeLeft: () => number
+    forget: () => void
+  }
+  /**
    * The model this companion runs on, for the few tools that need one of their
    * own — drawing a blueprint is a big structured answer that does not belong
    * in the middle of an agent turn. Absent for routine-driven workers, which

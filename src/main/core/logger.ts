@@ -1,4 +1,5 @@
-import { createWriteStream, WriteStream } from 'node:fs'
+import type { WriteStream } from 'node:fs';
+import { createWriteStream } from 'node:fs'
 import { join } from 'node:path'
 import { logsRoot, ensureDir } from './paths'
 

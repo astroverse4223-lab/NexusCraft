@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  AlertTriangle,
   RefreshCw,
   Server,
   Users,
@@ -13,12 +14,14 @@ import {
 } from 'lucide-react'
 import type {
   DirectoryCategory,
+  DirectoryCompatibility,
   DirectoryCategoryInfo,
   DirectoryServer,
   LauncherErrorPayload,
   ServerStatus
 } from '@shared/types'
 import { api, subscribe, toPayload } from '../api'
+import { useInfiniteScroll } from '../components/useInfiniteScroll'
 import { useStore } from '../store/useStore'
 import { ErrorView, EmptyState, Spinner } from '../components/ui'
 
@@ -32,6 +35,9 @@ type Sort = 'players' | 'name' | 'latency'
  * the launcher speaking Server List Ping to the server itself, so a listing
  * that has moved on shows as offline rather than as an invented player count.
  */
+/** Rows added per scroll. Enough to fill a wide window in one go. */
+const PAGE = 24
+
 export function DiscoverScreen(): JSX.Element {
   const navigate = useStore((s) => s.navigate)
   const instances = useStore((s) => s.instances)
@@ -50,6 +56,8 @@ export function DiscoverScreen(): JSX.Element {
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
+  /** Whether each pinged server can actually be joined with what is installed. */
+  const [fit, setFit] = useState<Record<string, DirectoryCompatibility>>({})
   /* 'auto' matches the instance to whatever version the server answers with. */
   const [joinWith, setJoinWith] = useState<string>('auto')
 
@@ -76,7 +84,11 @@ export function DiscoverScreen(): JSX.Element {
       void api.directory
         .refresh(false)
         .catch(() => undefined)
-        .finally(() => setRefreshing(false))
+        .finally(() => {
+          setRefreshing(false)
+          // Once the pings have landed, work out what can actually be joined.
+          void api.directory.compatibility().then(setFit).catch(() => undefined)
+        })
     } catch (err) {
       setError(toPayload(err))
     }
@@ -90,6 +102,7 @@ export function DiscoverScreen(): JSX.Element {
     setRefreshing(true)
     try {
       await api.directory.refresh(true)
+      setFit(await api.directory.compatibility())
     } catch (err) {
       setError(toPayload(err))
     } finally {
@@ -128,6 +141,30 @@ export function DiscoverScreen(): JSX.Element {
       return pb - pa
     })
   }, [servers, category, query, sort, onlineOnly, statuses])
+
+  /*
+   * Rows are added as you scroll rather than all at once.
+   *
+   * Each card carries a live ping result and the compatibility check for every
+   * installed instance, so a full list is a lot of work up front for rows most
+   * people never scroll to. The catalogue is fetched whole either way — this
+   * only governs how much of it is on screen.
+   */
+  const [shown, setShown] = useState(PAGE)
+  // Any change to the filters starts the window again from the top.
+  useEffect(() => setShown(PAGE), [category, query, sort, onlineOnly])
+
+  /*
+   * A much shorter margin than the mod browser uses. There a page is a network
+   * request worth starting early; here the rows are already in memory, and
+   * reaching 600px ahead simply kept the sentinel in view after each batch, so
+   * it cascaded through the whole list at once and deferred nothing.
+   */
+  const sentinel = useInfiniteScroll(() => setShown((current) => current + PAGE), {
+    enabled: shown < visible.length,
+    rootMargin: '80px'
+  })
+  const shownServers = visible.slice(0, shown)
 
   const totals = useMemo(() => {
     let online = 0
@@ -300,11 +337,12 @@ export function DiscoverScreen(): JSX.Element {
         />
       ) : (
         <div className="card-grid">
-          {visible.map((server) => (
+          {shownServers.map((server) => (
             <DirectoryCard
               key={server.id}
               server={server}
               status={statuses.get(server.id)}
+              fit={fit[server.id]}
               copied={copied === server.id}
               onJoin={() => void join(server)}
               onSave={() => void save(server)}
@@ -312,6 +350,19 @@ export function DiscoverScreen(): JSX.Element {
               onPing={() => void api.directory.ping(server.id).catch(() => undefined)}
             />
           ))}
+        </div>
+      )}
+
+      {shown < visible.length && (
+        // Empty, below the grid: crossing the viewport pulls in the next rows.
+        <div ref={sentinel} style={{ height: 1 }} aria-hidden />
+      )}
+
+      {visible.length > PAGE && (
+        <div className="tiny dim center" style={{ padding: '18px 0' }}>
+          {shown < visible.length
+            ? `Showing ${shownServers.length} of ${visible.length}`
+            : `All ${visible.length} servers shown`}
         </div>
       )}
 
@@ -455,6 +506,7 @@ function DirectAddress({
 function DirectoryCard({
   server,
   status,
+  fit,
   copied,
   onJoin,
   onSave,
@@ -463,6 +515,7 @@ function DirectoryCard({
 }: {
   server: DirectoryServer
   status?: ServerStatus
+  fit?: DirectoryCompatibility
   copied: boolean
   onJoin: () => void
   onSave: () => void
@@ -587,8 +640,33 @@ function DirectoryCard({
           )}
         </div>
 
+        {/*
+          * Whether this can be joined, worked out before the click rather than
+          * as a modal afterwards. Silent while unknown — an absent answer is
+          * not a negative one.
+          */}
+        {online && fit && (
+          <div className="row gap-4 tiny" style={{ color: fit.ok ? 'var(--success)' : 'var(--warning)' }}>
+            {fit.ok ? <Check size={12} /> : <AlertTriangle size={12} />}
+            <span className="truncate">
+              {fit.ok ? `joins with ${fit.instanceName}` : `cannot join — ${fit.reason}`}
+            </span>
+          </div>
+        )}
+
         <div className="row gap-8">
-          <button className="btn btn-primary flex-1" onClick={onJoin} disabled={!online} title={online ? 'Launch Minecraft and connect' : 'This server did not answer'}>
+          <button
+            className="btn btn-primary flex-1"
+            onClick={onJoin}
+            disabled={!online}
+            title={
+              !online
+                ? 'This server did not answer'
+                : fit && !fit.ok
+                  ? `No instance matches: ${fit.reason}. Use "Join with" to choose one anyway.`
+                  : 'Launch Minecraft and connect'
+            }
+          >
             <Play size={15} />
             Join
           </button>

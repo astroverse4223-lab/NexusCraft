@@ -36,6 +36,22 @@ export interface ToolCall {
 export interface LlmReply {
   content: string | null
   toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>
+  /**
+   * What the call cost, when the provider says.
+   *
+   * Every OpenAI-compatible endpoint returns a `usage` block, and a companion
+   * left on autonomy makes a call every idle interval whether or not anything
+   * happened — so this is the difference between a bot that quietly spends
+   * money and one whose running cost is on screen. Absent on providers that
+   * omit it, which is why it is optional rather than zero.
+   */
+  usage?: LlmUsage
+}
+
+export interface LlmUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
 }
 
 export class LlmError extends Error {
@@ -298,6 +314,7 @@ export async function chat(
       // empty until it has finished.
       message?: { content?: string | null; reasoning?: string | null; tool_calls?: ToolCall[] }
     }>
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
   }
   try {
     parsed = JSON.parse(text)
@@ -307,6 +324,16 @@ export async function chat(
 
   const message = parsed.choices?.[0]?.message
   if (!message) throw new LlmError('the model returned no choices')
+
+  const usage: LlmUsage | undefined = parsed.usage
+    ? {
+        promptTokens: Number(parsed.usage.prompt_tokens ?? 0),
+        completionTokens: Number(parsed.usage.completion_tokens ?? 0),
+        totalTokens: Number(
+          parsed.usage.total_tokens ?? (parsed.usage.prompt_tokens ?? 0) + (parsed.usage.completion_tokens ?? 0)
+        )
+      }
+    : undefined
 
   const toolCalls = (message.tool_calls ?? []).map((call) => {
     let args: Record<string, unknown> = {}
@@ -335,11 +362,11 @@ export async function chat(
     for (const text of [spoken, reasoning]) {
       if (!text) continue
       const salvaged = salvageToolCall(text)
-      if (salvaged.length > 0) return { content: null, toolCalls: salvaged }
+      if (salvaged.length > 0) return { content: null, toolCalls: salvaged, usage }
     }
   }
 
-  return { content, toolCalls }
+  return { content, toolCalls, usage }
 }
 
 /** Presets so the interface can offer sensible defaults per provider. */

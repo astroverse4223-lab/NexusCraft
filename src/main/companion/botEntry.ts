@@ -13,8 +13,11 @@ import type { CompanionConfig, CompanionOutbound, CompanionInbound } from '@shar
 import { Agent } from './agent'
 import { captureFrame } from './camera'
 import { buildBlueprint, describeResult, groundedOrigin } from './build/builder'
+import { undoBuild, describeUndo } from './build/undo'
+import { randomUUID } from 'node:crypto'
 import { blueprintSize } from './build/blueprint'
 import type { ToolContext } from './tools/types'
+import { watchOwnerDeath, type DeathWatch } from './tools/support/deathWatch'
 import { setCrewSnapshot } from './tools'
 import { findRoutine, RoutineRunner } from './routines'
 
@@ -27,6 +30,9 @@ const log = (message: string): void => send({ type: 'log', message })
 let bot: any = null
 let agent: Agent | null = null
 let runner: RoutineRunner | null = null
+
+/** Where the owner last died; shared by every tool context below. */
+let deathWatch: DeathWatch | null = null
 /** Lets a routine's tools be cut short when the worker is told to stop. */
 let routineStop = new AbortController()
 let tickTimer: NodeJS.Timeout | null = null
@@ -143,7 +149,63 @@ let instinctTimer: NodeJS.Timeout | null = null
  * doing it for every idle companion nobody has open would not be.
  */
 let cameraTimer: NodeJS.Timeout | null = null
+
+/*
+ * AFK sentinel.
+ *
+ * Watches the area around the owner rather than around the bot: the point is a
+ * player who has tabbed away, so what matters is what is creeping up on *them*.
+ * Alerts are rate limited per threat kind — a skeleton that stays at range for
+ * a minute is one warning, not thirty.
+ */
+let sentinelTimer: NodeJS.Timeout | null = null
+const alerted = new Map<string, number>()
+const ALERT_COOLDOWN_MS = 60_000
+/** How close something hostile has to be to the owner to be worth saying. */
+const SENTINEL_RADIUS = 12
 let instinctBusy = false
+
+/**
+ * Looks around the owner for anything worth waking them up for.
+ *
+ * Deliberately conservative about what counts: a zombie wandering past at
+ * fifteen blocks is not news, and an alert that fires constantly is one nobody
+ * reads. Only hostiles inside `SENTINEL_RADIUS` of the owner, once per kind per
+ * minute, plus the owner going missing entirely — which usually means they
+ * died.
+ */
+function runSentinel(activeBot: any, owner: string): void {
+  const player = activeBot.players?.[owner]
+  const at = player?.entity?.position
+  if (!at) return
+
+  const now = Date.now()
+  const threats = new Map<string, number>()
+
+  for (const entity of Object.values(activeBot.entities ?? {}) as any[]) {
+    if (!entity?.position) continue
+    const name = String(entity.name ?? '')
+    if (!HOSTILE_NAMES.has(name)) continue
+    const distance = entity.position.distanceTo(at)
+    if (distance > SENTINEL_RADIUS) continue
+    const nearest = threats.get(name)
+    if (nearest === undefined || distance < nearest) threats.set(name, distance)
+  }
+
+  for (const [name, distance] of threats) {
+    const last = alerted.get(name) ?? 0
+    if (now - last < ALERT_COOLDOWN_MS) continue
+    alerted.set(name, now)
+
+    // Creepers get their own wording; they are the one that ends a session.
+    const urgent = name === 'creeper' || name === 'warden'
+    send({
+      type: 'alert',
+      title: urgent ? `A ${name.replace(/_/g, ' ')} is right next to you` : `A ${name.replace(/_/g, ' ')} is closing in`,
+      body: `${Math.round(distance)} blocks from ${owner}. ${activeBot.username} is watching.`
+    })
+  }
+}
 
 async function runInstincts(activeBot: any): Promise<void> {
   if (instinctBusy || !activeBot?.entity) return
@@ -263,6 +325,7 @@ async function start(config: CompanionConfig): Promise<void> {
           goals,
           Movements,
           owner: config.owner || null,
+          deathWatch: deathWatch ?? undefined,
           log,
           addMemory: () => {},
           setGoal: () => {},
@@ -280,12 +343,53 @@ async function start(config: CompanionConfig): Promise<void> {
 
       void runner.run()
       instinctTimer = setInterval(() => void runInstincts(bot), 2000)
+    if (config.sentinel && config.owner) {
+      sentinelTimer = setInterval(() => runSentinel(bot, config.owner), 3000)
+      log(`watching ${config.owner} for anything hostile`)
+    }
+      if (config.sentinel && config.owner) {
+        sentinelTimer = setInterval(() => runSentinel(bot, config.owner), 3000)
+        log(`watching ${config.owner} for anything hostile`)
+      }
       return
     }
 
+    /*
+     * Watch the owner, not just ourselves.
+     *
+     * The bot already noticed its own death and did nothing about the player's,
+     * which is the one that costs something — five minutes on everything they
+     * were carrying, and they are the only person who cannot be standing there.
+     *
+     * The agent is told urgently rather than sent automatically. Fetching is
+     * sometimes wrong: a death in lava has nothing to recover, and a player who
+     * is already sprinting back does not want the bot underfoot. It is offered.
+     */
+    if (config.owner) {
+      const owner = config.owner
+      deathWatch = watchOwnerDeath(bot, owner)
+
+      deathWatch.onDeath((site) => {
+        const where = `${Math.round(site.x)}, ${Math.round(site.y)}, ${Math.round(site.z)}`
+        send({ type: 'status', status: 'playing', detail: `${owner} died at ${where}` })
+        agent?.queue(
+          `[event] ${owner} just died at ${where}. Their dropped items last five minutes. ` +
+            'Tell them where it happened and offer to fetch their things, then do it if they say yes.',
+          true
+        )
+      })
+
+      bot.once('end', () => {
+        deathWatch?.stop()
+        deathWatch = null
+      })
+    }
+
+
     agent = new Agent(
       bot,
-      { mcData, goals, Movements },
+      // The watcher is created just above, once the bot has spawned.
+      { mcData, goals, Movements, deathWatch: deathWatch ?? undefined },
       {
         llm: config.llm,
         personality: config.personality,
@@ -300,6 +404,8 @@ async function start(config: CompanionConfig): Promise<void> {
         action: (name, args, result) => send({ type: 'action', name, args, result }),
         memoryChanged: (notes) => send({ type: 'memory', notes }),
         goalChanged: (goal) => send({ type: 'goal', goal }),
+        workChanged: (work) => send({ type: 'work', work }),
+        usage: (usage) => send({ type: 'usage', usage }),
         error: (message) => send({ type: 'agentError', message })
       }
     )
@@ -324,7 +430,12 @@ async function start(config: CompanionConfig): Promise<void> {
       message.toLowerCase().includes(bot.username.toLowerCase()) ||
       !config.owner ||
       username === config.owner
-    if (mentioned) agent?.queue(`${username} said in chat: "${message}"`)
+    /*
+     * A person's words go to the front of the queue. They used to go behind
+     * whatever the companion had decided to do on its own, which on a busy bot
+     * meant an instruction sat unanswered for minutes and looked ignored.
+     */
+    if (mentioned) agent?.queue(`${username} said in chat: "${message}"`, true)
   })
 
   let lastHealth = 20
@@ -616,6 +727,8 @@ function shutdown(): void {
   instinctTimer = null
   if (cameraTimer) clearInterval(cameraTimer)
   cameraTimer = null
+  if (sentinelTimer) clearInterval(sentinelTimer)
+  sentinelTimer = null
   agent?.stop()
   agent = null
   runner?.stop()
@@ -659,7 +772,7 @@ process.on('message', (message: CompanionInbound) => {
 
     case 'instruct':
       if (agent) {
-        agent.queue(`Your owner says: "${message.text}"`)
+        agent.queue(`Your owner says: "${message.text}"`, true)
       } else if (runner) {
         /*
          * A routine worker has no model to reason with, so it cannot act on
@@ -747,10 +860,79 @@ process.on('message', (message: CompanionInbound) => {
         origin,
         onProgress: (progress) => log(`${progress.placed}/${progress.total} blocks placed`)
       })
-        .then((result) => log(describeResult(blueprint, result)))
+        .then((result) => {
+          log(describeResult(blueprint, result))
+          // Keep the means to reverse it, even if it stopped part way.
+          if (result.placements.length > 0) {
+            send({
+              type: 'buildRecord',
+              record: {
+                id: randomUUID(),
+                companionId: '',
+                label: message.label,
+                at: Date.now(),
+                origin,
+                placements: result.placements
+              }
+            })
+          }
+        })
         .catch((err) => log(`the build stopped: ${(err as Error).message}`))
       break
     }
+
+    /*
+     * Taking a build back out. Runs on the routine abort signal so the Stop
+     * button cuts it short like anything else.
+     */
+    case 'undoBuild': {
+      if (!bot) {
+        log('not connected yet')
+        break
+      }
+      const record = message.record
+      log(`undoing ${record.label} (${record.placements.length} blocks)`)
+
+      void undoBuild(bot, record, {
+        signal: routineStop.signal,
+        onProgress: (done, total) => log(`${done}/${total} blocks removed`),
+        dig: async (x: number, y: number, z: number) => {
+          try {
+            const { Vec3 } = require('vec3')
+            const block = bot.blockAt(new Vec3(x, y, z))
+            if (!block) return 'nothing there'
+            if (bot.entity.position.distanceTo(block.position) > 4 && pathGoals) {
+              bot.pathfinder?.setGoal(new pathGoals.GoalNear(x, y, z, 3))
+              await new Promise((resolve) => setTimeout(resolve, 1200))
+            }
+            await bot.dig(block)
+            return 'removed'
+          } catch (err) {
+            return (err as Error).message
+          }
+        }
+      })
+        .then((result) => log(describeUndo(record, result)))
+        .catch((err) => log(`the undo stopped: ${(err as Error).message}`))
+      break
+    }
+
+    case 'interrupt':
+      if (agent) {
+        agent.interrupt()
+        log('stopped what it was doing')
+      } else if (runner) {
+        routineStop.abort()
+        routineStop = new AbortController()
+        log('stopped the routine step it was on')
+      }
+      // Whatever it was walking towards, it is not any more.
+      try {
+        bot?.pathfinder?.setGoal(null)
+      } catch {
+        /* not connected */
+      }
+      break
 
     case 'stop':
       shutdown()

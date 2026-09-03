@@ -7,12 +7,14 @@ import {
   FolderOpen,
   Info,
   KeyRound,
+  LifeBuoy,
   RefreshCw,
   ShieldQuestion
 } from 'lucide-react'
 import type { JavaInstallation, LauncherErrorPayload } from '@shared/types'
 import { api, toPayload, type MemoryInfo } from '../api'
-import { useStore } from '../store/useStore'
+import { ModAutoUpdate } from '../components/ModAutoUpdate'
+import { useStore, selectedInstance } from '../store/useStore'
 import { ErrorView, SettingRow, Spinner, Toggle } from '../components/ui'
 import { formatRam } from '../format'
 
@@ -24,6 +26,8 @@ export function SettingsScreen(): JSX.Element {
   const settings = useStore((s) => s.settings)
   const patch = useStore((s) => s.patchSettings)
   const info = useStore((s) => s.info)
+  // Included in a diagnostics bundle so the mod list has context.
+  const selected = useStore(selectedInstance)
   const pushToast = useStore((s) => s.pushToast)
 
   const [tab, setTab] = useState<Tab>('general')
@@ -34,6 +38,7 @@ export function SettingsScreen(): JSX.Element {
   const [curseKey, setCurseKey] = useState('')
   const [directoryUrl, setDirectoryUrl] = useState('')
   const [checkingKey, setCheckingKey] = useState(false)
+  const [savingDiagnostics, setSavingDiagnostics] = useState(false)
   const [detecting, setDetecting] = useState(false)
 
   useEffect(() => {
@@ -520,6 +525,9 @@ export function SettingsScreen(): JSX.Element {
       )}
 
       {tab === 'content' && (
+        <div className="col gap-16">
+          <ModAutoUpdate />
+
         <div className="panel panel-pad">
           <div className="row gap-12 items-start mb-16">
             <Boxes size={18} style={{ color: 'var(--accent)', marginTop: 2 }} />
@@ -613,6 +621,7 @@ export function SettingsScreen(): JSX.Element {
             </p>
           </div>
         </div>
+        </div>
       )}
 
       {tab === 'about' && info && (
@@ -634,6 +643,31 @@ export function SettingsScreen(): JSX.Element {
           </div>
 
           <div className="row gap-8 mt-16">
+            <button
+              className="btn btn-sm"
+              disabled={savingDiagnostics}
+              onClick={() => {
+                void (async () => {
+                  const target = await api.app.pickSavePath({
+                    title: 'Save diagnostics',
+                    defaultName: `nexuscraft-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`,
+                    extensions: ['zip']
+                  })
+                  if (!target) return
+                  setSavingDiagnostics(true)
+                  try {
+                    await api.app.diagnostics(target, { instanceId: selected?.id })
+                  } catch (err) {
+                    setError(toPayload(err))
+                  } finally {
+                    setSavingDiagnostics(false)
+                  }
+                })()
+              }}
+              title="Collect the log, your instances, mods and the last crash into one zip you can read and send"
+            >
+              {savingDiagnostics ? <Spinner /> : <LifeBuoy size={14} />} Save diagnostics
+            </button>
             <button className="btn btn-sm" onClick={() => void api.app.openPath(info.logsDir)}>
               <FolderOpen size={14} /> Open logs folder
             </button>

@@ -2,7 +2,7 @@ import { gzipSync } from 'node:zlib'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Blueprint } from './blueprint'
-import { blueprintBlocks, blueprintSize } from './blueprint'
+import { baseBlockName, blockState, blueprintBlocks, blueprintSize } from './blueprint'
 
 /**
  * Writing blueprints out as files the game and its build mods can read.
@@ -28,12 +28,37 @@ import { blueprintBlocks, blueprintSize } from './blueprint'
 /**
  * The world version stamped into exports.
  *
- * Both formats carry one so the game can migrate block names across versions.
- * 1.21.1's value is used rather than the running server's: a blueprint is not
- * tied to a world, and a stamp that is a little old makes the game upgrade
- * names, where one from the future makes it refuse the file outright.
+ * Both formats carry one so the game knows which vintage of block names it is
+ * reading and can migrate them forward. The fallback below is 1.21.1's value,
+ * used only when the caller cannot say what it is exporting for.
+ *
+ * Do not lean on the fallback. It was hardcoded here for every export at first,
+ * which stamped 1.21.1 onto files headed for instances running 1.21.11 (4671)
+ * and 26.2 (4903) — hundreds of revisions of block-name migration for the game
+ * to guess its way through, on files whose whole job is to place exact states.
+ * `dataVersionFor` resolves the real number from the instance's own version.
  */
-const DATA_VERSION = 3955
+const FALLBACK_DATA_VERSION = 3955
+
+/**
+ * The DataVersion for a Minecraft version string, from minecraft-data.
+ *
+ * Returns the fallback for anything it does not recognise rather than throwing:
+ * a slightly stale stamp still loads, where a failed export gives you nothing.
+ */
+export function dataVersionFor(minecraftVersion: string | undefined): number {
+  if (!minecraftVersion) return FALLBACK_DATA_VERSION
+  try {
+    const mcd = require('minecraft-data')
+    const found = mcd.versions.pc.find(
+      (entry: { minecraftVersion: string; dataVersion?: number }) =>
+        entry.minecraftVersion === minecraftVersion
+    )
+    return found?.dataVersion ?? FALLBACK_DATA_VERSION
+  } catch {
+    return FALLBACK_DATA_VERSION
+  }
+}
 
 /** Sponge stores palette indices as a LEB128 varint per block. */
 function toVarInts(values: number[]): number[] {
@@ -67,7 +92,8 @@ function indexBlueprint(blueprint: Blueprint): {
   const grid = new Int32Array(width * height * depth)
 
   for (const block of blueprintBlocks(blueprint)) {
-    const id = `minecraft:${block.block.replace(/^minecraft:/, '')}`
+    // The full id, state included — this is what makes a redstone export work.
+    const id = `minecraft:${block.id}`
     let index = indexFor.get(id)
     if (index === undefined) {
       index = names.length
@@ -87,7 +113,7 @@ function indexBlueprint(blueprint: Blueprint): {
 }
 
 /** A Sponge v2 `.schem`, gzipped, as WorldEdit and Litematica expect. */
-export function toSpongeSchematic(blueprint: Blueprint): Buffer {
+export function toSpongeSchematic(blueprint: Blueprint, dataVersion = FALLBACK_DATA_VERSION): Buffer {
   const nbt = require('prismarine-nbt')
   const { width, height, depth, names, at } = indexBlueprint(blueprint)
 
@@ -105,7 +131,7 @@ export function toSpongeSchematic(blueprint: Blueprint): Buffer {
 
   const tag = nbt.comp({
     Version: nbt.int(2),
-    DataVersion: nbt.int(DATA_VERSION),
+    DataVersion: nbt.int(dataVersion),
     Width: nbt.short(width),
     Height: nbt.short(height),
     Length: nbt.short(depth),
@@ -125,7 +151,7 @@ export function toSpongeSchematic(blueprint: Blueprint): Buffer {
  * absent position as "do not touch", which is what a blueprint's dots mean, and
  * listing them would make a structure block wipe the ground it is placed on.
  */
-export function toVanillaStructure(blueprint: Blueprint): Buffer {
+export function toVanillaStructure(blueprint: Blueprint, dataVersion = FALLBACK_DATA_VERSION): Buffer {
   const nbt = require('prismarine-nbt')
   const { width, height, depth, names, at } = indexBlueprint(blueprint)
 
@@ -134,8 +160,21 @@ export function toVanillaStructure(blueprint: Blueprint): Buffer {
    * `nbt.comp` — wrapping each entry produces a tag the writer silently drops,
    * which is how the first version of this wrote files with no palette in them.
    */
-  // The vanilla palette has no air entry, so indices shift down by one.
-  const palette = names.slice(1).map((name) => ({ Name: nbt.string(name) }))
+  /*
+   * The vanilla format keeps the state in a separate `Properties` compound
+   * rather than in the name. Writing `minecraft:repeater[facing=north]` as a
+   * Name produces a structure the game refuses to load.
+   */
+  const palette = names.slice(1).map((name) => {
+    const properties = blockState(name)
+    const entry: Record<string, unknown> = { Name: nbt.string(`minecraft:${baseBlockName(name)}`) }
+    if (Object.keys(properties).length > 0) {
+      entry.Properties = nbt.comp(
+        Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, nbt.string(value)])) as never
+      )
+    }
+    return entry
+  })
 
   const blocks: unknown[] = []
   for (let y = 0; y < height; y += 1) {
@@ -152,7 +191,7 @@ export function toVanillaStructure(blueprint: Blueprint): Buffer {
   }
 
   const tag = nbt.comp({
-    DataVersion: nbt.int(DATA_VERSION),
+    DataVersion: nbt.int(dataVersion),
     size: nbt.list(nbt.int([width, height, depth])),
     palette: nbt.list(nbt.comp(palette as never)),
     blocks: nbt.list(nbt.comp(blocks as never)),
@@ -189,9 +228,12 @@ export interface ExportResult {
 export async function exportBlueprint(
   blueprint: Blueprint,
   targetPath: string,
-  format: 'schem' | 'nbt'
+  format: 'schem' | 'nbt',
+  minecraftVersion?: string
 ): Promise<ExportResult> {
-  const data = format === 'schem' ? toSpongeSchematic(blueprint) : toVanillaStructure(blueprint)
+  const version = dataVersionFor(minecraftVersion)
+  const data =
+    format === 'schem' ? toSpongeSchematic(blueprint, version) : toVanillaStructure(blueprint, version)
   await mkdir(dirname(targetPath), { recursive: true })
   await writeFile(targetPath, data)
   return { path: targetPath, format, bytes: data.length }

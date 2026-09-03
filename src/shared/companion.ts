@@ -25,6 +25,8 @@ export interface CompanionConfig {
   personality: string
   autonomy: boolean
   idleIntervalSec: number
+  /** Watch the owner and raise a desktop alert when something closes in. */
+  sentinel?: boolean
   /**
    * How many tools to offer. Small local models handle a short list far better
    * than the full one, which is thirty tools of schema on every request.
@@ -66,6 +68,10 @@ export type CompanionInbound =
   | { type: 'camera'; on: boolean }
   /** Build a structure chosen in the launcher: a library entry or an import. */
   | { type: 'build'; blueprint: unknown; label: string }
+  /** Drop what it is doing and clear anything it set for itself. */
+  | { type: 'interrupt' }
+  /** Take a recorded build back out of the world. */
+  | { type: 'undoBuild'; record: BuildRecord }
   | { type: 'stop' }
 
 /** Bot -> launcher */
@@ -84,6 +90,14 @@ export type CompanionOutbound =
   | { type: 'crewNote'; text: string }
   /** One rendered view of what is around the bot. */
   | { type: 'camera'; frame: CameraFrame }
+  /** What it is working on, and how much is waiting behind it. */
+  | { type: 'work'; work: CompanionWork }
+  /** A finished build, with everything needed to reverse it. */
+  | { type: 'buildRecord'; record: BuildRecord }
+  /** Tokens spent, reported after each model call. */
+  | { type: 'usage'; usage: { promptTokens: number; completionTokens: number; totalTokens: number } }
+  /** Something the player should know about right now, even tabbed away. */
+  | { type: 'alert'; title: string; body: string }
 
 /** A structure the launcher can offer to build. */
 export interface BlueprintSummary {
@@ -101,6 +115,96 @@ export interface BlueprintSummary {
   imported?: boolean
   /** Anything lost on import, e.g. dropped block states. */
   notes?: string[]
+}
+
+/**
+ * What a companion is doing right now.
+ *
+ * Without this there was no way to tell a busy companion from a stuck one — an
+ * instruction that was merely queued behind a long task looked identical to one
+ * that had been ignored.
+ */
+export interface CompanionWork {
+  /** The instruction being carried out, or null when idle. */
+  current: string | null
+  /** How many instructions are waiting behind it. */
+  queued: number
+  /** How long the current one has been running. */
+  runningForMs: number
+}
+
+/* ------------------------------------------------------------------ spend */
+
+/**
+ * What a companion has cost, this session and in total.
+ *
+ * A companion on autonomy makes a model call every idle interval whether or not
+ * anything is happening, so the bill accrues while nobody is watching. Tokens
+ * are what every provider reports; the money figure is only as good as the rate
+ * the user enters, and is left out entirely when they have not entered one.
+ */
+export interface CompanionUsage {
+  calls: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  /** Tokens since this bot process started, for "what is it costing me now". */
+  sessionTokens: number
+  sessionCalls: number
+}
+
+/* ------------------------------------------------------------------ builds */
+
+/** One block the companion placed, and what the position held before. */
+export interface BuildPlacement {
+  x: number
+  y: number
+  z: number
+  /** What went down. */
+  placed: string
+  /** What was there first — usually air, which is why undo is mostly clearing. */
+  was: string
+}
+
+/**
+ * A build the companion carried out, kept so it can be taken back out.
+ *
+ * Without this a misplaced structure was permanent, which is the thing that
+ * makes people reluctant to let a bot build at all.
+ */
+export interface BuildRecord {
+  id: string
+  companionId: string
+  /** The structure's name, for the interface. */
+  label: string
+  at: number
+  origin: { x: number; y: number; z: number }
+  placements: BuildPlacement[]
+  /** Set once it has been undone, so it is not offered twice. */
+  undoneAt?: number
+}
+
+export interface BuildUndoResult {
+  buildId: string
+  removed: number
+  /** Original blocks put back where something real was displaced. */
+  restored: number
+  /** Positions something else had already changed; left alone. */
+  skipped: number
+  failed: number
+  total: number
+  stoppedBecause: string | null
+}
+
+/** A build in the list, without the placement data behind it. */
+export interface BuildSummary {
+  id: string
+  companionId: string
+  label: string
+  at: number
+  blocks: number
+  origin: { x: number; y: number; z: number }
+  undoneAt?: number
 }
 
 /* ----------------------------------------------------------------- bot cam */
@@ -219,6 +323,8 @@ export interface CompanionState {
   events: CompanionEvent[]
   /** Minecraft version the bot actually connected with. */
   connectedVersion: string | null
+  /** What it is carrying out right now, and what is waiting behind it. */
+  work?: CompanionWork
   /**
    * Whether a bot process actually exists. Distinct from `status`: a bot that
    * failed to connect reports `error` while its process is still alive, and the
@@ -246,6 +352,19 @@ export interface CompanionSettings {
   personality: string
   autonomy: boolean
   idleIntervalSec: number
+  /**
+   * What a million tokens costs on this endpoint, in whatever currency the user
+   * thinks in. Zero — the default — means the meter shows tokens only, which is
+   * the honest thing to do rather than inventing a rate for a provider whose
+   * pricing the launcher cannot know.
+   */
+  pricePerMillionTokens?: number
+  /**
+   * Watch the owner and raise a desktop notification when something hostile
+   * closes in. For playing while tabbed out — the companion is the only thing
+   * still looking at the screen.
+   */
+  sentinel?: boolean
   /**
    * How many tools to offer. A small local model copes far better with a short
    * list than with the full thirty, which is ~2,300 tokens of schema per call.

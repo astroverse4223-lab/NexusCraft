@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdir, writeFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'

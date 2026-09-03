@@ -32,7 +32,35 @@ export interface BlueprintBlock {
   dx: number
   dy: number
   dz: number
+  /** Plain block name, for placing in game. */
   block: string
+  /** Name plus any block state, for writing to a schematic. */
+  id: string
+}
+
+/**
+ * Splits `oak_stairs[facing=east,half=top]` into its name and its properties.
+ *
+ * Palette entries may carry a block state, and for redstone they must: a
+ * repeater without a facing is a repeater pointing the wrong way, and a circuit
+ * of correctly placed blocks in the wrong orientations does nothing at all.
+ * Everything that only needs to know *which* block strips the state; the
+ * schematic writers keep it.
+ */
+export function baseBlockName(id: string): string {
+  return id.replace(/^minecraft:/, '').replace(/\[.*$/, '').trim()
+}
+
+export function blockState(id: string): Record<string, string> {
+  const match = /\[([^\]]*)\]/.exec(id)
+  if (!match) return {}
+
+  const state: Record<string, string> = {}
+  for (const pair of match[1].split(',')) {
+    const [key, value] = pair.split('=')
+    if (key && value) state[key.trim()] = value.trim()
+  }
+  return state
 }
 
 /** The character that means "do not place anything here". */
@@ -95,7 +123,7 @@ export function validateBlueprint(
       problems.push({ message: `the character "${character}" is used but not in the palette` })
       continue
     }
-    if (!isKnownBlock(block.replace(/^minecraft:/, ''))) {
+    if (!isKnownBlock(baseBlockName(block))) {
       problems.push({ message: `"${block}" is not a Minecraft block` })
     }
   }
@@ -139,7 +167,11 @@ export function blueprintBlocks(blueprint: Blueprint): BlueprintBlock[] {
         if (character === SKIP) continue
         const block = blueprint.palette[character]
         if (!block) continue
-        inLayer.push({ dx: x, dy: y, dz: z, block: block.replace(/^minecraft:/, '') })
+        /*
+         * The state is kept on the entry so the schematic writers can use it,
+         * while `block` stays a plain name because the placement tool takes one.
+         */
+        inLayer.push({ dx: x, dy: y, dz: z, block: baseBlockName(block), id: block.replace(/^minecraft:/, '') })
       }
     }
 

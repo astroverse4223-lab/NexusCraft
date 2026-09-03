@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "hollow",
+  "version": "${version}",
+  "name": "Hollow",
+  "description": "A companion that helps you, until it doesn't. Powered by any OpenAI-compatible model — a local one through Ollama, or a hosted one.",
+  "authors": [
+    "NexusCraft"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.nexuscraft.hollow.Hollow"
+    ],
+    "client": [
+      "dev.nexuscraft.hollow.client.HollowClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

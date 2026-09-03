@@ -1,4 +1,5 @@
 import type { Blueprint } from './blueprint'
+import { REDSTONE_LIBRARY } from './redstone'
 
 /**
  * Structures that ship with the launcher, drawn by hand.
@@ -20,7 +21,7 @@ export interface LibraryEntry {
   blueprint: Blueprint
 }
 
-export const BLUEPRINT_LIBRARY: LibraryEntry[] = [
+const STRUCTURES: LibraryEntry[] = [
   {
     id: 'cottage',
     blurb: 'A 7x7 oak cottage with a doorway, four windows and a pitched roof. Good first build.',
@@ -196,6 +197,14 @@ export const BLUEPRINT_LIBRARY: LibraryEntry[] = [
     }
   }
 ]
+
+/*
+ * Buildings and circuits in one list, because the interface offers them the
+ * same way. They are authored separately: a circuit is only correct if every
+ * component's block state is right, which a decorative build never has to care
+ * about.
+ */
+export const BLUEPRINT_LIBRARY: LibraryEntry[] = [...STRUCTURES, ...REDSTONE_LIBRARY]
 
 export function findLibraryBlueprint(id: string): LibraryEntry | undefined {
   return BLUEPRINT_LIBRARY.find((entry) => entry.id === id.toLowerCase().trim())

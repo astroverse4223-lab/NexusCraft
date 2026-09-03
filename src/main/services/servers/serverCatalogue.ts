@@ -236,5 +236,327 @@ export const BUNDLED_DIRECTORY: DirectoryServer[] = [
     description: 'Pixelmon server with recreated Kanto and Johto regions. Needs the Pixelmon mod.',
     version: '1.20.2',
     tags: ['pixelmon', 'modded']
+  },
+
+  /*
+   * Added in a second pass, the same way as the first: every one of these
+   * answered a real ping before it was written down, and the descriptions come
+   * from what the server itself said in its MOTD rather than from a server-list
+   * site. Twenty-three candidates that did not answer were dropped, and seven
+   * more were the same networks already listed above on a different domain.
+   *
+   * A warning for whoever probes the next batch: ping them in small groups.
+   * Firing sixty-four at once made sixty-three of them time out and look dead,
+   * which very nearly deleted most of this list before it was written.
+   */
+  {
+    id: 'gommehd',
+    name: 'GommeHD.net',
+    address: 'gommehd.net',
+    port: 25565,
+    category: 'minigames',
+    description: 'Long-running German network. Bed wars, sky wars and cores, with English players welcome.',
+    version: '1.21',
+    tags: ['bedwars', 'skywars', 'german']
+  },
+  {
+    id: 'blocksmc',
+    name: 'BlocksMC',
+    address: 'play.blocksmc.com',
+    port: 25565,
+    category: 'minigames',
+    description: 'Practice PvP, bed wars and a rotating set of custom games.',
+    version: '1.21',
+    tags: ['pvp', 'bedwars', 'practice']
+  },
+  {
+    id: 'mineland',
+    name: 'Mineland Network',
+    address: 'play.mineland.net',
+    port: 25565,
+    category: 'minigames',
+    description: 'Minigames, creative plots and its own mini-game builder. Takes 1.8 through current.',
+    version: '1.21',
+    tags: ['minigames', 'creative']
+  },
+  {
+    id: 'hoplite',
+    name: 'Hoplite Network',
+    address: 'mc.hoplite.gg',
+    port: 25565,
+    category: 'minigames',
+    description: 'Competitive minigames with limited-time modes. Runs a current version rather than 1.8.',
+    version: '1.21.11',
+    tags: ['pvp', 'minigames']
+  },
+  {
+    id: 'minefun',
+    name: 'MineFun Network',
+    address: 'play.minefun.net',
+    port: 25565,
+    category: 'minigames',
+    description: 'Mixed network of survival, skyblock and PvP modes.',
+    version: '1.21',
+    tags: ['survival', 'pvp']
+  },
+  {
+    id: 'mineverse',
+    name: 'Mineverse',
+    address: 'play.mineverse.com',
+    port: 25565,
+    category: 'minigames',
+    description: 'Veteran minigame network — kit PvP, prison and factions.',
+    version: '1.21',
+    tags: ['kitpvp', 'prison', 'factions']
+  },
+  {
+    id: 'vortex-network',
+    name: 'Vortex Network',
+    address: 'play.vortexnetwork.net',
+    port: 25565,
+    category: 'skyblock',
+    description: 'Skyblock, prison and survival modes across one network.',
+    version: '1.21',
+    tags: ['skyblock', 'prison']
+  },
+  {
+    id: 'advancius',
+    name: 'Advancius Network',
+    address: 'mc.advancius.net',
+    port: 25565,
+    category: 'survival',
+    description: 'Towny earth map and prison on one network, accepting 1.8 through current.',
+    version: '1.21',
+    tags: ['towny', 'earth', 'prison']
+  },
+  {
+    id: 'craftyourtown',
+    name: 'CraftYourTown',
+    address: 'mc.craftyourtown.com',
+    port: 25565,
+    category: 'survival',
+    description: 'Towny survival with Slimefun and minigames alongside it.',
+    version: '1.21',
+    tags: ['towny', 'slimefun', 'survival']
+  },
+  {
+    id: 'extremecraft',
+    name: 'ExtremeCraft',
+    address: 'play.extremecraft.net',
+    port: 25565,
+    category: 'survival',
+    description: 'Survival with a custom economy, plus skyblock, factions and prison worlds.',
+    version: '1.21',
+    tags: ['survival', 'economy', 'factions']
+  },
+  {
+    id: 'snapcraft',
+    name: 'SnapCraft',
+    address: 'play.snapcraft.net',
+    port: 25565,
+    category: 'survival',
+    description: 'Survival network running alongside skyblock and prison modes.',
+    version: '1.21',
+    tags: ['survival', 'skyblock']
+  },
+  {
+    id: 'mythicmc',
+    name: 'MythicMC',
+    address: 'play.mythicmc.org',
+    port: 25565,
+    category: 'survival',
+    description: 'Factions, survival, creative and PvP together on one address.',
+    version: '1.21',
+    tags: ['factions', 'survival', 'creative']
+  },
+  {
+    id: 'foxcraft',
+    name: 'Foxcraft',
+    address: 'play.foxcraft.net',
+    port: 25565,
+    category: 'survival',
+    description: 'Survival, skyblock and prison, on a current version.',
+    version: '1.21',
+    tags: ['survival', 'skyblock', 'prison']
+  },
+  {
+    id: 'piratecraft',
+    name: 'PirateCraft',
+    address: 'mc.piratemc.com',
+    port: 25565,
+    category: 'adventure',
+    description: 'Pirate-themed survival with buildable, sailable ships, cannons and sea battles.',
+    version: '1.21',
+    tags: ['pirates', 'ships', 'survival']
+  },
+  {
+    id: 'grandtheftmc',
+    name: 'Grand Theft Minecart',
+    address: 'play.grandtheftmc.net',
+    port: 25565,
+    category: 'adventure',
+    description: 'Open-world roleplay with cars, guns, jobs and heists.',
+    version: '1.21',
+    tags: ['roleplay', 'guns', 'cars']
+  },
+  {
+    id: 'buildersrefuge',
+    name: 'Builders Refuge',
+    address: 'play.buildersrefuge.com',
+    port: 25565,
+    category: 'creative',
+    description: 'Creative plots aimed at serious builders, with a large plugin toolkit.',
+    version: '1.21.11',
+    tags: ['creative', 'plots', 'building']
+  },
+  {
+    id: 'mcmiddleearth',
+    name: 'Minecraft Middle Earth',
+    address: 'mcmiddleearth.com',
+    port: 25565,
+    category: 'creative',
+    description: 'A years-long collaborative build of Tolkien’s Middle-earth. Tours run for visitors.',
+    version: '1.21',
+    tags: ['building', 'tolkien', 'tours']
+  },
+  {
+    id: 'skyblock-net',
+    name: 'Skyblock.net',
+    address: 'play.skyblock.net',
+    port: 25565,
+    category: 'skyblock',
+    description: 'One of the older dedicated skyblock servers, now with Bedrock support.',
+    version: '1.21',
+    tags: ['skyblock', 'bedrock']
+  },
+  {
+    id: 'fadecloud',
+    name: 'FadeCloud',
+    address: 'play.fadecloud.com',
+    port: 25565,
+    category: 'skyblock',
+    description: 'Skyblock, prison and gens, taking 1.13 through current.',
+    version: '1.21',
+    tags: ['skyblock', 'prison', 'gens']
+  },
+  {
+    id: 'lemoncloud',
+    name: 'LemonCloud',
+    address: 'play.lemoncloud.net',
+    port: 25565,
+    category: 'skyblock',
+    description: 'Skyblock and survival with a heavy custom-item economy.',
+    version: '1.21',
+    tags: ['skyblock', 'survival']
+  },
+  {
+    id: 'aslanmc',
+    name: 'AslanMC',
+    address: 'play.mineheroes.net',
+    port: 25565,
+    category: 'skyblock',
+    description: 'Formerly MineHeroes — skyblock and survival. The old address still reaches it.',
+    version: '1.21',
+    tags: ['skyblock', 'survival']
+  },
+  {
+    id: 'pvpwars',
+    name: 'PvPWars',
+    address: 'play.pvpwars.net',
+    port: 25565,
+    category: 'skyblock',
+    description: 'Skyblock and factions. Was showing a maintenance message when this was added.',
+    version: '1.19.2',
+    tags: ['skyblock', 'factions']
+  },
+  {
+    id: 'minecadia',
+    name: 'Minecadia',
+    address: 'play.minecadia.com',
+    port: 25565,
+    category: 'prison',
+    description: 'Factions and prison with custom enchants, from 1.8 upward.',
+    version: '1.21',
+    tags: ['factions', 'prison', 'enchants']
+  },
+  {
+    id: 'saicopvp',
+    name: 'SaiCoPvP',
+    address: 'play.saicopvp.com',
+    port: 25565,
+    category: 'prison',
+    description: 'Prison and factions realms with a long-running competitive scene.',
+    version: '1.21',
+    tags: ['prison', 'factions', 'pvp']
+  },
+  {
+    id: 'wildnetwork',
+    name: 'WildNetwork',
+    address: 'play.wildprison.net',
+    port: 25565,
+    category: 'prison',
+    description: 'Prison and survival on one network.',
+    version: '1.21',
+    tags: ['prison', 'survival']
+  },
+  {
+    id: 'akumamc',
+    name: 'AkumaMC',
+    address: 'play.akumamc.net',
+    port: 25565,
+    category: 'prison',
+    description: 'Prison, skyblock and factions, accepting 1.8 through current.',
+    version: '1.21',
+    tags: ['prison', 'skyblock', 'factions']
+  },
+  {
+    id: 'cosmicpvp',
+    name: 'Cosmic Prisons',
+    address: 'play.cosmicpvp.me',
+    port: 25565,
+    category: 'prison',
+    description: 'Prisons and factions with heavily customised progression.',
+    version: '1.21',
+    tags: ['prison', 'factions']
+  },
+  {
+    id: 'bosscraft',
+    name: 'BossCraft',
+    address: 'play.mcprison.net',
+    port: 25565,
+    category: 'prison',
+    description: 'Prison server running 1.17 through current.',
+    version: '1.21',
+    tags: ['prison']
+  },
+  {
+    id: '6b6t',
+    name: '6b6t',
+    address: '6b6t.org',
+    port: 25565,
+    category: 'anarchy',
+    description: 'Anarchy since 2022, but with /tpa and /home — a gentler take than 2b2t.',
+    version: '1.21',
+    tags: ['anarchy', 'no-rules']
+  },
+  {
+    id: 'pixelmon-realms',
+    name: 'Pixelmon Realms',
+    address: 'play.pixelmonrealms.com',
+    port: 25565,
+    category: 'modded',
+    description: 'Pixelmon with warzones and custom content. Needs the Pixelmon mod.',
+    version: '1.16.5',
+    tags: ['pixelmon', 'modded']
+  },
+  {
+    id: 'pokesaga',
+    name: 'PokéSaga',
+    address: 'play.pokesaga.org',
+    port: 25565,
+    category: 'modded',
+    description: 'Pixelmon with custom enchants and fishing. Needs the Pixelmon mod.',
+    version: '1.16.5',
+    tags: ['pixelmon', 'modded']
   }
 ]

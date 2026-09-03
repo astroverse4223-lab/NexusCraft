@@ -36,7 +36,6 @@ import type {
   HostedServer,
   HostedServerConsoleLine,
   HostedServerState,
-  HostedServerStatus,
   SaveHostedServerInput
 } from '@shared/types'
 import { db, Collections } from '../../core/database'

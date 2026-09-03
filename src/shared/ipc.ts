@@ -61,6 +61,11 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   }),
   'app:window': z.object({ action: z.enum(['minimize', 'maximize', 'close']) }),
   'app:systemMemory': z.void(),
+  'app:diagnostics': z.object({
+    outputPath: path,
+    instanceId: id.optional(),
+    note: z.string().max(500).optional()
+  }),
   /** Renderer-side crash reporting, so a UI failure reaches the log file. */
   'app:reportError': z.object({
     source: z.string().max(64),
@@ -112,6 +117,8 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   }),
   'instances:inspectArchive': z.object({ filePath: path }),
   'instances:import': z.object({ filePath: path, name: modpackName }),
+  'instances:findForeign': z.void(),
+  'instances:importForeign': z.object({ id: z.string().min(1).max(256), name: modpackName }),
   'instances:snapshots': z.object({ id }),
   'instances:snapshot': z.object({ id, name: z.string().min(1).max(60), note: z.string().max(300).optional() }),
   'instances:restoreSnapshot': z.object({ id, snapshotId: id }),
@@ -245,6 +252,17 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'mods:checkUpdates': z.object({ instanceId: id }),
   'mods:applyUpdate': z.object({ instanceId: id, update: z.record(z.string(), z.unknown()) }),
   'mods:changelog': z.object({ instanceId: id, update: z.record(z.string(), z.unknown()) }),
+  'mods:autoUpdateSettings': z.object({}),
+  'mods:setAutoUpdateSettings': z.object({
+    patch: z.object({
+      mode: z.enum(['off', 'notify', 'install']).optional(),
+      everyHours: z.number().int().min(1).max(168).optional(),
+      reviewRisky: z.boolean().optional()
+    })
+  }),
+  'mods:checkAllNow': z.object({}),
+  'mods:hollowStatus': z.object({ instanceId: id }),
+  'mods:installHollow': z.object({ instanceId: id }),
   'mods:rollbacks': z.object({ instanceId: id }),
   'mods:rollback': z.object({ instanceId: id, fileName: safeSegment }),
   'curseforge:verify': z.object({ key: z.string().optional() }).optional(),
@@ -264,6 +282,8 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'datapacks:installed': z.object({ instanceId: id, worldFolder: safeSegment }),
   'datapacks:remove': z.object({ instanceId: id, worldFolder: safeSegment, fileName: safeSegment }),
   /* ---------------------------------------------------------- companion */
+  'companion:toolSizes': z.object({}),
+  'companion:setMicrophone': z.object({ wanted: z.boolean() }),
   'companion:routines': z.undefined(),
   'companion:list': z.void(),
   'companion:create': z.object({ name: z.string().max(16).optional() }),
@@ -277,6 +297,14 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'companion:states': z.void(),
   'companion:clearMemory': z.object({ id: z.string().min(1) }),
   'companion:camera': z.object({ id: z.string().min(1), on: z.boolean() }),
+  'companion:interrupt': z.object({ id: z.string().min(1) }),
+  'companion:usage': z.void(),
+  'companion:resetUsage': z.object({ id: z.string().min(1).optional() }).optional(),
+  'companion:builds': z.void(),
+  'companion:undoBuild': z.object({
+    buildId: z.string().min(1).max(64),
+    companionId: z.string().min(1).optional()
+  }),
   'companion:blueprints': z.void(),
   'companion:importSchematic': z.object({ filePath: path }),
   'companion:build': z.object({ id: z.string().min(1), blueprintId: z.string().min(1).max(128) }),
@@ -359,6 +387,16 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'host:backups': z.object({ id: z.string().min(1) }),
   'host:restoreBackup': z.object({ id: z.string().min(1), fileName: safeSegment }),
   'host:deleteBackup': z.object({ id: z.string().min(1), fileName: safeSegment }),
+  'host:restartSettings': z.object({ id: z.string().min(1) }),
+  'host:setRestartSettings': z.object({
+    id: z.string().min(1),
+    patch: z.object({
+      enabled: z.boolean().optional(),
+      intervalHours: z.number().int().min(1).max(168).optional(),
+      warnMinutes: z.number().int().min(0).max(30).optional(),
+      skipIfPlayers: z.boolean().optional()
+    })
+  }),
   'host:backupSettings': z.object({ id: z.string().min(1) }),
   'host:inviteLink': z.object({ id: z.string().min(1) }),
   'host:tunnelSettings': z.object({ id: z.string().min(1) }),
@@ -425,6 +463,7 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'worlds:list': z.object({ instanceId: id }),
   'worlds:openFolder': z.object({ instanceId: id, folderName: safeSegment.optional() }),
   'worlds:backup': z.object({ instanceId: id, folderName: safeSegment }),
+  'worlds:map': z.object({ instanceId: id, folderName: safeSegment }),
   'worlds:listBackups': z.object({ instanceId: id }),
   'worlds:deleteBackup': z.object({ instanceId: id, fileName: safeSegment }),
   'worlds:restore': z.object({ instanceId: id, fileName: safeSegment }),
@@ -442,6 +481,7 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     address: z.string().min(1).max(255),
     port: z.number().int().min(1).max(65535)
   }),
+  'directory:compatibility': z.void(),
   'directory:joinTargets': z.object({
     address: z.string().min(1).max(255),
     port: z.number().int().min(1).max(65535)

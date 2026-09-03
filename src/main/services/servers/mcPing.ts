@@ -1,8 +1,6 @@
 import { Socket } from 'node:net'
 import { resolveSrv } from 'node:dns/promises'
-import { createLogger } from '../../core/logger'
 
-const log = createLogger('mc-ping')
 
 /**
  * Minecraft's Server List Ping, as spoken by the game's own multiplayer screen.

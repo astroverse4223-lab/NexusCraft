@@ -24,6 +24,8 @@ export interface LaunchContext {
 const LAUNCHER_NAME = 'NexusCraft'
 const LAUNCHER_VERSION = '1.0.0'
 
+const IGNORE_LIST_PREFIX = '-DignoreList='
+
 /**
  * Builds the substitution table used by Mojang's argument templates. Values are
  * inserted as single argv entries, so spaces in paths need no quoting.
@@ -139,6 +141,53 @@ export interface BuiltArguments {
   mainClass: string
 }
 
+/**
+ * Keeps the Minecraft client jar off Forge's module layer.
+ *
+ * Forge 1.20.1 launches through BootstrapLauncher, which walks the classpath
+ * and turns every entry into a module *except* the ones named in
+ * `-DignoreList`. Its own profile ends that list with `${version_name}.jar`,
+ * meaning "and the game jar itself".
+ *
+ * That substitution does not survive a loader profile. `version_name` is the
+ * launched id — `1.20.1-forge-47.4.23` — while the jar on the classpath comes
+ * from the version it inherits from and is called `1.20.1.jar`. The names do
+ * not match, so the game jar is not ignored, gets loaded as an automatic
+ * module named `_1._20._1`, and then both it and Forge's patched `minecraft`
+ * module export `net.minecraft.data`. The JVM refuses the layer outright:
+ *
+ *     java.lang.module.ResolutionException: Modules minecraft and _1._20._1
+ *     export package net.minecraft.data to module com.google.protobuf
+ *
+ * The game dies before a single mod loads, and the message names neither the
+ * launcher nor the mod, so it reads as the modpack being broken.
+ *
+ * Changing what `version_name` expands to is not the fix — the game arguments
+ * use the same placeholder for `--version`, where the loader id is the correct
+ * answer. So the jar's real name is appended to the ignore list instead, which
+ * is additive and leaves every other use of the placeholder alone.
+ *
+ * Only older Forge ships an ignoreList at all; newer Forge and NeoForge have
+ * no such argument, and this does nothing for them.
+ */
+function keepClientJarOffTheModulePath(jvm: string[], version: VersionJson, versionId: string): void {
+  const index = jvm.findIndex((arg) => arg.startsWith(IGNORE_LIST_PREFIX))
+  if (index === -1) return
+
+  // The same resolution `buildClasspath` uses to find the jar it adds.
+  const clientJar = `${version.resolvedBaseId ?? version.inheritsFrom ?? versionId}.jar`
+
+  const entries = jvm[index]
+    .slice(IGNORE_LIST_PREFIX.length)
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+
+  if (entries.includes(clientJar)) return
+  entries.push(clientJar)
+  jvm[index] = `${IGNORE_LIST_PREFIX}${entries.join(',')}`
+}
+
 export function buildLaunchArguments(context: LaunchContext): BuiltArguments {
   const { version, instance } = context
   const table = placeholders(context)
@@ -177,6 +226,7 @@ export function buildLaunchArguments(context: LaunchContext): BuiltArguments {
 
   if (version.arguments?.jvm && version.arguments.jvm.length > 0) {
     jvm.push(...expandArguments(version.arguments.jvm, features, table))
+    keepClientJarOffTheModulePath(jvm, version, context.versionId)
   } else {
     // Pre-1.13 versions have no jvm argument list; these are its equivalents.
     jvm.push(`-Djava.library.path=${context.nativesDir}`)

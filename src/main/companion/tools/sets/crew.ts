@@ -11,7 +11,7 @@
  * reading it is free and always reflects the last thing the launcher knew.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 import type { CrewSnapshot } from '@shared/companion'
 import type { Tool } from '../types'
 

@@ -26,6 +26,12 @@ extraResources:
   - from: build/icon.ico
     to: icon.ico
 
+  # The Hollow mod, shipped so it can be installed into an instance from the
+  # Mods screen. Built separately from `mod/` and copied in; the launcher only
+  # ever copies this file, it never compiles anything.
+  - from: resources/hollow.jar
+    to: hollow.jar
+
 # "Install with NexusCraft" links and server invites.
 #
 # Kept here for the targets that honour it — macOS, Linux and the Windows Store

@@ -17,6 +17,8 @@ import { initTray, destroyTray } from './services/tray/trayService'
 import { initPresence, shutdownPresence } from './services/presence/presenceService'
 import { initStewards } from './services/companion/stewardService'
 import { initBackupScheduler } from './services/backup/backupScheduler'
+import { initRestartScheduler } from './services/servers/restartScheduler'
+import { initModUpdateScheduler } from './services/content/modUpdateScheduler'
 import { initTunnels, shutdownTunnels } from './services/servers/tunnelService'
 import { registerProtocol, findLinkInArgv } from './services/links/deepLinks'
 import { handleDeepLink } from './services/links/linkActions'
@@ -24,6 +26,22 @@ import { handleDeepLink } from './services/links/linkActions'
 const log = createLogger('main')
 
 const isDev = !app.isPackaged
+
+/**
+ * Whether the user has switched voice input on.
+ *
+ * Kept here rather than read from settings so the permission handler stays
+ * synchronous, which is what Electron requires of it.
+ */
+let wantsMicrophone = false
+
+export function setMicrophoneWanted(wanted: boolean): void {
+  wantsMicrophone = wanted
+}
+
+function microphoneWanted(): boolean {
+  return wantsMicrophone
+}
 
 /* ------------------------------------------------------------- security */
 
@@ -64,20 +82,30 @@ function applySecurityPolicies(): void {
     })
   })
 
-  // Nothing in this app needs camera, microphone, geolocation or notifications.
-  // Writing to the clipboard is the one exception: the sign-in screen offers a
-  // "Copy code" button, and sanitized-write only permits content this page
-  // already controls.
+  // Nothing in this app needs camera, geolocation or notifications. Writing to
+  // the clipboard is one exception: the sign-in screen offers a "Copy code"
+  // button, and sanitized-write only permits content this page already controls.
   const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write'])
 
+  /*
+   * The microphone is the other, and it is off until asked for.
+   *
+   * Talking to a companion needs it, and nothing else here does. Adding 'media'
+   * to the set above would grant it for the life of the process whether or not
+   * the feature was ever switched on, which is not a thing to do quietly with a
+   * microphone. The renderer raises this flag when the user turns voice input
+   * on and drops it when they turn it off.
+   */
   session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
-    const allowed = ALLOWED_PERMISSIONS.has(permission)
+    const isMedia = permission === 'media'
+    const allowed = ALLOWED_PERMISSIONS.has(permission) || (isMedia && microphoneWanted())
     if (!allowed) log.warn(`denied a "${permission}" permission request`)
     callback(allowed)
   })
-  session.defaultSession.setPermissionCheckHandler((_contents, permission) =>
-    ALLOWED_PERMISSIONS.has(permission)
-  )
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) => {
+    const isMedia = permission === 'media'
+    return ALLOWED_PERMISSIONS.has(permission) || (isMedia && microphoneWanted())
+  })
 
   // Refuse any attempt to attach a webview.
   app.on('web-contents-created', (_event, contents) => {
@@ -245,6 +273,8 @@ if (!gotLock) {
     registerIpcHandlers()
     initStewards()
     initBackupScheduler()
+    initRestartScheduler()
+    initModUpdateScheduler()
     initTunnels()
 
     mainWindow = createWindow()

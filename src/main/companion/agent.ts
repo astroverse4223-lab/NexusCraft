@@ -1,6 +1,7 @@
 import type { CrewSnapshot } from '@shared/companion'
 import { chat, LlmError, type ChatMessage, type LlmConfig } from './llm'
-import { findTool, TOOL_SCHEMAS, schemasFor, type ToolContext } from './tools'
+import { findTool, schemasFor, type ToolContext } from './tools'
+import type { DeathWatch } from './tools/support/deathWatch'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -20,6 +21,10 @@ export interface AgentEvents {
   memoryChanged: (notes: string[]) => void
   goalChanged: (goal: string | null) => void
   error: (message: string) => void
+  /** What it is working on and how much is waiting behind it. */
+  workChanged?: (work: { current: string | null; queued: number; runningForMs: number }) => void
+  /** Tokens the last model call cost, when the provider reported them. */
+  usage?: (usage: { promptTokens: number; completionTokens: number; totalTokens: number }) => void
 }
 
 export interface AgentOptions {
@@ -47,6 +52,17 @@ export interface AgentOptions {
  * the model stops calling tools; the ceiling only binds on real work.
  */
 const MAX_STEPS = 24
+
+/**
+ * How long one instruction may run before it is abandoned.
+ *
+ * There was no limit at all, and a turn that wedged — a pathfind into terrain
+ * it could not cross, a build it could not place — blocked every later
+ * instruction for as long as the companion stayed connected. Four minutes is
+ * long enough for a real build and short enough that a person notices the
+ * companion is free again.
+ */
+const MAX_TURN_MS = 4 * 60_000
 const MAX_HISTORY = 60
 const MAX_MEMORY = 60
 
@@ -65,13 +81,16 @@ export class Agent {
    * MaxListenersExceededWarning this used to produce after a dozen turns.
    */
   private turnController: AbortController | null = null
+  /** What the companion is working on right now, for the interface. */
+  private current: string | null = null
+  private currentSince = 0
   private lastTurnAt = 0
   private pending: string[] = []
   private controller = new AbortController()
 
   constructor(
     private readonly bot: any,
-    private readonly deps: { mcData: any; goals: any; Movements: any },
+    private readonly deps: { mcData: any; goals: any; Movements: any; deathWatch?: DeathWatch },
     private options: AgentOptions,
     private readonly events: AgentEvents
   ) {
@@ -108,6 +127,20 @@ export class Agent {
     this.pending = this.pending.filter((task) => !task.startsWith('[idle]'))
     this.turnController?.abort()
     if (dropped > 0) this.events.log(`dropped ${dropped} self-set task(s)`)
+    this.publishWork()
+  }
+
+  /** The current task and how much is waiting, so the interface can show it. */
+  work(): { current: string | null; queued: number; runningForMs: number } {
+    return {
+      current: this.current,
+      queued: this.pending.length,
+      runningForMs: this.current ? Date.now() - this.currentSince : 0
+    }
+  }
+
+  private publishWork(): void {
+    this.events.workChanged?.(this.work())
   }
 
   stop(): void {
@@ -122,7 +155,6 @@ export class Agent {
     return [...this.memory]
   }
 
-  /** Something a player said, which the agent should respond to. */
   /**
    * Something a player said, which the agent should respond to.
    *
@@ -169,11 +201,16 @@ export class Agent {
     try {
       while (this.pending.length > 0 && !this.controller.signal.aborted) {
         const trigger = this.pending.shift() as string
+        this.current = trigger
+        this.currentSince = Date.now()
+        this.publishWork()
         await this.runTurn(trigger)
       }
     } finally {
       this.busy = false
+      this.current = null
       this.lastTurnAt = Date.now()
+      this.publishWork()
     }
   }
 
@@ -293,6 +330,36 @@ export class Agent {
   /* ------------------------------------------------------------- turn */
 
   private async runTurn(trigger: string): Promise<void> {
+    /*
+     * A signal scoped to this turn, combined with the bot's lifetime one.
+     *
+     * Everything below used to watch the lifetime signal, which is only aborted
+     * when the companion is stopped altogether — so there was no way to cut a
+     * turn short, and a single wedged pathfind blocked every later instruction
+     * indefinitely. Two more things fall out of it: abort listeners no longer
+     * accumulate on one signal that lives for the whole session (the
+     * MaxListenersExceededWarning), and the turn gets a deadline.
+     */
+    this.turnController = new AbortController()
+    const turn = this.turnController
+    const signal = AbortSignal.any([this.controller.signal, turn.signal])
+
+    const deadline = setTimeout(() => {
+      if (!turn.signal.aborted) {
+        this.events.log(`gave up on "${trigger.slice(0, 60)}" after ${Math.round(MAX_TURN_MS / 1000)}s`)
+        turn.abort()
+      }
+    }, MAX_TURN_MS)
+
+    try {
+      await this.runTurnInner(trigger, signal)
+    } finally {
+      clearTimeout(deadline)
+      if (this.turnController === turn) this.turnController = null
+    }
+  }
+
+  private async runTurnInner(trigger: string, signal: AbortSignal): Promise<void> {
     const context: ToolContext = {
       bot: this.bot,
       mcData: this.deps.mcData,
@@ -309,7 +376,10 @@ export class Agent {
         this.goal = goal
         this.events.goalChanged(goal)
       },
-      signal: this.controller.signal,
+      signal,
+      // Supplied by the bot process, which owns the watcher; without it the
+      // recovery tools have no idea the player ever died.
+      deathWatch: this.deps.deathWatch,
       llm: this.options.llm
     }
 
@@ -319,7 +389,7 @@ export class Agent {
     let invalidCalls = 0
 
     for (let step = 0; step < MAX_STEPS + Math.min(invalidCalls, MAX_STEPS); step++) {
-      if (this.controller.signal.aborted) return
+      if (signal.aborted) return
 
       let reply
       try {
@@ -327,7 +397,7 @@ export class Agent {
           this.options.llm,
           [{ role: 'system', content: this.systemPrompt() }, ...this.history],
           schemasFor(this.options.toolSet ?? 'full'),
-          this.controller.signal
+          signal
         )
       } catch (err) {
         const message = err instanceof LlmError ? err.message : (err as Error).message
@@ -335,6 +405,7 @@ export class Agent {
         return
       }
 
+      if (reply.usage) this.events.usage?.(reply.usage)
       if (reply.content) this.events.thought(reply.content)
 
       // No tool calls means the model is done deciding for this turn.
@@ -363,7 +434,8 @@ export class Agent {
       })
 
       for (const call of reply.toolCalls) {
-        if (this.controller.signal.aborted) return
+        // The turn signal, so an interrupt stops the remaining tool calls too.
+        if (signal.aborted) return
 
         const tool = findTool(call.name)
         let result: string

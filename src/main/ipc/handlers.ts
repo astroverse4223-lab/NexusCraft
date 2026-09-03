@@ -3,11 +3,22 @@ import { totalmem, freemem } from 'node:os'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { handle, assertAllChannelsHandled } from './registry'
+import { checkCurseForgeUpdates, applyCurseForgeUpdate } from '../services/content/curseforgeUpdates'
+import { hollowStatus, installHollow } from '../services/content/hollowInstall'
+import { toolSetSizes } from '../companion/tools'
+import { setMicrophoneWanted } from '../index'
+import {
+  modUpdateSettings,
+  setModUpdateSettings,
+  sweepForModUpdates,
+  type ModUpdateSettings
+} from '../services/content/modUpdateScheduler'
 import { LauncherError } from '../core/errors'
 import { createLogger } from '../core/logger'
 import { dataRoot, logsRoot } from '../core/paths'
 import { writeBootstrap } from '../core/bootstrap'
 import { toast } from '../core/events'
+import { writeDiagnostics } from '../services/support/diagnostics'
 
 import { getSettings, updateSettings, recommendedRamMb } from '../services/settings/settingsService'
 import {
@@ -43,7 +54,6 @@ import {
   exportInstance,
   importInstance,
   inspectInstanceArchive,
-  suggestedExportName
 } from '../services/instances/transferService'
 import { launchInstance, launchStates, recentLogs, stopInstance, isRunning } from '../services/launch/launchService'
 import { autopsyAvailable, diagnoseWithModel } from '../services/launch/crashAutopsy'
@@ -73,9 +83,20 @@ import {
   listBackups,
   listWorlds,
   restoreBackup,
-  savesDir
+  savesDir,
+  worldMap
 } from '../services/worlds/worldService'
 import { rankInstancesForServer } from '../services/servers/joinMatch'
+import {
+  serverRestartSettings,
+  setServerRestartSettings,
+  nextRestartAt
+} from '../services/servers/restartScheduler'
+import {
+  findForeignInstances,
+  importForeignInstance,
+  type ForeignInstance
+} from '../services/instances/launcherImport'
 import {
   catalogue as directoryCatalogue,
   categories as directoryCategories,
@@ -89,7 +110,6 @@ import {
   checkAllServers,
   checkServer,
   deleteServer,
-  getServer,
   importFromInstance,
   listServers,
   recordJoin,
@@ -142,6 +162,11 @@ import {
   getCompanionState,
   clearCompanionMemory,
   setCameraEnabled,
+  interruptCompanion,
+  companionUsage,
+  resetUsage,
+  listBuilds,
+  undoBuild as undoCompanionBuild,
   rememberImport,
   listImports,
   getImport,
@@ -247,7 +272,7 @@ import {
   removeDataPack,
   exportDataPack
 } from '../services/content/datapackService'
-import type { CrashFix, ModUpdate, DataPackOptionValues } from '@shared/types'
+import type { CrashFix, ModUpdate, DataPackOptionValues, DirectoryCompatibility } from '@shared/types'
 import type { ContentKindId, LoaderId, ModpackInstallResult } from '@shared/types'
 import type { SaveHostedServerInput, ModpackServerInstallResult } from '@shared/types'
 
@@ -344,6 +369,9 @@ function assertServerCanUse(kind: ContentKindId, serverName: string): void {
     actions: [`Install it into the instance you play with instead`]
   })
 }
+
+/** The most recent scan for other launchers' instances, kept between calls. */
+let foreignFound: ForeignInstance[] = []
 
 export function registerIpcHandlers(): void {
   /* ------------------------------------------------------------- system */
@@ -471,6 +499,28 @@ export function registerIpcHandlers(): void {
           (payload.componentStack ? `\n  components: ${payload.componentStack}` : '')
       )
       return true
+    }
+  )
+
+  /**
+   * Gathers everything needed to diagnose a problem into one zip.
+   *
+   * Deliberately a file the user can open and read before sending it anywhere:
+   * it is plain text, and everything in it has been through the log redactor.
+   */
+  handle(
+    'app:diagnostics',
+    async (payload: { outputPath: string; instanceId?: string; note?: string }) => {
+      const result = await writeDiagnostics(payload.outputPath, {
+        instanceId: payload.instanceId,
+        note: payload.note
+      })
+      toast(
+        'success',
+        'Diagnostics saved',
+        `${result.files} files, ${(result.bytes / 1024).toFixed(0)} KB. Open it to see exactly what it contains.`
+      )
+      return result
     }
   )
 
@@ -680,6 +730,37 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  /**
+   * Instances belonging to other launchers on this machine.
+   *
+   * The scan result is held so an import can refer to an entry by id without
+   * the renderer having to hand back a folder path it was given — which would
+   * be a path the main process then had to re-validate.
+   */
+  handle('instances:findForeign', async () => {
+    foreignFound = await findForeignInstances()
+    return foreignFound
+  })
+
+  handle('instances:importForeign', async (payload: { id: string; name?: string }) => {
+    const entry = foreignFound.find((candidate) => candidate.id === payload.id)
+    if (!entry) {
+      throw new LauncherError('NOT_FOUND', 'that instance was not in the last scan', {
+        title: 'Scan again first',
+        message: 'The list of importable instances is from a scan that has since been replaced.',
+        actions: ['Press Scan and try again']
+      })
+    }
+
+    const result = await importForeignInstance(entry, payload.name)
+    toast(
+      'success',
+      `${result.name} imported`,
+      `Copied ${result.copiedFolders.join(', ') || 'nothing'}. Game files are downloaded fresh on first launch.`
+    )
+    return result
+  })
+
   /* ------------------------------------------------------------- launch */
 
   handle('launch:start', async (payload: { instanceId: string; serverAddress?: string }) => {
@@ -697,7 +778,7 @@ export function registerIpcHandlers(): void {
     recentLogs(payload.instanceId, payload.limit ?? 500)
   )
 
-  handle('launch:autopsyAvailable', () => ({ available: autopsyAvailable() }))
+  handle('launch:autopsyAvailable', async () => ({ available: await autopsyAvailable() }))
 
   handle('launch:autopsy', async (payload: { instanceId: string }) => {
     const instance = getInstance(payload.instanceId)
@@ -976,9 +1057,46 @@ export function registerIpcHandlers(): void {
 
   /* ------------------------------------------------------- mod updates */
 
-  handle('mods:checkUpdates', async (payload: { instanceId: string }) =>
-    await checkModUpdates(getInstance(payload.instanceId))
-  )
+  /*
+   * Both catalogues, one list.
+   *
+   * A player does not think of a mod as "a Modrinth mod"; they think of it as
+   * out of date. Checking one site and silently ignoring the other made the
+   * updater look complete while never mentioning half the pack.
+   *
+   * Run together rather than in sequence: each is a network round trip over a
+   * whole mods folder, and doing them one after the other doubles the wait for
+   * no benefit. A failure on one side is not allowed to lose the other's
+   * results, which is why this settles rather than rejecting.
+   */
+  handle('mods:checkUpdates', async (payload: { instanceId: string }) => {
+    const instance = getInstance(payload.instanceId)
+    const [modrinth, curseforge] = await Promise.allSettled([
+      checkModUpdates(instance),
+      checkCurseForgeUpdates(instance)
+    ])
+
+    if (modrinth.status === 'rejected') {
+      log.warn(`Modrinth update check failed: ${String(modrinth.reason)}`)
+    }
+    if (curseforge.status === 'rejected') {
+      log.warn(`CurseForge update check failed: ${String(curseforge.reason)}`)
+    }
+
+    const found = [
+      ...(modrinth.status === 'fulfilled' ? modrinth.value : []),
+      ...(curseforge.status === 'fulfilled' ? curseforge.value : [])
+    ]
+
+    // The same jar can be on both sites. Modrinth is listed first and wins,
+    // so an update is never offered twice for one file.
+    const seen = new Set<string>()
+    return found.filter((update) => {
+      if (seen.has(update.fileName)) return false
+      seen.add(update.fileName)
+      return true
+    })
+  })
 
   handle('mods:applyUpdate', async (payload: { instanceId: string; update: Record<string, unknown> }) => {
     const instance = getInstance(payload.instanceId)
@@ -988,7 +1106,10 @@ export function registerIpcHandlers(): void {
     if (typeof update?.newVersionId !== 'string' || typeof update?.fileName !== 'string') {
       throw new LauncherError('INVALID_INPUT', 'malformed update payload')
     }
-    await applyModUpdate(instance, update)
+    // Routed on where it came from. Absent means Modrinth, which is what every
+    // update stored before CurseForge was added.
+    if (update.source === 'curseforge') await applyCurseForgeUpdate(instance, update)
+    else await applyModUpdate(instance, update)
     toast('success', `${update.modName} updated`, `Now on ${update.newVersion}. The old jar is kept so you can undo this.`)
     return true
   })
@@ -1001,6 +1122,36 @@ export function registerIpcHandlers(): void {
     }
     return await modChangelog(update)
   })
+
+  handle('mods:autoUpdateSettings', () => modUpdateSettings())
+
+  handle('mods:setAutoUpdateSettings', (payload: { patch: Partial<ModUpdateSettings> }) =>
+    setModUpdateSettings(payload.patch)
+  )
+
+  /*
+   * The manual "check everything now" behind the settings. Runs the same sweep
+   * the timer does, so what you see here is exactly what it would have done.
+   */
+  handle('mods:hollowStatus', async (payload: { instanceId: string }) =>
+    await hollowStatus(getInstance(payload.instanceId))
+  )
+
+  handle('mods:installHollow', async (payload: { instanceId: string }) => {
+    const instance = getInstance(payload.instanceId)
+    const result = await installHollow(instance)
+    toast(
+      result.warning ? 'warning' : 'success',
+      'Hollow installed',
+      result.warning ??
+        (result.model
+          ? `Configured to use ${result.model} on your local Ollama.`
+          : 'Installed. Check config/hollow.properties for the model.')
+    )
+    return result
+  })
+
+  handle('mods:checkAllNow', async () => await sweepForModUpdates('checked by hand'))
 
   handle('mods:rollbacks', async (payload: { instanceId: string }) =>
     await listRollbacks(getInstance(payload.instanceId))
@@ -1332,6 +1483,19 @@ export function registerIpcHandlers(): void {
     return backup
   })
 
+  /** A top-down map of a world, read from its region files. */
+  handle('worlds:map', async (payload: { instanceId: string; folderName: string }) => {
+    const map = await worldMap(getInstance(payload.instanceId), payload.folderName)
+    if (!map) {
+      throw new LauncherError('NOT_FOUND', 'no region data', {
+        title: 'Nothing to map yet',
+        message: 'This world has no generated region files — play in it a little first.',
+        actions: []
+      })
+    }
+    return map
+  })
+
   handle('worlds:listBackups', async (payload: { instanceId: string }) =>
     await listBackups(getInstance(payload.instanceId))
   )
@@ -1420,6 +1584,37 @@ export function registerIpcHandlers(): void {
     return saved
   })
 
+  /**
+   * Whether each already-pinged server can be joined, keyed by its id.
+   *
+   * Worked out from the statuses the live ping already produced rather than by
+   * pinging again — the whole point is that the Discover list can show this on
+   * every card at once without another round of network traffic.
+   */
+  handle('directory:compatibility', () => {
+    const instances = listInstances()
+    const result: Record<string, DirectoryCompatibility> = {}
+
+    for (const status of cachedDirectoryStatuses()) {
+      if (status.online !== true) continue
+
+      const { candidates, serverVersions } = rankInstancesForServer(status, instances)
+      result[status.serverId] = {
+        ok: candidates.length > 0,
+        instanceName: candidates[0]?.instance.name ?? null,
+        serverVersions: serverVersions.slice(0, 6),
+        reason:
+          candidates.length > 0
+            ? null
+            : serverVersions.length === 0
+              ? 'it did not say which version it runs'
+              : `needs ${serverVersions[0]}`
+      }
+    }
+
+    return result
+  })
+
   /** Which instances could join a given server, best first. */
   handle('directory:joinTargets', async (payload: { address: string; port: number }) => {
     const status = await lookupAddress(`${payload.address}:${payload.port}`).then(
@@ -1484,9 +1679,34 @@ export function registerIpcHandlers(): void {
     const { candidates, serverVersions } = rankInstancesForServer(status, instances)
 
     if (candidates.length === 0) {
-      const wanted = serverVersions[0] ?? status.versionName ?? 'an unknown version'
       const have = [...new Set(instances.map((i) => i.minecraftVersion))].sort().join(', ')
 
+      /*
+       * Two different failures, and they need different words.
+       *
+       * Either the server named a version and nothing here matches it, or it
+       * would not say what it speaks at all — which is what a proxy does when
+       * asked with the conventional "any version" handshake. Printing its
+       * self-description as though it were a Minecraft version produced
+       * "Nothing installed can join a Velocity 1.7.2-26.2 server", which names
+       * a proxy rather than a version and tells the reader nothing.
+       */
+      if (serverVersions.length === 0) {
+        throw new LauncherError('INVALID_INPUT', 'the server did not report a usable version', {
+          title: `${payload.address} did not say which version it runs`,
+          message:
+            (status.versionName ? `It answered "${status.versionName}", which names its software rather than a ` +
+              'Minecraft version. ' : '') +
+            'Without a version the launcher cannot tell which of your instances would work, and guessing wrong ' +
+            'fails during connection with an error that does not explain itself.',
+          actions: [
+            'Pick an instance yourself with the "Join with" selector, then press Join',
+            'Most large servers accept a wide range of versions, so your newest instance is a good first try'
+          ]
+        })
+      }
+
+      const wanted = serverVersions[0]
       throw new LauncherError('INVALID_INPUT', `no instance matches protocol ${status.protocol ?? '?'}`, {
         title: `Nothing installed can join a ${wanted} server`,
         message:
@@ -1560,6 +1780,13 @@ export function registerIpcHandlers(): void {
 
   /* ---------------------------------------------------------- companion */
 
+  handle('companion:toolSizes', () => toolSetSizes())
+
+  handle('companion:setMicrophone', (payload: { wanted: boolean }) => {
+    setMicrophoneWanted(payload.wanted)
+    return { wanted: payload.wanted }
+  })
+
   handle('companion:list', () => listCompanions())
   handle('companion:states', () => allCompanionStates())
   handle('companion:create', (payload: { name?: string }) => createCompanion(payload.name))
@@ -1604,6 +1831,28 @@ export function registerIpcHandlers(): void {
   })
 
   /** The structures on offer: bundled ones, plus anything imported this session. */
+  handle('companion:interrupt', (payload: { id: string }) => {
+    interruptCompanion(payload.id)
+    return true
+  })
+
+  /** What each companion has spent on model calls. */
+  handle('companion:usage', () => companionUsage())
+
+  handle('companion:resetUsage', (payload: { id?: string } | undefined) => {
+    resetUsage(payload?.id)
+    return true
+  })
+
+  /** Builds that can still be taken back out. */
+  handle('companion:builds', () => listBuilds())
+
+  handle('companion:undoBuild', (payload: { buildId: string; companionId?: string }) => {
+    undoCompanionBuild(payload.buildId, payload.companionId)
+    toast('info', 'Undoing the build', 'The companion is removing what it placed.')
+    return true
+  })
+
   handle('companion:blueprints', () => {
     const bundled = BLUEPRINT_LIBRARY.map((entry) => {
       const size = blueprintSize(entry.blueprint)
@@ -1703,7 +1952,8 @@ export function registerIpcHandlers(): void {
         const root = hostedServerDir(payload.serverId)
         const world = await serverWorldName(root)
         const target = join(structuresDir(join(root, world)), fileName)
-        const written = await exportBlueprint(blueprint, target, payload.format)
+        // Stamped with the server's own version, not a hardcoded one.
+        const written = await exportBlueprint(blueprint, target, payload.format, server.minecraftVersion)
 
         toast(
           'success',
@@ -1720,13 +1970,13 @@ export function registerIpcHandlers(): void {
       const instance = getInstance(payload.instanceId)
       await ensureInstanceLayout(instance)
       const target = join(schematicsDir(instance.gameDir), fileName)
-      const written = await exportBlueprint(blueprint, target, payload.format)
+      const written = await exportBlueprint(blueprint, target, payload.format, instance.minecraftVersion)
 
       toast(
         'success',
         `${name} exported`,
         payload.format === 'schem'
-          ? `Saved to the instance's schematics folder. Open Litematica in game (M) and load it.`
+          ? `In game press M, load it, then Execute Operation → Paste Schematic in World. Loading alone only shows a hologram — it places no blocks.`
           : `Saved to the instance's schematics folder. For a structure block, export to a server instead.`
       )
       return written
@@ -1983,6 +2233,19 @@ export function registerIpcHandlers(): void {
     await deleteServerBackup(payload.id, payload.fileName)
     return true
   })
+
+  handle('host:restartSettings', (payload: { id: string }) => ({
+    ...serverRestartSettings(payload.id),
+    nextAt: nextRestartAt(payload.id)
+  }))
+
+  handle(
+    'host:setRestartSettings',
+    (payload: { id: string; patch: Partial<ReturnType<typeof serverRestartSettings>> }) => ({
+      ...setServerRestartSettings(payload.id, payload.patch),
+      nextAt: nextRestartAt(payload.id)
+    })
+  )
 
   handle('host:backupSettings', (payload: { id: string }) => serverBackupSettings(payload.id))
 

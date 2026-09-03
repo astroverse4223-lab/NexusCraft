@@ -9,8 +9,11 @@ import {
   RefreshCw,
   Shield,
   Trash2
+,
+  Map as MapIcon
 } from 'lucide-react'
 import type { BackupInfo, Instance, LauncherErrorPayload, WorldInfo } from '@shared/types'
+import { WorldAtlas } from '../components/WorldAtlas'
 import { api, toPayload } from '../api'
 import { useStore, focusedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Spinner } from '../components/ui'
@@ -80,6 +83,8 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [backingUp, setBackingUp] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<WorldInfo | null>(null)
+  /** The world whose map is open, if any. */
+  const [mapping, setMapping] = useState<WorldInfo | null>(null)
   const [deletingBackup, setDeletingBackup] = useState<BackupInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [showBackups, setShowBackups] = useState(false)
@@ -283,7 +288,17 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
           />
         </div>
       ) : (
-        <div className="card-grid">
+        <div className="col gap-16">
+          {mapping && (
+            <WorldAtlas
+              instanceId={instance.id}
+              folderName={mapping.folderName}
+              worldName={mapping.name}
+              onClose={() => setMapping(null)}
+            />
+          )}
+
+          <div className="card-grid">
           {worlds.map((world) => (
             <div key={world.folderName} className="panel panel-hover" style={{ overflow: 'hidden' }}>
               <div
@@ -335,6 +350,13 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
                   </button>
                   <button
                     className="btn btn-sm"
+                    title="Map this world from its region files"
+                    onClick={() => setMapping(world)}
+                  >
+                    <MapIcon size={13} />
+                  </button>
+                  <button
+                    className="btn btn-sm"
                     title="Open folder"
                     onClick={() => void api.worlds.openFolder(instance.id, world.folderName)}
                   >
@@ -352,6 +374,7 @@ function WorldsList({ instance }: { instance: Instance }): JSX.Element {
               </div>
             </div>
           ))}
+          </div>
         </div>
       )}
 

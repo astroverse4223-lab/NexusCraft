@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { rankInstancesForServer, versionsForProtocol } from '../../src/main/services/servers/joinMatch'
+import { rankInstancesForServer, versionsForProtocol, versionsFromName } from '../../src/main/services/servers/joinMatch'
 import type { Instance, LoaderId, ServerStatus } from '../../src/shared/types'
 
 /**
@@ -119,5 +119,78 @@ describe('rankInstancesForServer', () => {
   it('reports the versions the server speaks for the error message', () => {
     const { serverVersions } = rankInstancesForServer(status(767), [])
     expect(serverVersions).toContain('1.21.1')
+  })
+})
+
+
+/**
+ * Proxies. A large public server almost always sits behind Velocity or
+ * BungeeCord, and those do not answer the protocol question — the launcher
+ * pings with -1 meaning "any version" and Velocity echoes the -1 straight back.
+ * DonutSMP is the case that surfaced this: real protocol -1, name
+ * "Velocity 1.7.2-26.2", and every instance on the machine refused.
+ */
+describe('proxy version names', () => {
+  it('reads a range and includes both ends', () => {
+    const range = versionsFromName('Velocity 1.7.2-26.2')
+    expect(range).toContain('26.2')
+    expect(range).toContain('1.7.2')
+    expect(range).toContain('1.21.1')
+    // Newest first, so the first entry is the top of the range.
+    expect(range[0]).toBe('26.2')
+  })
+
+  it('reads a single version as itself', () => {
+    expect(versionsFromName('Paper 1.21.1')).toEqual(['1.21.1'])
+  })
+
+  it('ignores decoration around the numbers', () => {
+    expect(versionsFromName('§f§fWe support: 1.20-1.21')).toContain('1.21')
+  })
+
+  it('gives nothing for a name with no version in it', () => {
+    expect(versionsFromName('Requires MC')).toEqual([])
+    expect(versionsFromName(null)).toEqual([])
+  })
+
+  it('matches instances against a proxy that reports protocol -1', () => {
+    const status = {
+      serverId: 'donut', online: true as const, checkedAt: Date.now(), latencyMs: 30,
+      playersOnline: 27709, playersMax: 999999,
+      versionName: 'Velocity 1.7.2-26.2', protocol: -1, motd: null, faviconDataUrl: null, error: null
+    }
+    const instances = [
+      instance('Cobblemon', '1.21.1', 'fabric'),
+      instance('TestWorlds', '1.21.11', 'fabric'),
+      instance('Kings', '26.2')
+    ]
+    const { candidates } = rankInstancesForServer(status, instances)
+
+    expect(candidates.length).toBe(3)
+    // Vanilla at the newest end of the advertised range wins.
+    expect(candidates[0].instance.name).toBe('Kings')
+  })
+
+  it('prefers the newest accepted version when several are vanilla', () => {
+    const status = {
+      serverId: 'donut', online: true as const, checkedAt: Date.now(), latencyMs: 30,
+      playersOnline: 1, playersMax: 10,
+      versionName: 'Velocity 1.7.2-26.2', protocol: -1, motd: null, faviconDataUrl: null, error: null
+    }
+    // Alphabetically "Ancient" sorts first; newness must beat that.
+    const instances = [instance('Ancient', '1.8.9'), instance('Zebra', '1.21.1')]
+    const { candidates } = rankInstancesForServer(status, instances)
+    expect(candidates[0].instance.name).toBe('Zebra')
+  })
+
+  it('still refuses when the name names no version at all', () => {
+    const status = {
+      serverId: 'x', online: true as const, checkedAt: Date.now(), latencyMs: 1,
+      playersOnline: 0, playersMax: 1,
+      versionName: 'Some Proxy', protocol: -1, motd: null, faviconDataUrl: null, error: null
+    }
+    const { candidates, serverVersions } = rankInstancesForServer(status, [instance('Any', '1.21.1')])
+    expect(serverVersions).toEqual([])
+    expect(candidates).toEqual([])
   })
 })

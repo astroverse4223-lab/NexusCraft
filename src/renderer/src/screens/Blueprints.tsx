@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Hammer, Upload, Package, AlertTriangle, Download, Boxes, Bot, FolderOpen } from 'lucide-react'
-import type { BlueprintSummary, Companion, CompanionState } from '@shared/companion'
+import { Hammer, Upload, Package, AlertTriangle, Download, Boxes, Bot, FolderOpen, Undo2 } from 'lucide-react'
+import type { BlueprintSummary, BuildSummary, Companion, CompanionState } from '@shared/companion'
 import type { HostedServer } from '@shared/types'
 import type { LauncherErrorPayload } from '@shared/types'
 import { api, toPayload } from '../api'
@@ -23,6 +23,7 @@ export function BlueprintsScreen(): JSX.Element {
   const [companions, setCompanions] = useState<Companion[]>([])
   const [states, setStates] = useState<Record<string, CompanionState['status']>>({})
   const [servers, setServers] = useState<HostedServer[]>([])
+  const [builds, setBuilds] = useState<BuildSummary[]>([])
 
   /** Prefixed so one dropdown can hold both kinds: `i:<id>` or `s:<id>`. */
   const [target, setTarget] = useState<string>('')
@@ -33,16 +34,18 @@ export function BlueprintsScreen(): JSX.Element {
 
   const load = useCallback(async () => {
     try {
-      const [list, bots, statuses, hosted] = await Promise.all([
+      const [list, bots, statuses, hosted, made] = await Promise.all([
         api.companion.blueprints(),
         api.companion.list().catch(() => [] as Companion[]),
         api.companion.states().catch(() => [] as CompanionState[]),
-        api.host.list().catch(() => [] as HostedServer[])
+        api.host.list().catch(() => [] as HostedServer[]),
+        api.companion.builds().catch(() => [] as BuildSummary[])
       ])
       setBlueprints(list)
       setCompanions(bots)
       setStates(Object.fromEntries(statuses.map((s) => [s.companionId, s.status])))
       setServers(hosted)
+      setBuilds(made)
     } catch (err) {
       setError(toPayload(err))
     }
@@ -117,6 +120,20 @@ export function BlueprintsScreen(): JSX.Element {
     try {
       const result = await api.companion.setupLitematica(instance.id)
       setNote(`Installed ${result.installed.join(', ')} into ${instance.name}. Launch it and press M in game.`)
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function undo(build: BuildSummary): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.companion.undoBuild(build.id, build.companionId)
+      setNote(`Undoing ${build.label} — watch the companion's activity feed.`)
+      await load()
     } catch (err) {
       setError(toPayload(err))
     } finally {
@@ -244,6 +261,52 @@ export function BlueprintsScreen(): JSX.Element {
           )}
         </p>
       </div>
+
+      {/*
+        * What has already been built, and the way back out.
+        *
+        * A companion can place thousands of blocks on one instruction, so the
+        * ability to reverse it belongs next to the button that starts it.
+        */}
+      {builds.length > 0 && (
+        <div className="panel panel-pad mb-16">
+          <div className="row gap-8 mb-8">
+            <Undo2 size={15} className="dim" />
+            <strong className="flex-1">Recent builds</strong>
+          </div>
+          <div className="col gap-8">
+            {builds.slice(0, 6).map((build) => (
+              <div key={build.id} className="row gap-8" style={{ alignItems: 'center' }}>
+                <div className="flex-1" style={{ minWidth: 0 }}>
+                  <div className="truncate" style={{ fontSize: 13 }}>
+                    {build.label}
+                    {build.undoneAt && <span className="pill" style={{ marginLeft: 8 }}>undone</span>}
+                  </div>
+                  <div className="tiny dim">
+                    {build.blocks.toLocaleString()} blocks at {build.origin.x}, {build.origin.y}, {build.origin.z} ·{' '}
+                    {new Date(build.at).toLocaleString()}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-sm"
+                  disabled={busy || Boolean(build.undoneAt)}
+                  onClick={() => void undo(build)}
+                  title={
+                    build.undoneAt
+                      ? 'Already undone'
+                      : 'The companion removes what it placed, leaving anything changed since alone'
+                  }
+                >
+                  <Undo2 size={13} /> Undo
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="field-hint" style={{ marginTop: 10 }}>
+            Only blocks the companion placed and that are still unchanged are removed. The companion has to be running.
+          </p>
+        </div>
+      )}
 
       {/* ------------------------------------------------------------ list */}
 

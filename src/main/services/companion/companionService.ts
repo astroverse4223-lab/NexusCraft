@@ -17,6 +17,9 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { app } from 'electron'
 import type { BlueprintSummary,
+  BuildRecord,
+  CompanionUsage,
+  BuildSummary,
   Companion,
   CompanionConfig,
   CompanionEvent,
@@ -29,6 +32,7 @@ import type { BlueprintSummary,
 import { DEFAULT_PERSONALITY } from '@shared/companion'
 import { db } from '../../core/database'
 import { emit } from '../../core/events'
+import { notifyDesktop } from '../../core/notifications'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { getSecret, setSecret, removeSecret } from '../auth/secureStore'
@@ -63,6 +67,8 @@ function defaults(): CompanionSettings {
     autonomy: true,
     idleIntervalSec: 45,
     toolSet: 'full',
+    pricePerMillionTokens: 0,
+    sentinel: false,
     routine: '',
     stewardOf: '',
     hasApiKey: false
@@ -410,6 +416,9 @@ function botScriptPath(): string {
 export function startCompanion(id: string): CompanionState {
   const settings = getCompanion(id)
 
+  // The running total carries over; "this session" starts again from zero.
+  startUsageSession(id)
+
   /*
    * Start means "start a working companion", so a process that is present but
    * not playing is reaped rather than treated as a conflict. Refusing here
@@ -487,6 +496,7 @@ export function startCompanion(id: string): CompanionState {
     personality: settings.personality,
     autonomy: settings.autonomy,
     idleIntervalSec: settings.idleIntervalSec,
+    sentinel: settings.sentinel ?? false,
     toolSet: settings.toolSet ?? 'full',
     llm: { baseUrl: settings.baseUrl, apiKey, model: settings.model, timeoutMs: 90_000 },
     memory: loadMemory(id),
@@ -641,6 +651,40 @@ function handleMessage(id: string, message: CompanionOutbound): void {
     case 'camera':
       emit('companion:camera', { companionId: id, frame: message.frame })
       break
+
+    /*
+     * What it is doing, kept on the state rather than pushed into the event
+     * feed: this changes on every turn and would drown the log the player
+     * actually reads.
+     */
+    case 'work':
+      entry.state.work = message.work
+      emit('companion:work', { companionId: id, work: message.work })
+      break
+
+    /*
+     * The point of an alert is to reach someone who is not looking at the
+     * launcher, so it goes to the OS rather than the in-app feed alone.
+     */
+    case 'alert':
+      pushEvent(id, 'log', `${message.title} — ${message.body}`)
+      notifyDesktop({ title: message.title, body: message.body, onlyWhenAway: false })
+      break
+
+    case 'usage': {
+      const totals = recordUsage(id, message.usage)
+      emit('companion:usage', { companionId: id, usage: totals })
+      break
+    }
+
+    case 'buildRecord': {
+      // The bot does not know its own id; stamp it here where it is known.
+      const records = readBuilds()
+      records.push({ ...message.record, companionId: id })
+      writeBuilds(records)
+      pushEvent(id, 'log', `${message.record.label} can be undone (${message.record.placements.length} blocks)`)
+      break
+    }
   }
 }
 
@@ -673,6 +717,142 @@ export function getImport(id: string): { blueprint: unknown; summary: BlueprintS
 /** Sends a chosen blueprint to a running companion to build. */
 export function buildWithCompanion(id: string, blueprint: unknown, label: string): void {
   post(id, { type: 'build', blueprint, label })
+}
+
+/* ---------------------------------------------------------------- spend */
+
+const USAGE_KEY = 'companion-usage'
+
+/** Totals survive restarts; the session half resets when a bot starts. */
+function readUsage(): Record<string, CompanionUsage> {
+  try {
+    const raw = db().kvGet(USAGE_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, CompanionUsage>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function blankUsage(): CompanionUsage {
+  return {
+    calls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    sessionTokens: 0,
+    sessionCalls: 0
+  }
+}
+
+export function companionUsage(): Record<string, CompanionUsage> {
+  return readUsage()
+}
+
+/** Zeroes the running total for one companion, or all of them. */
+export function resetUsage(id?: string): void {
+  if (!id) {
+    db().kvSet(USAGE_KEY, JSON.stringify({}))
+    return
+  }
+  const all = readUsage()
+  delete all[id]
+  db().kvSet(USAGE_KEY, JSON.stringify(all))
+}
+
+function recordUsage(
+  id: string,
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number }
+): CompanionUsage {
+  const all = readUsage()
+  const entry = all[id] ?? blankUsage()
+
+  entry.calls += 1
+  entry.promptTokens += usage.promptTokens
+  entry.completionTokens += usage.completionTokens
+  entry.totalTokens += usage.totalTokens
+  entry.sessionCalls += 1
+  entry.sessionTokens += usage.totalTokens
+
+  all[id] = entry
+  db().kvSet(USAGE_KEY, JSON.stringify(all))
+  return entry
+}
+
+/** Clears just the session half, when a bot process starts. */
+function startUsageSession(id: string): void {
+  const all = readUsage()
+  const entry = all[id] ?? blankUsage()
+  entry.sessionCalls = 0
+  entry.sessionTokens = 0
+  all[id] = entry
+  db().kvSet(USAGE_KEY, JSON.stringify(all))
+}
+
+/* --------------------------------------------------------------- builds */
+
+const BUILDS_KEY = 'companion-builds'
+
+/**
+ * How many builds stay undoable.
+ *
+ * Each record holds one entry per block placed, so a handful of large builds is
+ * already megabytes. Ten is enough to cover "undo that" while keeping the store
+ * a sensible size.
+ */
+const MAX_BUILD_RECORDS = 10
+
+function readBuilds(): BuildRecord[] {
+  try {
+    const raw = db().kvGet(BUILDS_KEY)
+    return raw ? (JSON.parse(raw) as BuildRecord[]) : []
+  } catch {
+    return []
+  }
+}
+
+function writeBuilds(records: BuildRecord[]): void {
+  db().kvSet(BUILDS_KEY, JSON.stringify(records.slice(-MAX_BUILD_RECORDS)))
+}
+
+/** Builds that can still be taken back out, newest first. */
+export function listBuilds(): BuildSummary[] {
+  return readBuilds()
+    .map((record) => ({
+      id: record.id,
+      companionId: record.companionId,
+      label: record.label,
+      at: record.at,
+      blocks: record.placements.length,
+      origin: record.origin,
+      undoneAt: record.undoneAt
+    }))
+    .reverse()
+}
+
+/**
+ * Hands a build back to the companion that made it.
+ *
+ * The record is marked undone before the bot starts rather than after: an undo
+ * that is interrupted half way has still changed the world, and offering it
+ * again as though nothing happened would be worse than a slightly early mark.
+ */
+export function undoBuild(buildId: string, companionId?: string): void {
+  const records = readBuilds()
+  const record = records.find((entry) => entry.id === buildId)
+  if (!record) throw new LauncherError('NOT_FOUND', `no build with id ${buildId}`)
+
+  const target = companionId || record.companionId
+  if (!target) throw new LauncherError('INVALID_INPUT', 'no companion to undo this with')
+
+  post(target, { type: 'undoBuild', record })
+
+  record.undoneAt = Date.now()
+  writeBuilds(records)
+}
+
+/** Tells a companion to drop what it is doing. */
+export function interruptCompanion(id: string): void {
+  post(id, { type: 'interrupt' })
 }
 
 /** Starts or stops the bot cam for one companion. */

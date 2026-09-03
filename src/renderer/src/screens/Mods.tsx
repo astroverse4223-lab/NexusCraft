@@ -9,6 +9,7 @@ import {
   Palette,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Search,
   Sparkles,
   ArrowUpCircle,
@@ -25,6 +26,7 @@ import type {
   ModUpdate
 } from '@shared/types'
 import { api, toPayload, type Screenshot } from '../api'
+import { HollowCard } from '../components/HollowCard'
 import { useStore, focusedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Spinner, Toggle } from '../components/ui'
 import { DropZone } from '../components/DropZone'
@@ -103,7 +105,20 @@ export function ModsScreen(): JSX.Element {
         </button>
       </div>
 
-      {tab === 'browse' && <BrowseTab instance={instance} />}
+      {tab === 'browse' && (
+        <>
+          {/*
+            * On Browse, not on the installed-mods tab. This screen opens on
+            * Browse, so a card on the other tab is one nobody finds — which is
+            * exactly how the update checker went unnoticed for months. Browse
+            * is also where "get me a mod" belongs.
+            */}
+          <div className="mb-16">
+            <HollowCard instance={instance} />
+          </div>
+          <BrowseTab instance={instance} />
+        </>
+      )}
       {tab === 'mods' && <ModsTab instance={instance} />}
       {tab === 'datapacks' && <DataPacksTab instance={instance} />}
       {tab === 'resourcepacks' && <ContentTab instance={instance} kind="resourcepacks" />}
@@ -111,6 +126,17 @@ export function ModsScreen(): JSX.Element {
       {tab === 'screenshots' && <ScreenshotsTab instance={instance} />}
     </>
   )
+}
+
+/** What each analyser code means, in words a player would use. */
+const ISSUE_LABELS: Record<string, string> = {
+  'loader-mismatch': 'wrong mod loader',
+  'duplicate-mod-id': 'installed twice',
+  unreadable: 'could not be read',
+  'mc-version-mismatch': 'wrong Minecraft version',
+  'loader-version-too-old': 'loader too old',
+  'missing-dependency': 'missing a dependency',
+  'not-a-jar': 'not a mod file'
 }
 
 /* ----------------------------------------------------------------- mods */
@@ -124,6 +150,7 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
   const [busy, setBusy] = useState(false)
   const [updates, setUpdates] = useState<ModUpdate[] | null>(null)
   const [checking, setChecking] = useState(false)
+  const [fixing, setFixing] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
   const [rollbacks, setRollbacks] = useState<ModRollback[]>([])
   const [rollingBack, setRollingBack] = useState<string | null>(null)
@@ -155,6 +182,32 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
   }, [mods, search])
 
   const problems = (mods ?? []).filter((mod) => mod.enabled && mod.issues.some((i) => i.severity === 'error'))
+
+  /**
+   * Turns off everything that would crash the instance, in one pass.
+   *
+   * Disabling rather than deleting: the jars are renamed, so a mod turned off
+   * because it did not match this instance is still there when the pack is
+   * updated to a version where it does.
+   */
+  async function disableBlocking(): Promise<void> {
+    setFixing(true)
+    try {
+      for (const mod of problems) {
+        await api.mods.setEnabled(instance.id, mod.fileName, false)
+      }
+      pushToast({
+        kind: 'success',
+        title: `Disabled ${problems.length} mod${problems.length === 1 ? '' : 's'}`,
+        message: 'The files are still there — turn any of them back on from the list.'
+      })
+      await load()
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setFixing(false)
+    }
+  }
 
   async function toggle(mod: ModInfo, enabled: boolean): Promise<void> {
     try {
@@ -372,10 +425,32 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
               {problems.length} mod{problems.length === 1 ? '' : 's'} would stop this instance from starting
             </div>
             <div className="small muted">
-              NexusCraft blocks the launch while these are enabled, because Minecraft would crash on startup. Disable or
-              remove them below.
+              NexusCraft blocks the launch while these are enabled, because Minecraft would crash on startup.
+            </div>
+            {/*
+              * The banner used to end with "disable or remove them below",
+              * which on a 180-mod pack means finding each one by hand. The
+              * launcher already knows exactly which they are.
+              */}
+            <div className="row gap-8 mt-8 wrap">
+              {[...new Set(problems.flatMap((mod) => mod.issues.filter((i) => i.severity === 'error').map((i) => i.code)))].map(
+                (code) => (
+                  <span key={code} className="pill">
+                    {ISSUE_LABELS[code] ?? code}
+                  </span>
+                )
+              )}
             </div>
           </div>
+          <button
+            className="btn btn-sm"
+            style={{ alignSelf: 'center', marginLeft: 'auto' }}
+            disabled={fixing}
+            onClick={() => void disableBlocking()}
+            title="Turns off every mod that would crash this instance, leaving the files in place"
+          >
+            {fixing ? <Spinner /> : <ShieldCheck size={14} />} Disable all {problems.length}
+          </button>
         </div>
       )}
 

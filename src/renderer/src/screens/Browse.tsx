@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Boxes, Check, Download, ExternalLink, Key, Package, Search, Sparkles, Palette, Users } from 'lucide-react'
 import type { ContentKindId, Instance, LauncherErrorPayload, ModrinthProject, ModrinthVersion } from '@shared/types'
 import { api, toPayload } from '../api'
+import { useInfiniteScroll } from '../components/useInfiniteScroll'
 import { useStore } from '../store/useStore'
 import { EmptyState, ErrorView, Modal, Spinner } from '../components/ui'
 import { formatBytes, formatDate, LOADER_LABELS } from '../format'
@@ -20,10 +21,14 @@ function compactNumber(value: number): string {
 }
 
 /**
- * Search and install content from Modrinth, scoped to the instance you are
- * looking at — results are filtered to its Minecraft version and mod loader, so
- * what you see is what will actually run.
+ * Results per request.
+ *
+ * Both catalogues cap a page at 50 and the IPC schema enforces the same, so
+ * this is the largest legal page: fewer round trips for the same scrolling,
+ * and the sentinel fires less often.
  */
+const PAGE_SIZE = 50
+
 type Source = 'modrinth' | 'curseforge'
 
 /**
@@ -49,6 +54,11 @@ export interface BrowseDestination {
   isServer: boolean
 }
 
+/**
+ * Search and install content from Modrinth or CurseForge, scoped to the
+ * instance you are looking at — results are filtered to its Minecraft version
+ * and mod loader, so what you see is what will actually run.
+ */
 export function BrowseTab({
   instance,
   destination,
@@ -89,10 +99,24 @@ export function BrowseTab({
   // Keeps a slow response from overwriting a newer one.
   const requestId = useRef(0)
 
+  /*
+   * How many results are loaded, and whether a page is on its way.
+   *
+   * `loading` cannot stand in for the second: it drives the full-panel spinner,
+   * and showing that for a page appended to the bottom would blank the list you
+   * are already reading. The two states look the same to the fetch and entirely
+   * different on screen.
+   */
+  const [loadingMore, setLoadingMore] = useState(false)
+  const loaded = projects?.length ?? 0
+  const hasMore = projects !== null && loaded < total
+
   const search = useCallback(
     async (offset = 0) => {
       const id = ++requestId.current
-      setLoading(true)
+      // Appending keeps what you are looking at; a fresh search replaces it.
+      if (offset > 0) setLoadingMore(true)
+      else setLoading(true)
       try {
         const input = {
           query,
@@ -100,7 +124,8 @@ export function BrowseTab({
           gameVersion: matchVersion ? target.minecraftVersion : null,
           loader: matchVersion && kind !== 'modpack' ? target.loader : null,
           offset,
-          limit: 20,
+          // Modrinth and CurseForge both cap a page at 50, so take the lot.
+          limit: PAGE_SIZE,
           /*
            * Null, not an empty string, when there is nowhere to install to yet.
            * "Host a modpack" browses before the server exists, and an empty id
@@ -112,19 +137,42 @@ export function BrowseTab({
         const result =
           source === 'curseforge' ? await api.curseforge.search(input) : await api.modrinth.search(input)
         if (id !== requestId.current) return
-        setProjects(result.projects)
+        setProjects((current) => {
+          if (offset === 0 || current === null) return result.projects
+          /*
+           * Both catalogues can hand back a project that was on an earlier page
+           * — the ranking shifts under you as pages are fetched — and React
+           * throws on duplicate keys. Keep the copy already on screen.
+           */
+          const seen = new Set(current.map((project) => project.projectId))
+          return [...current, ...result.projects.filter((project) => !seen.has(project.projectId))]
+        })
         setTotal(result.total)
         setError(null)
       } catch (err) {
         if (id !== requestId.current) return
         setError(toPayload(err))
-        setProjects([])
+        // A failed page leaves what is already loaded alone; only a failed
+        // first search clears the list.
+        if (offset === 0) setProjects([])
       } finally {
-        if (id === requestId.current) setLoading(false)
+        if (id === requestId.current) {
+          setLoading(false)
+          setLoadingMore(false)
+        }
       }
     },
-    [query, kind, source, matchVersion, instance.minecraftVersion, instance.loader, instance.id]
+    [query, kind, source, matchVersion, target.minecraftVersion, target.loader, target.id]
   )
+
+  /*
+   * Guarded on `loading` too, not just `loadingMore`. The sentinel sits below a
+   * short first page and is already on screen when those results land, so
+   * without this the second page is requested before the first has painted.
+   */
+  const sentinel = useInfiniteScroll(() => void search(loaded), {
+    enabled: hasMore && !loading && !loadingMore && !error
+  })
 
   // Debounced so typing does not fire a request per keystroke.
   useEffect(() => {
@@ -286,7 +334,12 @@ export function BrowseTab({
         <>
           <div className="row between mb-8">
             <span className="tiny dim">
-              {total > 0 ? `${compactNumber(total)} result${total === 1 ? '' : 's'}` : ''}
+              {total > 0
+                ? // Once there is more than a page, say how far in you are.
+                  loaded > 0 && loaded < total
+                  ? `${compactNumber(loaded)} of ${compactNumber(total)}`
+                  : `${compactNumber(total)} result${total === 1 ? '' : 's'}`
+                : ''}
             </span>
             {loading && <Spinner />}
           </div>
@@ -354,6 +407,32 @@ export function BrowseTab({
               </button>
             ))}
           </div>
+
+          {/*
+            * The sentinel. Empty and outside the grid, so it cannot be mistaken
+            * for a card or leave a gap in the layout — it only has to cross the
+            * viewport for the next page to be fetched.
+            */}
+          {hasMore && <div ref={sentinel} style={{ height: 1 }} aria-hidden />}
+
+          {loadingMore && (
+            <div className="row center gap-8 muted" style={{ padding: '20px 0' }}>
+              <Spinner /> Loading more…
+            </div>
+          )}
+
+          {/*
+            * Both catalogues stop paging well short of their own totals — the
+            * IPC schema caps offset at 5000 and CurseForge refuses past 10000 —
+            * so say the search needs narrowing rather than looking broken.
+            */}
+          {!hasMore && loaded >= PAGE_SIZE && (
+            <div className="tiny dim center" style={{ padding: '20px 0' }}>
+              {loaded >= total
+                ? `That is all ${compactNumber(total)} of them.`
+                : 'End of the results this catalogue will page through — search to narrow it down.'}
+            </div>
+          )}
         </>
       )}
 
@@ -422,7 +501,10 @@ function InstallDialog({
         setVersions([])
       }
     })()
-  }, [project.projectId, kind, source, matchVersion, instance.minecraftVersion, instance.loader])
+    // Watching the destination, to match what the body above actually reads.
+    // Listing the instance here left a stale version list behind whenever the
+    // two differed — exactly the server case the comment warns about.
+  }, [project.projectId, kind, source, matchVersion, target.minecraftVersion, target.loader])
 
   async function install(version: ModrinthVersion): Promise<void> {
     setInstalling(version.versionId)

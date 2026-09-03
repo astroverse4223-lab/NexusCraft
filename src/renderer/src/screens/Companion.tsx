@@ -16,9 +16,12 @@ import {
   Wrench,
   Zap
 } from 'lucide-react'
-import type { Companion, CompanionEvent, CompanionSettings, CompanionState, CompanionStatus , RoutineInfo } from '@shared/companion'
+import type { Companion, CompanionEvent, CompanionSettings, CompanionState, CompanionStatus , RoutineInfo, CompanionUsage, CompanionWork } from '@shared/companion'
 import type { LauncherErrorPayload } from '@shared/types'
 import { api, subscribe, toPayload } from '../api'
+import { say, hush, DEFAULT_VOICE, type VoiceSettings } from '../components/companionVoice'
+import { VoiceControls, loadVoiceSettings } from '../components/VoiceControls'
+import { MicButton } from '../components/MicButton'
 import { BotCam } from '../components/BotCam'
 import { useStore } from '../store/useStore'
 import { ErrorView, SettingRow, Spinner, Toggle, useAutoScroll } from '../components/ui'
@@ -92,6 +95,13 @@ const EVENT_COLOUR: Record<CompanionEvent['kind'], string> = {
  * model, running in its own process. Everything it decides and does is shown
  * live, so it is never a black box.
  */
+/** 1234 -> "1.2k", so a token count fits in a pill without dominating it. */
+function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`
+  return String(count)
+}
+
 export function CompanionScreen(): JSX.Element {
   const pushToast = useStore((s) => s.pushToast)
 
@@ -99,6 +109,37 @@ export function CompanionScreen(): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [settings, setSettings] = useState<CompanionSettings | null>(null)
   const [state, setState] = useState<CompanionState | null>(null)
+
+  /*
+   * The voice, and a ref that mirrors it.
+   *
+   * The event subscription below is registered once and would otherwise capture
+   * the settings as they were at mount, so turning the voice on mid-session
+   * would do nothing until the screen was remounted. The ref is what the
+   * callback reads.
+   */
+  const [voice, setVoice] = useState<VoiceSettings>(() => loadVoiceSettings(DEFAULT_VOICE))
+  const voiceRef = useRef(voice)
+  voiceRef.current = voice
+
+  /*
+   * Counted by the main process rather than written into the label.
+   * The previous text said "30 tools" and had been wrong by fifteen for
+   * several releases — a number nobody reading the screen could check.
+   */
+  const [toolSizes, setToolSizes] = useState<{
+    full: number
+    core: number
+    fullTokens: number
+    coreTokens: number
+  } | null>(null)
+
+  useEffect(() => {
+    void api.companion
+      .toolSizes()
+      .then(setToolSizes)
+      .catch(() => setToolSizes(null))
+  }, [])
   const [apiKey, setApiKey] = useState('')
   const [instruction, setInstruction] = useState('')
   const [busy, setBusy] = useState(false)
@@ -109,6 +150,30 @@ export function CompanionScreen(): JSX.Element {
   const [statuses, setStatuses] = useState<Record<string, CompanionStatus>>({})
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [tab, setTab] = useState<'activity' | 'crew' | 'setup'>('setup')
+  /** What the selected companion is carrying out right now. */
+  const [work, setWork] = useState<CompanionWork | null>(null)
+  const [usage, setUsage] = useState<CompanionUsage | null>(null)
+
+  useEffect(() => {
+    return subscribe('companion:work', (payload: { companionId: string; work: CompanionWork }) => {
+      if (payload.companionId === selectedId) setWork(payload.work)
+    })
+  }, [selectedId])
+
+  useEffect(() => {
+    return subscribe('companion:usage', (payload: { companionId: string; usage: CompanionUsage }) => {
+      if (payload.companionId === selectedId) setUsage(payload.usage)
+    })
+  }, [selectedId])
+
+  // Totals persist across restarts, so read them when the selection changes.
+  useEffect(() => {
+    if (!selectedId) return
+    void api.companion
+      .usage()
+      .then((all) => setUsage(all[selectedId] ?? null))
+      .catch(() => setUsage(null))
+  }, [selectedId])
 
   const feedRef = useAutoScroll(state?.events.length ?? 0)
 
@@ -154,6 +219,20 @@ export function CompanionScreen(): JSX.Element {
     const offList = subscribe('companion:list', (list: Companion[]) => setCompanions(list))
 
     const offEvent = subscribe('companion:event', (event: CompanionEvent) => {
+      /*
+       * Spoken aloud, if the voice is on — but only what the companion actually
+       * said. The feed also carries status, tool calls, pathfinding notes and
+       * errors, and reading those out turns a character into a screen reader
+       * working through a log.
+       *
+       * `voiceRef` rather than the state value: this callback is registered
+       * once, so it would otherwise close over whatever the settings were at
+       * mount and never see a change.
+       */
+      if (event.kind === 'chat' || event.kind === 'thought') {
+        say(event.text, event.companionId, voiceRef.current)
+      }
+
       // Several bots stream at once, so anything not from the selected one is
       // for a feed the user is not looking at.
       setState((current) =>
@@ -310,6 +389,12 @@ export function CompanionScreen(): JSX.Element {
           </p>
         </div>
         <div className="row gap-8">
+          {/*
+            * In the header rather than beside the feed. The feed only appears
+            * once a companion is selected and running, so a control placed
+            * there is invisible exactly when someone is looking for it.
+            */}
+          <VoiceControls settings={voice} onChange={setVoice} />
           <span className={status.className}>
             {state.status === 'playing' && <span className="dot online" />}
             {status.label}
@@ -418,10 +503,68 @@ export function CompanionScreen(): JSX.Element {
       ) : tab === 'activity' ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16, alignItems: 'start' }}>
           <div>
+            {/*
+              * What it is doing, above the log rather than in it.
+              *
+              * A queued instruction and an ignored one looked identical before
+              * this: the only way to tell a busy companion from a stuck one was
+              * to watch the world and guess.
+              */}
+            <div className="panel panel-pad row gap-8 mb-8" style={{ padding: 10 }}>
+              {work?.current ? (
+                <>
+                  <Spinner />
+                  <div className="flex-1" style={{ minWidth: 0 }}>
+                    <div className="truncate" style={{ fontSize: 12.5 }}>
+                      {work.current.replace(/^\[idle\]\s*/, '')}
+                    </div>
+                    <div className="tiny dim">
+                      {work.current.startsWith('[idle]') ? 'decided on its own' : 'you asked for this'} ·{' '}
+                      {Math.round(work.runningForMs / 1000)}s
+                      {work.queued > 0 ? ` · ${work.queued} waiting` : ''}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => void api.companion.interrupt(selectedId!).catch(() => undefined)}
+                    title="Drop what it is doing and clear anything it set for itself"
+                  >
+                    <Square size={13} /> Stop
+                  </button>
+                </>
+              ) : (
+                <span className="tiny dim flex-1">
+                  {running ? 'Idle — waiting for something to do.' : 'Not connected.'}
+                </span>
+              )}
+
+              {/*
+                * What it has cost. A companion on autonomy calls the model every
+                * idle interval whether or not anything happened, so this is the
+                * difference between a bot that quietly spends and one that does
+                * it in the open.
+                */}
+              {usage && usage.totalTokens > 0 && (
+                <span
+                  className="pill"
+                  title={
+                    `${usage.calls.toLocaleString()} model calls, ` +
+                    `${usage.promptTokens.toLocaleString()} in / ${usage.completionTokens.toLocaleString()} out. ` +
+                    'Session resets when the companion starts.'
+                  }
+                >
+                  {formatTokens(usage.sessionTokens)} this run · {formatTokens(usage.totalTokens)} total
+                  {settings?.pricePerMillionTokens
+                    ? ` · ${((usage.totalTokens / 1_000_000) * settings.pricePerMillionTokens).toFixed(2)}`
+                    : ''}
+                </span>
+              )}
+            </div>
+
             <div
               ref={feedRef}
               className="panel"
-              style={{ padding: 14, height: 460, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 7 }}
+              style={{ padding: 14, height: 404, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 7 }}
             >
               {state.events.length === 0 ? (
                 <div className="muted small">
@@ -482,6 +625,13 @@ export function CompanionScreen(): JSX.Element {
                   if (event.key === 'Enter') void send()
                 }}
               />
+              {/*
+                * Speaking puts the words in the box rather than sending them.
+                * Recognition mishears, and a misheard instruction that has
+                * already been acted on cannot be taken back — seeing it first
+                * costs a moment and saves the bot demolishing the wrong thing.
+                */}
+              <MicButton disabled={!running} onHeard={(text) => setInstruction(text)} />
               <button className="btn btn-primary" disabled={!running || !instruction.trim()} onClick={() => void send()}>
                 <Send size={15} /> Send
               </button>
@@ -669,13 +819,18 @@ export function CompanionScreen(): JSX.Element {
                 value={settings.toolSet ?? 'full'}
                 onChange={(event) => void patch({ toolSet: event.target.value as 'full' | 'core' })}
               >
-                <option value="full">Everything (30 tools)</option>
-                <option value="core">Essentials only (14 tools)</option>
+                <option value="full">
+                  Everything{toolSizes ? ` (${toolSizes.full} tools)` : ''}
+                </option>
+                <option value="core">
+                  Essentials only{toolSizes ? ` (${toolSizes.core} tools)` : ''}
+                </option>
               </select>
               <div className="field-hint">
-                The full set is around 2,300 tokens of tool descriptions on every request. Large hosted models
-                handle it; a 7B local model given thirty choices tends to stall or invent tool names. Essentials
-                covers looking, moving, gathering, crafting, building, fighting and eating.
+                The full set is roughly {toolSizes ? toolSizes.fullTokens.toLocaleString() : '—'} tokens of tool
+                descriptions on every request. Large hosted models handle it; a 7B local model given that many
+                choices tends to stall or invent tool names. Essentials covers looking, moving, gathering,
+                crafting, building, fighting and eating.
               </div>
             </div>
 
@@ -828,6 +983,53 @@ export function CompanionScreen(): JSX.Element {
                 </span>
               </div>
             </SettingRow>
+
+            <SettingRow
+              name="Watch my back"
+              description="Raises a desktop notification when something hostile gets near you — for playing while tabbed out. Needs an owner name set below."
+            >
+              <Toggle
+                checked={settings.sentinel ?? false}
+                onChange={(value) => {
+                  setSettings({ ...settings, sentinel: value })
+                  void patch({ sentinel: value })
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
+              name="Price per million tokens"
+              description="What this endpoint charges, so the meter can show money as well as tokens. Leave at 0 for a local model, or if you would rather just see tokens."
+            >
+              <div className="row gap-8" style={{ width: 200 }}>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={settings.pricePerMillionTokens ?? 0}
+                  onChange={(event) =>
+                    setSettings({ ...settings, pricePerMillionTokens: Number(event.target.value) })
+                  }
+                  onBlur={() => void patch({ pricePerMillionTokens: settings.pricePerMillionTokens ?? 0 })}
+                />
+              </div>
+            </SettingRow>
+
+            <div className="row gap-8 mt-8">
+              <button
+                className="btn btn-sm"
+                onClick={() => {
+                  void api.companion
+                    .resetUsage(selectedId!)
+                    .then(() => setUsage(null))
+                    .catch(() => undefined)
+                }}
+                title="Zero the token counter for this companion"
+              >
+                Reset the token counter
+              </button>
+            </div>
 
             <div className="field mt-16">
               <label className="field-label">Personality</label>

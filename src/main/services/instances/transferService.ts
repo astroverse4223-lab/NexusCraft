@@ -1,4 +1,4 @@
-import { mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname, isAbsolute, basename } from 'node:path'
 import AdmZip from 'adm-zip'

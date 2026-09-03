@@ -263,8 +263,25 @@ function sqliteIsLoadable(): boolean {
     })
     ok = result.status === 0 && (result.stdout ?? '').includes(PROBE_MARKER)
     if (!ok) {
+      /*
+       * Say why, not just that.
+       *
+       * The usual cause is an ABI mismatch rather than a missing module:
+       * better-sqlite3 ships prebuilt binaries compiled against Node's ABI, its
+       * loader prefers `prebuilds/` over anything node-gyp produced, and
+       * Electron embeds a different Node — so the wrong binary is loaded and
+       * the process dies with an access violation (0xC0000005 / 3221225477).
+       * `electron-rebuild` reports success without fixing it, because it skips
+       * modules that already ship a prebuild.
+       */
+      const abiCrash = result.status === 3221225477 || result.signal === 'SIGSEGV'
       log.warn(
-        `better-sqlite3 failed to load (exit ${result.status ?? 'signal ' + result.signal}); using the JSON backend instead`
+        `better-sqlite3 failed to load (exit ${result.status ?? 'signal ' + result.signal}); using the JSON backend instead` +
+          (abiCrash
+            ? ` — its prebuilt binary is built for Node's ABI, not Electron ${process.versions.electron}'s ` +
+              `(module version ${process.versions.modules}). Rebuilding it from source against Electron would fix it; ` +
+              'the JSON store works meanwhile.'
+            : '')
       )
     }
   } catch (err) {
@@ -282,14 +299,85 @@ function sqliteIsLoadable(): boolean {
 
 let store: Store | null = null
 
+/** Marks a store as having already taken the JSON store's contents. */
+const MIGRATION_KEY = 'migrated-from-json'
+
+/**
+ * Copies an existing JSON store into a freshly working SQLite one.
+ *
+ * This exists because the backend can start working on an upgrade — a native
+ * module that would not load suddenly loading — and without a migration the
+ * launcher would open an empty database and present a first-run experience to
+ * someone with five instances, a hosted server and companions. The data would
+ * still be on disk, which is no comfort at all when the screen says you own
+ * nothing.
+ *
+ * Runs once, is skipped when the target already holds anything, and never
+ * deletes the JSON file: if this goes wrong the old store is still there.
+ */
+function migrateFromJson(target: Store, jsonFile: string): void {
+  if (!existsSync(jsonFile)) return
+  if (target.kvGet(MIGRATION_KEY)) return
+
+  let parsed: JsonShape
+  try {
+    parsed = JSON.parse(readFileSync(jsonFile, 'utf8')) as JsonShape
+  } catch {
+    log.warn('the json store could not be read for migration; leaving it alone')
+    return
+  }
+
+  const collections = Object.keys(parsed.documents ?? {})
+  const keys = Object.keys(parsed.kv ?? {})
+  if (collections.length === 0 && keys.length === 0) {
+    target.kvSet(MIGRATION_KEY, new Date().toISOString())
+    return
+  }
+
+  /*
+   * Refuse to write over anything. A database that already holds documents has
+   * been used, and merging two sources of truth silently is worse than leaving
+   * the newer one alone.
+   */
+  const occupied = collections.find((collection) => target.all(collection).length > 0)
+  if (occupied) {
+    log.warn(`sqlite already holds "${occupied}"; skipping the json migration`)
+    target.kvSet(MIGRATION_KEY, 'skipped: target not empty')
+    return
+  }
+
+  let documents = 0
+  for (const collection of collections) {
+    for (const [id, doc] of Object.entries(parsed.documents[collection] ?? {})) {
+      if (doc && typeof doc === 'object') {
+        target.put(collection, id, doc as object)
+        documents += 1
+      }
+    }
+  }
+
+  for (const [key, value] of Object.entries(parsed.kv ?? {})) {
+    if (typeof value === 'string') target.kvSet(key, value)
+  }
+
+  target.kvSet(MIGRATION_KEY, new Date().toISOString())
+  log.info(
+    `migrated ${documents} document(s) across ${collections.length} collection(s) and ${keys.length} setting(s) ` +
+      'from the json store; the json file has been left in place'
+  )
+}
+
 export function initDatabase(): Store {
   if (store) return store
 
   if (sqliteIsLoadable()) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+       
       const Database = require('better-sqlite3')
-      store = new SqliteStore(Database, dbFile())
+      const sqlite = new SqliteStore(Database, dbFile())
+      // Before anything reads from it, bring across whatever the json store held.
+      migrateFromJson(sqlite, join(dataRoot(), 'nexuscraft-data.json'))
+      store = sqlite
       log.info('using the sqlite backend')
       return store
     } catch (err) {

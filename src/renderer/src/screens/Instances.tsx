@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Boxes,
+  Clock,
   Copy,
   Download,
   FileArchive,
@@ -19,6 +20,7 @@ import {
   Wrench
 } from 'lucide-react'
 import type { Instance, InstanceStats, LauncherErrorPayload, LoaderId, LoaderVersion, VersionSummary } from '@shared/types'
+import { LauncherImport } from '../components/LauncherImport'
 import { api, toPayload, type MemoryInfo } from '../api'
 import { useStore, selectedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Modal, SettingRow, Spinner, Toggle } from '../components/ui'
@@ -40,6 +42,7 @@ export function InstancesScreen(): JSX.Element {
 
   const [createOpen, setCreateOpen] = useState(false)
   const [modpackOpen, setModpackOpen] = useState(false)
+  const [launcherImportOpen, setLauncherImportOpen] = useState(false)
   const [editing, setEditing] = useState<Instance | null>(null)
   const [deleting, setDeleting] = useState<Instance | null>(null)
   const [deleteFiles, setDeleteFiles] = useState(true)
@@ -138,6 +141,13 @@ export function InstancesScreen(): JSX.Element {
           <button className="btn" onClick={() => setModpackOpen(true)}>
             <FileArchive size={15} /> Import modpack
           </button>
+          <button
+            className="btn"
+            onClick={() => setLauncherImportOpen(true)}
+            title="Bring instances over from CurseForge, Prism, MultiMC, Modrinth or the official launcher"
+          >
+            <Boxes size={15} /> From another launcher
+          </button>
           <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
             <Plus size={16} /> New instance
           </button>
@@ -189,6 +199,11 @@ export function InstancesScreen(): JSX.Element {
 
       <CreateInstanceModal open={createOpen} onClose={() => setCreateOpen(false)} />
       <ModpackImportModal open={modpackOpen} onClose={() => setModpackOpen(false)} />
+      <LauncherImport
+        open={launcherImportOpen}
+        onClose={() => setLauncherImportOpen(false)}
+        onImported={() => void useStore.getState().refreshInstances()}
+      />
       {editing && <EditInstanceModal instance={editing} onClose={() => setEditing(null)} />}
 
       <ConfirmDialog
@@ -320,6 +335,17 @@ function InstanceCard({
             <span className="row gap-4"><Globe2 size={12} /> {stats.worlds} worlds</span>
             <span className="row gap-4"><Image size={12} /> {stats.screenshots}</span>
             <span className="row gap-4"><HardDrive size={12} /> {formatBytes(stats.diskBytes)}</span>
+            {/*
+              * Per-instance hours. Home shows the total across everything, which
+              * answers "how much Minecraft" but not "which of these do I
+              * actually play" — the question you ask when deciding what to
+              * delete.
+              */}
+            {instance.totalPlaytimeMs > 0 && (
+              <span className="row gap-4" title={`Last played ${formatRelative(instance.lastPlayedAt)}`}>
+                <Clock size={12} /> {formatDuration(instance.totalPlaytimeMs)}
+              </span>
+            )}
           </div>
         )}
 

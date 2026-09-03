@@ -20,16 +20,14 @@ interface ProtocolEntry {
 /**
  * Minecraft versions that speak a given protocol number, newest first.
  *
- * The protocol is the only figure in a ping that is unambiguous. Version
- * *names* are decoration a server picks for itself: the live catalogue check
- * turned up "Velocity 1.7.2-26.2", "§f§fWe support: 1.20-1.21" and a Paper
- * server listing fifteen versions at once, none of which can be parsed
- * reliably. Protocol 767 means 1.21.1/1.21 and nothing else.
+ * The protocol is exact where it is available: 767 means 1.21.1/1.21 and
+ * nothing else. It is not always available, though — a proxy asked with the
+ * conventional "any version" handshake echoes that back instead of answering,
+ * and then the version *name* is all there is. See `versionsFromName`.
  */
 export function versionsForProtocol(protocol: number | null): string[] {
-  if (protocol === null || !Number.isFinite(protocol)) return []
+  if (protocol === null || !Number.isFinite(protocol) || protocol < 0) return []
   try {
-
     const mcData = require('minecraft-data') as { versions: { pc: ProtocolEntry[] } }
     return mcData.versions.pc
       .filter((entry) => entry.version === protocol && entry.releaseType !== 'snapshot')
@@ -39,6 +37,54 @@ export function versionsForProtocol(protocol: number | null): string[] {
     // falls back to trusting the user's explicit choice.
     return []
   }
+}
+
+/** Every release, newest first — the ordering used to compare versions. */
+function releaseOrder(): string[] {
+  try {
+    const mcData = require('minecraft-data') as { versions: { pc: ProtocolEntry[] } }
+    return mcData.versions.pc
+      .filter((entry) => entry.releaseType !== 'snapshot')
+      .map((entry) => entry.minecraftVersion)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Reads the version range out of a server's *name*.
+ *
+ * Needed because a proxy does not answer the protocol question. The launcher
+ * pings with protocol -1, meaning "reply whatever your version is", which is
+ * the usual convention — but Velocity echoes that -1 straight back rather than
+ * reporting its own, so the number is useless and the name is all there is.
+ *
+ * Happily the name is better data than the protocol for this case: a proxy
+ * advertises the whole span it accepts ("Velocity 1.7.2-26.2"), where a
+ * protocol number could only ever name one. Paper's multi-version strings
+ * ("1.20-1.21") read the same way.
+ */
+export function versionsFromName(versionName: string | null): string[] {
+  if (!versionName) return []
+
+  const order = releaseOrder()
+  if (order.length === 0) return []
+
+  const rank = new Map(order.map((version, index) => [version, index]))
+
+  // Version-shaped tokens, e.g. 1.7.2, 1.21, 26.2. Longest first so "1.21.1"
+  // is not read as "1.21".
+  const tokens = (versionName.match(/\d+\.\d+(?:\.\d+)?/g) ?? []).filter((token) => rank.has(token))
+  if (tokens.length === 0) return []
+  if (tokens.length === 1) return [tokens[0]]
+
+  // Lower index means newer, so the newest bound is the smallest index.
+  const positions = tokens.map((token) => rank.get(token) as number)
+  const newest = Math.min(...positions)
+  const oldest = Math.max(...positions)
+
+  // Everything the server says it accepts, newest first.
+  return order.slice(newest, oldest + 1)
 }
 
 export interface JoinCandidate {
@@ -59,7 +105,15 @@ export function rankInstancesForServer(
   status: ServerStatus | null,
   instances: Instance[]
 ): { candidates: JoinCandidate[]; serverVersions: string[] } {
-  const serverVersions = versionsForProtocol(status?.protocol ?? null)
+  /*
+   * Protocol first, because it is exact. The name is the fallback for proxies,
+   * which is not a rare edge case — most large public servers run behind one.
+   */
+  const serverVersions =
+    versionsForProtocol(status?.protocol ?? null).length > 0
+      ? versionsForProtocol(status?.protocol ?? null)
+      : versionsFromName(status?.versionName ?? null)
+
   if (serverVersions.length === 0) return { candidates: [], serverVersions }
 
   // "1.21.1" -> "1.21", so a 1.21.1 client still counts for a 1.21 server.
@@ -85,7 +139,21 @@ export function rankInstancesForServer(
     })
   }
 
-  candidates.sort((a, b) => a.rank - b.rank || a.instance.name.localeCompare(b.instance.name))
+  /*
+   * Within a rank, prefer the newest version the server accepts.
+   *
+   * A proxy advertising 1.7.2 through 26.2 makes every instance an exact match,
+   * and falling back to alphabetical order would send a 1.7.2 client at a
+   * modern server for want of a tiebreak. `serverVersions` is newest-first, so
+   * its index is the ordering.
+   */
+  const newness = new Map(serverVersions.map((version, index) => [version, index]))
+  candidates.sort(
+    (a, b) =>
+      a.rank - b.rank ||
+      (newness.get(a.instance.minecraftVersion) ?? 9999) - (newness.get(b.instance.minecraftVersion) ?? 9999) ||
+      a.instance.name.localeCompare(b.instance.name)
+  )
   return { candidates, serverVersions }
 }
 

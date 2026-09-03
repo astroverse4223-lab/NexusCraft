@@ -147,7 +147,6 @@ export async function pathTo(
  */
 export async function escapeUpwards(context: ToolContext): Promise<string | null> {
   const { bot } = context
-  const { Vec3 } = require('vec3')
 
   if (isCreative(bot)) {
     try {

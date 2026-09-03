@@ -1,16 +1,68 @@
 import { existsSync } from 'node:fs'
 import { readdir, readFile, rm, stat, mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import type { BackupInfo, Instance, WorldInfo } from '@shared/types'
+import type { BackupInfo, Instance, WorldInfo, WorldMapData } from '@shared/types'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { assertInside, instanceDir, ensureDir } from '../../core/paths'
 import { instanceSubdir } from '../instances/instanceService'
 import { nbtCompound, nbtNumber, nbtString, parseNbt } from './nbt'
 import { zipDirectory } from '../backup/zipWriter'
+import { readWorldMap } from './regionReader'
 import { emit } from '../../core/events'
 
 const log = createLogger('worlds')
+
+/**
+ * A drawable height map for one world.
+ *
+ * Downsampled here rather than in the interface: a big world is millions of
+ * columns, and the point of the cap is to keep what crosses the IPC boundary
+ * and sits in the renderer's memory bounded regardless of how long the world
+ * has been played.
+ */
+export async function worldMap(instance: Instance, folderName: string): Promise<WorldMapData | null> {
+  const regionDir = join(savesDir(instance), folderName, 'region')
+  const map = await readWorldMap(regionDir)
+  if (!map) return null
+
+  // At most ~900 px on the long side; a whole-world view is not a blueprint.
+  const step = Math.max(1, Math.ceil(Math.max(map.width, map.height) / 900))
+  const width = Math.floor(map.width / step)
+  const height = Math.floor(map.height / step)
+  const out = new Int16Array(width * height)
+
+  for (let z = 0; z < height; z += 1) {
+    for (let x = 0; x < width; x += 1) {
+      /*
+       * Take the highest column in each cell rather than an average. A mean
+       * blurs a one-block wall into the ground it stands on, which is exactly
+       * the thing a player is looking for on their own map.
+       */
+      let best = -1
+      for (let dz = 0; dz < step; dz += 1) {
+        for (let dx = 0; dx < step; dx += 1) {
+          const value = map.heights[(z * step + dz) * map.width + (x * step + dx)]
+          if (value > best) best = value
+        }
+      }
+      out[z * width + x] = best
+    }
+  }
+
+  return {
+    minX: map.minX,
+    minZ: map.minZ,
+    width,
+    height,
+    step,
+    low: map.low,
+    high: map.high,
+    chunks: map.chunks,
+    regions: map.regions,
+    heights: new Uint8Array(out.buffer, out.byteOffset, out.byteLength)
+  }
+}
 
 export function savesDir(instance: Instance): string {
   return instanceSubdir(instance, 'saves')

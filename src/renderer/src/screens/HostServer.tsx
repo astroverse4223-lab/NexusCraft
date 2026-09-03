@@ -36,6 +36,7 @@ import type { Companion } from '@shared/companion'
 import { api, subscribe, toPayload } from '../api'
 import { BrowseTab } from './Browse'
 import { ServerBackups } from '../components/ServerBackups'
+import { RestartSchedule } from '../components/RestartSchedule'
 import { RelayTunnel } from '../components/RelayTunnel'
 import { activeAccount, useStore } from '../store/useStore'
 import {
@@ -1105,6 +1106,8 @@ export function HostServerScreen(): JSX.Element {
                 </div>
                 <div className="panel-pad">
                   <ServerBackups serverId={selected.id} serverName={selected.name} running={live} />
+
+                  <RestartSchedule serverId={selected.id} />
                 </div>
               </div>
 

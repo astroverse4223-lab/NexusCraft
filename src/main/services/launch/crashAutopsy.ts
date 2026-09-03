@@ -8,6 +8,8 @@ import { getSecret } from '../auth/secureStore'
 import { analyseMods } from '../mods/modService'
 import { recentLogs } from './launchService'
 
+import { findLocalModel } from './localModel'
+
 const log = createLogger('autopsy')
 
 /**
@@ -72,9 +74,15 @@ function pickModel(): { baseUrl: string; apiKey: string; model: string } | null 
   }
 }
 
-/** True when a model is configured, so the UI can offer this at all. */
-export function autopsyAvailable(): boolean {
-  return pickModel() !== null
+/**
+ * True when anything can answer, so the UI can offer this at all.
+ *
+ * Asynchronous now, because "is there a model" can no longer be answered from
+ * settings alone — it may mean asking a local Ollama whether it is running.
+ */
+export async function autopsyAvailable(): Promise<boolean> {
+  if (pickModel() !== null) return true
+  return (await findLocalModel()) !== null
 }
 
 /** Pulls the JSON object out of a reply that may be wrapped in prose or fences. */
@@ -152,7 +160,13 @@ export async function diagnoseWithModel(
   instance: Instance,
   crash: CrashDiagnosis | null
 ): Promise<CrashAutopsy> {
-  const config = pickModel()
+  /*
+   * A configured companion first, since that is a deliberate choice, then
+   * whatever is running locally. Diagnosis should not require setting up an AI
+   * assistant: the person who most needs to be told which mod crashed their
+   * game is the one who has just installed the launcher.
+   */
+  const config = pickModel() ?? (await findLocalModel())
   if (!config) {
     throw new LauncherError('INVALID_INPUT', 'no model configured', {
       title: 'No model is set up to read the crash',

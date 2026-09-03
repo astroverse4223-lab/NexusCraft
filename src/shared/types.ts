@@ -330,6 +330,30 @@ export interface WorldInfo {
   corrupt: boolean
 }
 
+/**
+ * A top-down height map of a world, ready to draw.
+ *
+ * Heights arrive as raw bytes rather than an array of numbers: a map of any
+ * size is hundreds of thousands of columns, and as JSON that is tens of
+ * megabytes of text to serialise on every open.
+ */
+export interface WorldMapData {
+  /** Block coordinates of the top-left corner. */
+  minX: number
+  minZ: number
+  width: number
+  height: number
+  /** Blocks per pixel — the map is downsampled to stay a sensible size. */
+  step: number
+  /** Lowest and highest generated surface, for shading. */
+  low: number
+  high: number
+  chunks: number
+  regions: number
+  /** `width * height` little-endian int16 surface heights; -1 = ungenerated. */
+  heights: Uint8Array
+}
+
 export interface BackupInfo {
   fileName: string
   path: string
@@ -590,6 +614,21 @@ export interface DirectoryJoinTargets {
   candidates: Array<{ instance: Instance; reason: string }>
 }
 
+/**
+ * Whether a server in the directory can actually be joined with what is
+ * installed — worked out before the player clicks, not after.
+ */
+export interface DirectoryCompatibility {
+  /** True when at least one instance matches what the server speaks. */
+  ok: boolean
+  /** The instance that would be launched, when there is one. */
+  instanceName: string | null
+  /** Versions the server accepts, for the tooltip. */
+  serverVersions: string[]
+  /** Why it cannot be joined, when it cannot. */
+  reason: string | null
+}
+
 /** The result of pinging an address the user typed in. */
 export interface DirectoryLookup {
   address: string
@@ -700,6 +739,15 @@ export interface ModrinthVersion {
 
 /** A newer build of an installed mod, found by matching its file hash. */
 export interface ModUpdate {
+  /**
+   * Which catalogue this update came from.
+   *
+   * Optional so older stored updates still parse, and treated as Modrinth when
+   * absent — that was the only source before CurseForge was added. Applying an
+   * update has to route on this: the two sites take different ids and serve
+   * files differently.
+   */
+  source?: 'modrinth' | 'curseforge'
   fileName: string
   modName: string
   /** Modrinth project id — the mod itself, not this build of it. */
@@ -750,6 +798,20 @@ export interface ModrinthSearchResult {
   projects: ModrinthProject[]
   total: number
   offset: number
+}
+
+/** An instance found in another launcher's install, offered for import. */
+export interface ForeignInstanceInfo {
+  id: string
+  launcher: 'curseforge' | 'prism' | 'multimc' | 'modrinth' | 'vanilla' | 'gdlauncher'
+  name: string
+  minecraftVersion: string
+  loader: LoaderId
+  loaderVersion: string | null
+  gameDir: string
+  mods: number
+  worlds: number
+  sizeBytes: number
 }
 
 /** Summary of an exported instance archive, shown before importing it. */
@@ -872,6 +934,20 @@ export interface GameLogLine {
 
 /* ------------------------------------------------------------------ settings */
 
+/** What one automatic mod update check did. */
+export interface ModUpdateSweep {
+  /** Instances actually examined. */
+  checked: number
+  /** Instances left alone because the game was running. */
+  skipped: number
+  /** Mods with a newer version, across every instance checked. */
+  found: number
+  /** Of those, how many were installed automatically. */
+  installed: number
+  /** And how many were held back as major jumps or pre-release builds. */
+  heldBack: number
+}
+
 export interface AppSettings {
   /** Root directory holding instances, versions, assets, libraries and runtimes. */
   dataDir: string
@@ -953,7 +1029,7 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: LauncherErro
 
 /* -------------------------------------------------------------- ipc events */
 
-import type { CameraFrame, Companion, CompanionEvent, CompanionStatus } from './companion'
+import type { CameraFrame, Companion, CompanionEvent, CompanionStatus, CompanionUsage, CompanionWork } from './companion'
 
 export interface EventMap {
   'companion:event': CompanionEvent
@@ -968,6 +1044,8 @@ export interface EventMap {
   }
   'companion:memory': { companionId: string; notes: string[] }
   'companion:camera': { companionId: string; frame: CameraFrame }
+  'companion:work': { companionId: string; work: CompanionWork }
+  'companion:usage': { companionId: string; usage: CompanionUsage }
   'companion:list': Companion[]
   'host:changed': HostedServer[]
   'host:state': HostedServerState
@@ -982,6 +1060,13 @@ export interface EventMap {
   'servers:status': ServerStatus
   'directory:status': ServerStatus
   'settings:changed': AppSettings
+  /**
+   * The result of an automatic mod update check.
+   *
+   * Carries the whole sweep rather than a per-mod event so the UI can say
+   * "4 mods have updates" once, instead of four times.
+   */
+  'mods:updateSweep': ModUpdateSweep
   /** A `nexuscraft://join/…` link arrived and is waiting on the user. */
   'link:invite': ServerInvite
   /** A `nexuscraft://mod/…` link arrived; the user picks where it goes. */

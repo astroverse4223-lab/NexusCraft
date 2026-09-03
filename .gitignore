@@ -21,3 +21,13 @@ build/icon.png
 # Code signing material must never be committed.
 *.pfx
 *.p12
+
+# The Fabric mod's build output.
+#
+# Loom keeps a decompiled Minecraft and its remapped jars under mod/.gradle —
+# 85MB of generated cache, and some of its paths are long enough that `git add`
+# fails outright on Windows with "Filename too long" rather than just being
+# large. None of it is source; `gradle build` regenerates all of it.
+mod/.gradle/
+mod/build/
+mod/run/

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ToolContext } from '../tools/types'
 import { findTool } from '../tools/registry'
+import type { BuildPlacement } from '@shared/companion'
 import { blueprintBlocks, billOfMaterials, blueprintSize, type Blueprint } from './blueprint'
 
 /**
@@ -39,6 +40,13 @@ export interface BuildResult extends BuildProgress {
   missing: Array<{ block: string; short: number }>
   /** Why the build stopped early, when it did. */
   stoppedBecause: string | null
+  /**
+   * Every block actually placed, with what the position held first.
+   *
+   * Recorded as the build runs rather than reconstructed afterwards: the only
+   * moment the previous block is knowable is immediately before it is replaced.
+   */
+  placements: BuildPlacement[]
 }
 
 /** How often to report progress, in blocks. */
@@ -191,7 +199,8 @@ export async function buildBlueprint(
     failed: 0,
     total: blocks.length,
     missing: shortfall(bot, blueprint),
-    stoppedBecause: null
+    stoppedBecause: null,
+    placements: []
   }
 
   // In creative the bot's inventory starts empty; fill it before laying anything.
@@ -234,6 +243,8 @@ export async function buildBlueprint(
     if (reply.startsWith('placed')) {
       result.placed += 1
       consecutiveFailures = 0
+      // `current` was read just above, before anything was placed here.
+      result.placements.push({ x, y, z, placed: entry.block, was: current?.name ?? 'air' })
     } else if (reply.includes('is already at')) {
       result.skipped += 1
       consecutiveFailures = 0

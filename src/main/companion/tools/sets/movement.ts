@@ -159,7 +159,6 @@ export const TOOLS: Tool[] = [
       lastHeading = heading
 
       const death = watchForDeath(bot)
-      const danger = watchForDanger(bot)
       const [dx, dz] = OFFSETS[heading]
       const from = bot.entity.position
       const target = {

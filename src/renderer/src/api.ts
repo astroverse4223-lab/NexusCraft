@@ -27,12 +27,14 @@ import type {
   ModpackInstallResult,
   ModpackServerInstallResult,
   ModUpdate,
+  ModUpdateSweep,
   ModChangelog,
   ModRollback,
   InstanceExportInfo,
   DataPackDefinition,
   DataPackOptionValues,
   DataPackInstallResult,
+  ForeignInstanceInfo,
   InstalledDataPack,
   Result,
   SavedServer,
@@ -42,12 +44,16 @@ import type {
   ServerStatus,
   DirectoryListing,
   DirectoryLookup,
+  DirectoryCompatibility,
   DirectoryJoinTargets,
   VersionManifestInfo,
-  WorldInfo
+  WorldInfo,
+  WorldMapData
 } from '@shared/types'
 import type {
   BlueprintSummary,
+  BuildSummary,
+  CompanionUsage,
   Companion,
   CompanionSettings,
   CompanionState,
@@ -85,6 +91,14 @@ export function isCancellation(err: unknown): boolean {
 }
 
 /** Anything thrown out of an API call, normalised into a displayable payload. */
+/** Mirrors the main process's ModUpdateSettings, minus what the UI cannot set. */
+export interface ModAutoUpdateSettings {
+  mode: 'off' | 'notify' | 'install'
+  everyHours: number
+  reviewRisky: boolean
+  lastCheck: number | null
+}
+
 export function toPayload(err: unknown): LauncherErrorPayload {
   if (err instanceof ApiError) return err.payload
   return {
@@ -191,7 +205,9 @@ export const api = {
     pickSavePath: (opts: { title?: string; defaultName?: string; extensions?: string[] }) =>
       call<string | null>('app:pickSavePath', opts),
     window: (action: 'minimize' | 'maximize' | 'close') => call<boolean>('app:window', { action }),
-    memory: () => call<MemoryInfo>('app:systemMemory')
+    memory: () => call<MemoryInfo>('app:systemMemory'),
+    diagnostics: (outputPath: string, opts: { instanceId?: string; note?: string } = {}) =>
+      call<{ path: string; bytes: number; files: number }>('app:diagnostics', { outputPath, ...opts })
   },
 
   settings: {
@@ -235,6 +251,12 @@ export const api = {
       }),
     inspectArchive: (filePath: string) => call<InstanceExportInfo>('instances:inspectArchive', { filePath }),
     importArchive: (filePath: string, name?: string) => call<Instance>('instances:import', { filePath, name }),
+    findForeign: () => call<ForeignInstanceInfo[]>('instances:findForeign'),
+    importForeign: (id: string, name?: string) =>
+      call<{ instanceId: string; name: string; copiedFolders: string[]; skipped: string[] }>(
+        'instances:importForeign',
+        { id, name }
+      ),
     snapshots: (id: string) => call<InstanceSnapshot[]>('instances:snapshots', { id }),
     snapshot: (id: string, name: string, note?: string) =>
       call<InstanceSnapshot>('instances:snapshot', { id, name, note }),
@@ -297,6 +319,25 @@ export const api = {
       call<boolean>('mods:applyUpdate', { instanceId, update }),
     changelog: (instanceId: string, update: ModUpdate) =>
       call<ModChangelog[]>('mods:changelog', { instanceId, update }),
+    autoUpdateSettings: () => call<ModAutoUpdateSettings>('mods:autoUpdateSettings', {}),
+    setAutoUpdateSettings: (patch: Partial<Omit<ModAutoUpdateSettings, 'lastCheck'>>) =>
+      call<ModAutoUpdateSettings>('mods:setAutoUpdateSettings', { patch }),
+    hollowStatus: (instanceId: string) =>
+      call<{
+        available: boolean
+        compatible: boolean
+        installed: boolean
+        reason: string | null
+        hasFabricApi: boolean
+        suggestedModel: string | null
+        compatibleInstances: string[]
+      }>('mods:hollowStatus', { instanceId }),
+    installHollow: (instanceId: string) =>
+      call<{ installedJar: boolean; wroteConfig: boolean; model: string | null; warning: string | null }>(
+        'mods:installHollow',
+        { instanceId }
+      ),
+    checkAllNow: () => call<ModUpdateSweep>('mods:checkAllNow', {}),
     rollbacks: (instanceId: string) => call<ModRollback[]>('mods:rollbacks', { instanceId }),
     rollback: (instanceId: string, fileName: string) =>
       call<ModRollback>('mods:rollback', { instanceId, fileName }),
@@ -359,6 +400,13 @@ export const api = {
   companion: {
     routines: () => call<RoutineInfo[]>('companion:routines'),
     list: () => call<Companion[]>('companion:list'),
+    setMicrophone: (wanted: boolean) =>
+      call<{ wanted: boolean }>('companion:setMicrophone', { wanted }),
+    toolSizes: () =>
+      call<{ full: number; core: number; fullTokens: number; coreTokens: number }>(
+        'companion:toolSizes',
+        {}
+      ),
     states: () => call<CompanionState[]>('companion:states'),
     create: (name?: string) => call<Companion>('companion:create', { name }),
     remove: (id: string) => call<boolean>('companion:delete', { id }),
@@ -371,6 +419,12 @@ export const api = {
     instruct: (id: string, text: string) => call<boolean>('companion:instruct', { id, text }),
     clearMemory: (id: string) => call<boolean>('companion:clearMemory', { id }),
     camera: (id: string, on: boolean) => call<boolean>('companion:camera', { id, on }),
+    interrupt: (id: string) => call<boolean>('companion:interrupt', { id }),
+    usage: () => call<Record<string, CompanionUsage>>('companion:usage'),
+    resetUsage: (id?: string) => call<boolean>('companion:resetUsage', { id }),
+    builds: () => call<BuildSummary[]>('companion:builds'),
+    undoBuild: (buildId: string, companionId?: string) =>
+      call<boolean>('companion:undoBuild', { buildId, companionId }),
     blueprints: () => call<BlueprintSummary[]>('companion:blueprints'),
     importSchematic: (filePath: string) => call<BlueprintSummary>('companion:importSchematic', { filePath }),
     build: (id: string, blueprintId: string) => call<boolean>('companion:build', { id, blueprintId }),
@@ -451,6 +505,25 @@ export const api = {
     backup: (id: string) => call<BackupInfo>('host:backup', { id }),
     restoreBackup: (id: string, fileName: string) => call<boolean>('host:restoreBackup', { id, fileName }),
     deleteBackup: (id: string, fileName: string) => call<boolean>('host:deleteBackup', { id, fileName }),
+    restartSettings: (id: string) =>
+      call<{
+        enabled: boolean
+        intervalHours: number
+        warnMinutes: number
+        skipIfPlayers: boolean
+        nextAt: number | null
+      }>('host:restartSettings', { id }),
+    setRestartSettings: (
+      id: string,
+      patch: Partial<{ enabled: boolean; intervalHours: number; warnMinutes: number; skipIfPlayers: boolean }>
+    ) =>
+      call<{
+        enabled: boolean
+        intervalHours: number
+        warnMinutes: number
+        skipIfPlayers: boolean
+        nextAt: number | null
+      }>('host:setRestartSettings', { id, patch }),
     backupSettings: (id: string) => call<ServerBackupSettings>('host:backupSettings', { id }),
     inviteLink: (id: string) =>
       call<{ link: string; address: string; isPublic: boolean; note: string | null }>('host:inviteLink', { id }),
@@ -520,6 +593,8 @@ export const api = {
     openFolder: (instanceId: string, folderName?: string) =>
       call<boolean>('worlds:openFolder', { instanceId, folderName }),
     backup: (instanceId: string, folderName: string) => call<BackupInfo>('worlds:backup', { instanceId, folderName }),
+    map: (instanceId: string, folderName: string) =>
+      call<WorldMapData>('worlds:map', { instanceId, folderName }),
     listBackups: (instanceId: string) => call<BackupInfo[]>('worlds:listBackups', { instanceId }),
     deleteBackup: (instanceId: string, fileName: string) =>
       call<boolean>('worlds:deleteBackup', { instanceId, fileName }),
@@ -535,6 +610,7 @@ export const api = {
     lookup: (address: string) => call<DirectoryLookup>('directory:lookup', { address }),
     add: (name: string, address: string, port: number) =>
       call<SavedServer>('directory:add', { name, address, port }),
+    compatibility: () => call<Record<string, DirectoryCompatibility>>('directory:compatibility'),
     joinTargets: (address: string, port: number) =>
       call<DirectoryJoinTargets>('directory:joinTargets', { address, port }),
     join: (address: string, port: number, instanceId?: string) =>

@@ -540,7 +540,15 @@ async function writeRollbackIndex(instance: Instance, entries: ModRollback[]): P
  * build from two updates ago is not a thing anyone asks for and keeping every
  * jar forever quietly fills the disk.
  */
-async function stashForRollback(instance: Instance, update: ModUpdate, oldPath: string): Promise<void> {
+/**
+ * Exported so the CurseForge updater shares one undo history.
+ *
+ * The rollback list is what makes an update safe to try rather than a decision
+ * to commit to, and a player does not care which site a jar came from. Two
+ * separate stashes would mean a mod could be undone or not depending on where
+ * the launcher happened to find it.
+ */
+export async function stashForRollback(instance: Instance, update: ModUpdate, oldPath: string): Promise<void> {
   const dir = rollbackDir(instance)
   await mkdir(dir, { recursive: true })
 

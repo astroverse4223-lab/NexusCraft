@@ -1,44 +1,72 @@
 /* ------------------------------------------------------------------ tokens */
 
 :root {
-  /* Surface ramp — near-black with a cool cast, so accents read as light. */
-  --bg-0: #05070c;
-  --bg-1: #080b12;
-  --bg-2: #0c111a;
-  --bg-3: #111823;
+  /*
+   * Surface ramp.
+   *
+   * Every step carries a slight blue cast rather than being neutral grey: a
+   * true grey next to a teal accent reads as dirty, and the cast is what makes
+   * the accent look like light falling on the surface instead of paint applied
+   * to it.
+   */
+  --bg-0: #04060b;
+  --bg-1: #070a11;
+  --bg-2: #0b0f18;
+  --bg-3: #101623;
 
-  --panel: rgba(255, 255, 255, 0.035);
-  --panel-strong: rgba(255, 255, 255, 0.06);
-  --panel-hover: rgba(255, 255, 255, 0.075);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  /*
+   * Panels are a gradient, not a flat wash.
+   *
+   * A single translucent white lies flat however it is layered. A vertical
+   * fade with a brighter hairline along the top edge reads as a surface lit
+   * from above, which is the whole difference between "dark theme" and
+   * "material".
+   */
+  --panel: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.022));
+  --panel-flat: rgba(255, 255, 255, 0.035);
+  --panel-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.04));
+  --panel-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.055));
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  /* The lit top edge, applied as an inset shadow so it never shifts layout. */
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --edge-strong: inset 0 1px 0 rgba(255, 255, 255, 0.13);
 
-  --text: #e8eef7;
-  --text-muted: #93a4bb;
-  --text-dim: #62748d;
+  --text: #eaf0f8;
+  --text-muted: #97a7bd;
+  --text-dim: #64768f;
 
   --accent: #5eead4;
-  --accent-dim: rgba(94, 234, 212, 0.16);
+  --accent-deep: #2dd4bf;
+  --accent-dim: rgba(94, 234, 212, 0.14);
   --accent-glow: rgba(94, 234, 212, 0.35);
+  /* The one place a second hue appears, to give the accent somewhere to go. */
+  --accent-far: #6aa6ff;
 
   --success: #4ade80;
   --warning: #fbbf24;
   --danger: #f87171;
   --info: #60a5fa;
 
-  --radius-sm: 8px;
+  --radius-sm: 9px;
   --radius: 14px;
   --radius-lg: 20px;
   --radius-xl: 28px;
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.6);
+  /*
+   * Two-part shadows: a tight contact shadow to seat the element, and a wide
+   * soft one for depth. One blur alone always looks either sharp or muddy.
+   */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5), 0 3px 10px rgba(0, 0, 0, 0.35);
+  --shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 14px 40px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.5), 0 32px 80px rgba(0, 0, 0, 0.62);
 
   --sidebar-width: 236px;
   --titlebar-height: 38px;
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* A touch of overshoot for things that appear, rather than merely move. */
+  --ease-pop: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   --font-display: 'Outfit', 'Segoe UI', system-ui, sans-serif;
   --font-body: 'Inter Variable', 'Inter', 'Segoe UI', system-ui, sans-serif;
@@ -84,10 +112,19 @@ h4 {
   letter-spacing: -0.02em;
   margin: 0;
   line-height: 1.2;
+  /* Keeps a two-line title from breaking with one orphaned word. */
+  text-wrap: balance;
 }
 
+/*
+ * Tightened by size rather than uniformly: the same tracking that looks right
+ * on a 16px subheading reads loose and soft at 30px.
+ */
 h1 {
   font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.024em;
+  line-height: 1.12;
 }
 h2 {
   font-size: 21px;
@@ -170,12 +207,13 @@ textarea {
 }
 
 .screen-header .eyebrow {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--accent);
-  margin-bottom: 6px;
+  margin-bottom: 7px;
 }
 
 .screen-header .subtitle {
@@ -192,9 +230,11 @@ textarea {
   align-items: center;
   gap: 12px;
   padding: 0 0 0 14px;
-  background: rgba(5, 7, 12, 0.7);
+  background: rgba(4, 6, 11, 0.72);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border);
+  /* A hairline of light along the very top of the window. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   position: relative;
   z-index: 40;
 }
@@ -246,7 +286,11 @@ textarea {
   flex-direction: column;
   gap: 4px;
   padding: 18px 12px;
-  background: rgba(8, 11, 18, 0.55);
+  /*
+   * Slightly darker at the outer edge, so the sidebar reads as a panel the
+   * content sits in front of rather than a stripe painted on the background.
+   */
+  background: linear-gradient(90deg, rgba(4, 6, 11, 0.8), rgba(8, 11, 18, 0.5));
   backdrop-filter: blur(24px);
   border-right: 1px solid var(--border);
   min-height: 0;
@@ -315,7 +359,18 @@ textarea {
 
 .nav-item.active {
   color: var(--text);
-  background: var(--panel-strong);
+  /*
+   * Tinted toward the accent rather than plain white-on-dark. The selected
+   * item should feel like the accent has touched it, not merely that it is a
+   * shade lighter than its neighbours.
+   */
+  background: linear-gradient(90deg, var(--accent-dim), rgba(255, 255, 255, 0.03) 60%);
+  box-shadow: var(--edge);
+}
+
+/* The icon carries the colour; the label stays readable text. */
+.nav-item.active svg {
+  color: var(--accent);
 }
 
 .nav-item.active::before {
@@ -325,10 +380,10 @@ textarea {
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
-  height: 17px;
+  height: 18px;
   border-radius: 0 3px 3px 0;
-  background: var(--accent);
-  box-shadow: 0 0 12px var(--accent-glow);
+  background: linear-gradient(180deg, var(--accent), var(--accent-deep));
+  box-shadow: 0 0 14px var(--accent-glow);
 }
 
 .nav-item .badge {
@@ -353,6 +408,8 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   backdrop-filter: blur(18px);
+  /* Lit top edge plus a contact shadow: the two cues that read as "raised". */
+  box-shadow: var(--edge), var(--shadow-sm);
 }
 
 .panel-pad {
@@ -360,12 +417,20 @@ textarea {
 }
 
 .panel-hover {
-  transition: border-color 0.2s var(--ease), background 0.2s var(--ease), transform 0.2s var(--ease);
+  transition: border-color 0.22s var(--ease), background 0.22s var(--ease), transform 0.22s var(--ease),
+    box-shadow 0.22s var(--ease);
 }
 
 .panel-hover:hover {
   border-color: var(--border-strong);
   background: var(--panel-hover);
+  /*
+   * One pixel of lift, no more. A card that jumps under the cursor draws the
+   * eye away from what it contains; a card that barely rises just feels
+   * responsive.
+   */
+  transform: translateY(-1px);
+  box-shadow: var(--edge-strong), var(--shadow);
 }
 
 .card-grid {
@@ -388,14 +453,30 @@ textarea {
   color: var(--text);
   font-size: 13.5px;
   font-weight: 550;
+  letter-spacing: 0.005em;
   white-space: nowrap;
+  box-shadow: var(--edge), var(--shadow-sm);
   transition: background 0.16s var(--ease), border-color 0.16s var(--ease), transform 0.1s var(--ease),
-    opacity 0.16s;
+    box-shadow 0.16s var(--ease), opacity 0.16s;
+}
+
+/*
+ * Keyboard focus has to be visible without shouting. A tinted ring in the
+ * accent reads instantly against every surface in the app and never collides
+ * with the hover state, which only changes the fill.
+ */
+.btn:focus-visible,
+.nav-item:focus-visible,
+.tab:focus-visible,
+.window-control:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--accent-glow);
 }
 
 .btn:hover:not(:disabled) {
   background: var(--panel-hover);
   border-color: var(--border-strong);
+  box-shadow: var(--edge-strong), var(--shadow);
 }
 
 .btn:active:not(:disabled) {
@@ -408,16 +489,24 @@ textarea {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #60a5fa));
+  /*
+   * The one saturated surface in the app, so it has to carry the whole
+   * hierarchy on its own: a two-hue gradient for depth, a bright inner top
+   * edge so it reads as a lit object, and a coloured shadow so it looks like
+   * it is glowing onto what is behind it rather than floating over it.
+   */
+  background: linear-gradient(140deg, var(--accent) 0%, var(--accent-deep) 55%, var(--accent-far) 140%);
   border-color: transparent;
-  color: #04121a;
+  color: #03151d;
   font-weight: 650;
-  box-shadow: 0 6px 22px color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 2px 6px rgba(0, 0, 0, 0.3),
+    0 8px 26px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .btn-primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--accent) 40%, transparent);
+  filter: brightness(1.07) saturate(1.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3),
+    0 12px 34px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 .btn-ghost {
@@ -480,18 +569,25 @@ textarea {
   padding: 9px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(0, 0, 0, 0.3);
   color: var(--text);
   font-size: 13.5px;
   outline: none;
-  transition: border-color 0.16s, box-shadow 0.16s;
+  /*
+   * A field is a hole, not a tile. Shading the inside of the top edge is the
+   * exact inverse of the highlight on a button, and it is what makes the two
+   * read as different kinds of thing at a glance rather than as two rectangles.
+   */
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.16s, box-shadow 0.16s, background 0.16s;
 }
 
 .input:focus,
 .select:focus,
 .textarea:focus {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .input::placeholder {
@@ -978,7 +1074,8 @@ textarea {
 }
 
 .tab {
-  padding: 6px 14px;
+  position: relative;
+  padding: 7px 14px 9px;
   border: none;
   background: none;
   border-radius: 8px;
@@ -988,13 +1085,38 @@ textarea {
   transition: background 0.16s, color 0.16s;
 }
 
+/*
+ * Selected tabs are marked with a rule beneath rather than a filled block.
+ * Filled tabs compete with the buttons beside them for the eye; a line does
+ * the same job and stays quiet.
+ */
+.tab::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleX(0.4);
+  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+}
+
 .tab:hover {
   color: var(--text);
+  background: var(--panel-flat);
 }
 
 .tab.active {
-  background: var(--panel-hover);
+  background: var(--accent-dim);
   color: var(--text);
+}
+
+.tab.active::after {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .divider {
@@ -1152,4 +1274,59 @@ textarea {
   margin-top: 0;
   padding-top: 0;
   border-top: none;
+}
+
+
+/* --------------------------------------------------------- scrollbars */
+
+/*
+ * The default Chromium scrollbar is a wide grey slab that undoes the rest of
+ * the chrome the moment any list overflows. This one is the width of a hairline
+ * until the pointer is near it.
+ */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.09);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 99px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* -------------------------------------------------------- text niceties */
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--text);
+}
+
+/* Numbers that sit in columns should line up rather than shimmer. */
+.mono,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }

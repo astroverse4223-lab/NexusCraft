@@ -11,7 +11,14 @@ import { LauncherError } from '../../core/errors'
 import { createLogger, redact } from '../../core/logger'
 import { getSettings } from '../settings/settingsService'
 import { getActiveAccount, getValidMinecraftToken } from '../auth/accountService'
-import { ensureInstanceLayout, findInstance, getInstance, recordPlaySession, updateInstance } from '../instances/instanceService'
+import {
+  ensureInstanceLayout,
+  findInstance,
+  getInstance,
+  instanceSubdir,
+  recordPlaySession,
+  updateInstance
+} from '../instances/instanceService'
 import { installLoader, loaderProfileInstalled } from '../loaders/loaderService'
 import {
   buildClasspath,
@@ -25,6 +32,7 @@ import { buildLaunchArguments } from '../minecraft/argumentBuilder'
 import { preferWindowless, resolveJavaForVersion } from '../java/javaService'
 import { createTask } from '../downloads/downloadManager'
 import { analyseMods } from '../mods/modService'
+import { checkVramBudget } from '../support/vramBudget'
 import { diagnoseCrash } from './crashReport'
 
 const log = createLogger('launch')
@@ -179,6 +187,24 @@ export async function launchInstance(options: LaunchOptions): Promise<LaunchStat
           }
         )
       }
+    }
+
+    /*
+     * A warning, never a block. The graphics card is shared between the game
+     * and any local model, and when they do not both fit nothing reports it:
+     * the model spills to system memory and answers slowly, the game stutters,
+     * and neither says why. Saying so beforehand costs a toast.
+     */
+    try {
+      const shaderDir = instanceSubdir(instance, 'shaderpacks')
+      const hasShaders = existsSync(shaderDir) && (await readdir(shaderDir)).some((f) => f.endsWith('.zip'))
+      const vram = await checkVramBudget({ hasShaders, renderDistance: 16 })
+      if (vram.tight && vram.advice) {
+        toast('warning', 'Your graphics card may be short on memory', vram.advice)
+      }
+    } catch (err) {
+      // Never let a hardware guess stop a launch.
+      log.debug(`vram check skipped: ${(err as Error).message}`)
     }
 
     /* 4. Java */
