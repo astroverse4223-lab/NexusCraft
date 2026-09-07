@@ -35,6 +35,17 @@ export interface ToolCall {
 
 export interface LlmReply {
   content: string | null
+  /**
+   * A thinking model's working, kept apart from what it said.
+   *
+   * These were merged, with reasoning standing in when `content` was empty.
+   * That is right for salvaging a tool call out of the thinking and wrong
+   * for everything else: qwen3 leaves `content` empty while it thinks, so
+   * the companion announced four paragraphs of "Okay, let's see. The user
+   * provided a tool response..." in Minecraft chat and in the activity feed,
+   * as though that were dialogue.
+   */
+  reasoning?: string | null
   toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>
   /**
    * What the call cost, when the provider says.
@@ -206,13 +217,24 @@ function parseMindcraftCall(text: string): LlmReply['toolCalls'] {
   return [{ id: `mindcraft_${known.tool}`, name: known.tool, args }]
 }
 
-function salvageToolCall(content: string): LlmReply['toolCalls'] {
+export function salvageToolCall(content: string): LlmReply['toolCalls'] {
   // Minecraft-tuned models speak MindCraft, not JSON.
   const mindcraft = parseMindcraftCall(content)
   if (mindcraft.length > 0) return mindcraft
 
-  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/)
-  const candidate = (fenced?.[1] ?? content).trim()
+  /*
+   * Some models wrap the call in a tag instead of using the tool API.
+   *
+   * Observed from a local model as
+   * `<function_call> { "function": "crew_status", "arguments": {} } </function_call>`,
+   * which reached the player as literal text in the activity log while the tool
+   * never ran. The tag is stripped so the JSON inside can be read normally.
+   */
+  const tagged = content.match(/<(?:function_call|tool_call|tool_use)>([\s\S]*?)<\/(?:function_call|tool_call|tool_use)>/i)
+  const unwrapped = tagged?.[1] ?? content
+
+  const fenced = unwrapped.match(/```(?:json)?\s*([\s\S]*?)```/)
+  const candidate = (fenced?.[1] ?? unwrapped).trim()
 
   const start = candidate.indexOf('{')
   const end = candidate.lastIndexOf('}')
@@ -223,17 +245,64 @@ function salvageToolCall(content: string): LlmReply['toolCalls'] {
       tool?: string
       name?: string
       action?: string
+      /*
+       * `function` is what the tag-wrapped form uses, and it arrives both ways:
+       * as a plain string, and as OpenAI's nested { name, arguments } object.
+       */
+      function?: string | { name?: string; arguments?: unknown }
       args?: Record<string, unknown>
       arguments?: Record<string, unknown>
       parameters?: Record<string, unknown>
     }
-    const name = parsed.tool ?? parsed.name ?? parsed.action
+
+    const fromFunction =
+      typeof parsed.function === 'string' ? parsed.function : parsed.function?.name
+
+    const name = parsed.tool ?? parsed.name ?? parsed.action ?? fromFunction
     if (!name || typeof name !== 'string') return []
-    const args = parsed.args ?? parsed.arguments ?? parsed.parameters ?? {}
-    return [{ id: `salvaged_${Date.now()}`, name, args: args as Record<string, unknown> }]
+    // The nested form carries its arguments inside `function`, and some models
+    // send them as a JSON string rather than an object.
+    const nested =
+      typeof parsed.function === 'object' && parsed.function ? parsed.function.arguments : undefined
+    const rawArgs = parsed.args ?? parsed.arguments ?? parsed.parameters ?? nested ?? {}
+    let args: Record<string, unknown> = {}
+    if (typeof rawArgs === 'string') {
+      try {
+        args = JSON.parse(rawArgs) as Record<string, unknown>
+      } catch {
+        args = {}
+      }
+    } else if (rawArgs && typeof rawArgs === 'object') {
+      args = rawArgs as Record<string, unknown>
+    }
+    return [{ id: `salvaged_${Date.now()}`, name, args }]
   } catch {
     return []
   }
+}
+
+/**
+ * Models that reason before every answer unless told not to.
+ *
+ * Qwen3 does, and for this job it is close to pure waste: choosing "walk to
+ * these coordinates" from a list of tools does not need three hundred tokens of
+ * deliberation first. The cost is generation time on the same GPU the game is
+ * using, every idle interval, for as long as the companion is connected -
+ * which is felt as the whole machine lagging.
+ *
+ * Measured on qwen3:4b through Ollama, one ordinary decision:
+ *
+ *   as shipped                     44.5s   2607 tokens
+ *   enable_thinking: false          4.6s    281 tokens
+ *
+ * `/no_think` in the prompt is the widely repeated advice and it did nothing
+ * here - 10,341 characters of reasoning with it. Ollama's own `think: false`
+ * helped on the OpenAI route and backfired on the native one, where the
+ * thinking simply moved into the reply. Only the template flag actually works,
+ * which is why this is a request field and not a line of prompt.
+ */
+function thinksByDefault(model: string): boolean {
+  return /qwen3/i.test(model ?? '')
 }
 
 /**
@@ -264,33 +333,97 @@ export async function chat(
    */
   const timeoutMs = config.timeoutMs ?? (isReasoningModel(config.model) ? 180_000 : 60_000)
   const timer = setTimeout(() => controller.abort(), timeoutMs)
-  signal?.addEventListener('abort', () => controller.abort(), { once: true })
+
+  /*
+   * The abort listener is removed again when the request finishes.
+   *
+   * It was added and left behind, and the caller's signal lasts a whole turn
+   * while this runs once per step - so a turn that used a dozen tools ended up
+   * with a dozen listeners on one signal and Node started warning about a leak:
+   * "MaxListenersExceededWarning: 11 abort listeners added to [AbortSignal]".
+   * Nothing broke, but it is a leak, and the warning is the kind that trains
+   * people to ignore warnings.
+   *
+   * `once: true` does not help: it removes the listener when the event fires,
+   * and the whole point is that it usually never does.
+   */
+  const onAbort = (): void => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+
+  const cleanup = (): void => {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
+  }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   // Ollama needs no key; sending an empty Authorization header upsets some proxies.
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`
 
-  let response: Response
-  try {
-    response = await fetch(endpoint(config.baseUrl), {
-      method: 'POST',
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: config.temperature ?? 0.7,
-        ...(tools.length > 0
-          ? { tools: tools.map((t) => ({ type: 'function', function: t })), tool_choice: 'auto' }
-          : {})
+  const body = JSON.stringify({
+    model: config.model,
+    messages,
+    temperature: config.temperature ?? 0.7,
+    /*
+     * Only sent to models known to support it. An endpoint that has never heard
+     * of the field would reject the whole request, and every hosted provider
+     * here answers to a name that does not match.
+     */
+    ...(thinksByDefault(config.model) ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+    ...(tools.length > 0
+      ? { tools: tools.map((t) => ({ type: 'function', function: t })), tool_choice: 'auto' }
+      : {})
+  })
+
+  /*
+   * One dropped connection should not lose the work.
+   *
+   * `fetch failed` is a transport error - a momentary DNS or socket problem, a
+   * hosted endpoint closing an idle connection, Ollama still loading a model -
+   * and it was fatal: a single blip mid-build came back as "could not plan
+   * that: could not reach the model: fetch failed" and the companion abandoned
+   * a structure it was halfway through planning.
+   *
+   * Only the transport is retried. A refusal from the provider is an answer and
+   * is passed straight through, and a cancelled or timed-out request is never
+   * retried - the caller asked for it to stop, or it already had its time.
+   */
+  const ATTEMPTS = 3
+  let response: Response | null = null
+  let lastError: Error | null = null
+
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      response = await fetch(endpoint(config.baseUrl), {
+        method: 'POST',
+        headers,
+        signal: controller.signal,
+        body
       })
-    })
-  } catch (err) {
-    clearTimeout(timer)
-    if (controller.signal.aborted) throw new LlmError('the model did not respond in time')
-    throw new LlmError(`could not reach the model: ${(err as Error).message}`)
+      break
+    } catch (err) {
+      lastError = err as Error
+
+      // Cancelled by the caller, or out of time: not something to try again.
+      if (controller.signal.aborted) {
+        cleanup()
+        throw new LlmError(
+          signal?.aborted ? 'the request was cancelled' : 'the model did not respond in time'
+        )
+      }
+
+      if (attempt === ATTEMPTS) break
+      // Briefly, and a little longer each time.
+      await new Promise((resolve) => setTimeout(resolve, attempt * 600))
+    }
   }
-  clearTimeout(timer)
+
+  if (!response) {
+    cleanup()
+    throw new LlmError(
+      `could not reach the model after ${ATTEMPTS} tries: ${lastError?.message ?? 'unknown'}`
+    )
+  }
+  cleanup()
 
   const text = await response.text()
 
@@ -354,19 +487,37 @@ export async function chat(
    */
   const reasoning = typeof message.reasoning === 'string' ? message.reasoning.trim() : ''
   const spoken = typeof message.content === 'string' ? message.content.trim() : ''
-  const content = spoken || reasoning || null
 
-  if (toolCalls.length === 0) {
+  /*
+   * Only what it actually said counts as content. The thinking is returned
+   * alongside, for salvaging a tool call and for the activity feed, but it is
+   * never mistaken for dialogue.
+   */
+  const content = spoken || null
+
+  /*
+   * Only rescue a tool call when tools were on offer.
+   *
+   * Salvage looks for a JSON object with a `name`, which is exactly what a
+   * blueprint is: `{"name": "Cottage", "palette": ..., "layers": ...}`. So the
+   * planner — which calls the model with no tools at all and expects JSON back
+   * — had its answer taken for a tool call and its content blanked, and every
+   * single `build_structure` failed with "no JSON object in the reply". Ten
+   * times in a row, in the run that found this.
+   *
+   * A caller that offered no tools cannot want one back.
+   */
+  if (toolCalls.length === 0 && tools.length > 0) {
     // Small models often describe the call in prose instead of emitting one,
     // and a reasoning model may do it inside its thinking.
     for (const text of [spoken, reasoning]) {
       if (!text) continue
       const salvaged = salvageToolCall(text)
-      if (salvaged.length > 0) return { content: null, toolCalls: salvaged, usage }
+      if (salvaged.length > 0) return { content: null, reasoning: reasoning || null, toolCalls: salvaged, usage }
     }
   }
 
-  return { content, toolCalls, usage }
+  return { content, reasoning: reasoning || null, toolCalls, usage }
 }
 
 /** Presets so the interface can offer sensible defaults per provider. */

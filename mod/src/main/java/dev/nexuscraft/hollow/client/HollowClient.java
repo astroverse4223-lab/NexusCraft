@@ -99,6 +99,7 @@ public class HollowClient implements ClientModInitializer {
     public void onInitializeClient() {
         known = ClientMemory.load();
         MenuHaunt.register();
+        PauseMenuButton.register();
 
         /*
          * The client reads the same properties file the server side does.

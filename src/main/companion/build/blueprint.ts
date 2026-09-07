@@ -66,6 +66,38 @@ export function blockState(id: string): Record<string, string> {
 /** The character that means "do not place anything here". */
 const SKIP = '.'
 
+/**
+ * Blocks that fall down, or off, without something holding them.
+ *
+ * A blueprint can be perfectly well formed and still be unbuildable. The stock
+ * watchtower put its ladder shaft down the dead centre of a hollow 5x5 tower,
+ * where a ladder has no wall to cling to, so every one of those placements was
+ * refused and the build reported "0 of 214 blocks placed" as though the server
+ * were protected.
+ *
+ * Split by what each kind actually needs, because the check is different: a
+ * torch or a rail wants a solid block directly beneath it, while a ladder or a
+ * vine wants one beside it. Getting that backwards would reject working
+ * blueprints, which is worse than the bug.
+ */
+const NEEDS_FLOOR = new Set([
+  'torch', 'soul_torch', 'redstone_torch', 'lever', 'rail', 'powered_rail',
+  'detector_rail', 'activator_rail', 'redstone_wire', 'repeater', 'comparator',
+  'sand', 'red_sand', 'gravel', 'anvil', 'carpet', 'pressure_plate'
+])
+
+const NEEDS_WALL = new Set(['ladder', 'vine', 'wall_torch', 'soul_wall_torch', 'tripwire_hook'])
+
+/**
+ * Blocks nothing can put into the world.
+ *
+ * Water and lava are deliberately absent: they are poured from a bucket rather
+ * than placed, which the builder now does, so a well or a sugar cane farm that
+ * asks for water is asking for something achievable. A bubble column is not —
+ * it is what soul sand under water produces, never a block you place.
+ */
+const NOT_PLACEABLE = new Set(['bubble_column', 'fire', 'air', 'cave_air', 'void_air'])
+
 export interface BlueprintProblem {
   message: string
 }
@@ -125,6 +157,61 @@ export function validateBlueprint(
     }
     if (!isKnownBlock(baseBlockName(block))) {
       problems.push({ message: `"${block}" is not a Minecraft block` })
+      continue
+    }
+    if (NOT_PLACEABLE.has(baseBlockName(block))) {
+      problems.push({
+        message: `"${baseBlockName(block)}" cannot be placed block by block; it needs a bucket`
+      })
+    }
+  }
+
+  /*
+   * Anything that needs holding up must have something holding it up.
+   *
+   * Checked against the blueprint itself rather than the world, because that is
+   * where these mistakes live: a ladder in mid-air is wrong in every world it
+   * is ever built in. Only positions inside the blueprint count as support —
+   * something resting on the ground the build happens to sit on is fine and is
+   * not reported, since layer 0 has whatever the site provides beneath it.
+   */
+  const filled = (x: number, y: number, z: number): boolean => {
+    const row = blueprint.layers[y]?.[z]
+    if (typeof row !== 'string') return false
+    const character = row[x]
+    if (!character || character === SKIP) return false
+    const block = blueprint.palette?.[character]
+    return Boolean(block) && !NOT_PLACEABLE.has(baseBlockName(block as string))
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let z = 0; z < depth; z += 1) {
+      const row = blueprint.layers[y]?.[z]
+      if (typeof row !== 'string') continue
+
+      for (let x = 0; x < width; x += 1) {
+        const character = row[x]
+        if (!character || character === SKIP) continue
+
+        const block = blueprint.palette?.[character]
+        if (!block) continue
+        const name = baseBlockName(block)
+
+        const where = `layer ${y + 1}, row ${z + 1}, column ${x + 1}`
+
+        // The ground under layer 0 is the build site, which is solid enough.
+        if (NEEDS_FLOOR.has(name) && y > 0 && !filled(x, y - 1, z)) {
+          problems.push({ message: `"${name}" at ${where} has nothing beneath it to stand on` })
+        }
+
+        if (NEEDS_WALL.has(name)) {
+          const beside =
+            filled(x - 1, y, z) || filled(x + 1, y, z) || filled(x, y, z - 1) || filled(x, y, z + 1)
+          if (!beside) {
+            problems.push({ message: `"${name}" at ${where} has no wall beside it to attach to` })
+          }
+        }
+      }
     }
   }
 

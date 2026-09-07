@@ -23,7 +23,7 @@ import {
   type Blueprint
 } from '../../build/blueprint'
 import { buildBlueprint, describeResult, groundedOrigin, shortfall } from '../../build/builder'
-import { BLUEPRINT_LIBRARY, findLibraryBlueprint } from '../../build/library'
+import { BLUEPRINT_LIBRARY, findLibraryBlueprint, matchLibraryBlueprint } from '../../build/library'
 
 /** The last blueprint drawn, so it can be built again without redrawing it. */
 let lastBlueprint: Blueprint | null = null
@@ -150,6 +150,12 @@ export const TOOLS: Tool[] = [
             }
       // Settle it onto the ground; a blueprint started in mid-air places nothing.
       const origin = groundedOrigin(bot, asked, size)
+      if (!origin.grounded) {
+        return (
+          'there is no ground under that spot — you are in mid-air, or over a hole. ' +
+          'Land somewhere solid first, then build.'
+        )
+      }
 
       /* 3. check the materials before starting */
 
@@ -208,10 +214,24 @@ export const TOOLS: Tool[] = [
         return `the library has: ${BLUEPRINT_LIBRARY.map((entry) => `${entry.id} (${entry.blurb})`).join('; ')}`
       }
 
-      const entry = findLibraryBlueprint(wanted)
-      if (!entry) {
-        return `there is no "${wanted}" in the library. It has: ${BLUEPRINT_LIBRARY.map((e) => e.id).join(', ')}`
+      /*
+       * A near miss is allowed; a wild guess is not.
+       *
+       * Exact ids still work as before. Anything else has to look enough like
+       * one entry to be worth building - a companion asked for "a small welcome
+       * outpost" once chose `well` from the list and built one, then reported
+       * success. Being told the request was unclear costs a turn; building the
+       * wrong structure costs the player a demolition.
+       */
+      const match = matchLibraryBlueprint(wanted)
+      if (!match) {
+        return (
+          `"${wanted}" does not clearly match anything in the library. It has: ` +
+          `${BLUEPRINT_LIBRARY.map((e) => `${e.id} (${e.blurb})`).join('; ')}. ` +
+          'Name one of those exactly, or use build_structure to design something new.'
+        )
       }
+      const entry = match.entry
 
       lastBlueprint = entry.blueprint
 
@@ -235,7 +255,16 @@ export const TOOLS: Tool[] = [
               z: Math.floor(position.z) + 2
             }
       const origin = groundedOrigin(context.bot, asked, blueprintSize(entry.blueprint))
+      if (!origin.grounded) {
+        return (
+          'there is no ground under that spot — you are in mid-air, or over a hole. ' +
+          'Land somewhere solid first, then build.'
+        )
+      }
 
+      if (!match.exact) {
+        context.log(`took "${wanted}" to mean ${entry.blueprint.name}`)
+      }
       context.log(`building "${entry.blueprint.name}" at ${origin.x} ${origin.y} ${origin.z}`)
       const result = await buildBlueprint(context, entry.blueprint, {
         origin,
@@ -270,6 +299,12 @@ export const TOOLS: Tool[] = [
           ? { x: Math.floor(Number(args.x)), y: Math.floor(Number(args.y)), z: Math.floor(Number(args.z)) }
           : { x: Math.floor(position.x) + 2, y: Math.floor(position.y), z: Math.floor(position.z) + 2 }
       const origin = groundedOrigin(bot, asked, blueprintSize(lastBlueprint))
+      if (!origin.grounded) {
+        return (
+          'there is no ground under that spot — you are in mid-air, or over a hole. ' +
+          'Land somewhere solid first, then build.'
+        )
+      }
 
       const result = await buildBlueprint(context, lastBlueprint, {
         origin,

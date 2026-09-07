@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "ember",
+  "version": "0.2.0",
+  "name": "Ember",
+  "description": "A lantern keeper that follows you and burns the dark back. No face — it speaks with its flame, its shutters and its hands.",
+  "authors": [
+    "NexusCraft"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.nexuscraft.ember.Ember"
+    ],
+    "client": [
+      "dev.nexuscraft.ember.client.EmberClient"
+    ],
+    "voicechat": [
+      "dev.nexuscraft.ember.voice.EmberVoicechatPlugin"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "voicechat": ">=2.5.0"
+  }
+}

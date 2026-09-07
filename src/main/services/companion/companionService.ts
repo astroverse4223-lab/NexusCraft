@@ -36,6 +36,8 @@ import { notifyDesktop } from '../../core/notifications'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { getSecret, setSecret, removeSecret } from '../auth/secureStore'
+import { ownAddresses, resolveHost } from '../../companion/hostResolve'
+import { listHostedServers, isHostedServerRunning } from '../servers/hostService'
 
 const log = createLogger('companion')
 
@@ -397,6 +399,24 @@ function pushEvent(
   emit('companion:event', event)
 }
 
+/**
+ * Tells every running companion who else is on.
+ *
+ * Called whenever one starts or stops. The list a companion is given at
+ * start only covers those already running, which is empty for the first one
+ * - and that companion is then the one that answers everybody else's chat
+ * and treats it as an order.
+ */
+function broadcastSiblings(): void {
+  const online = listCompanions().filter((c) => running.has(c.id))
+  for (const companion of online) {
+    post(companion.id, {
+      type: 'siblings',
+      names: online.filter((other) => other.id !== companion.id).map((other) => other.username)
+    })
+  }
+}
+
 function post(id: string, message: CompanionInbound): void {
   try {
     running.get(id)?.child.send(message)
@@ -486,8 +506,39 @@ export function startCompanion(id: string): CompanionState {
     }
   }
 
-  const config: CompanionConfig = {
+  /*
+   * The saved host may be a LAN address from a network this machine is no
+   * longer on. Resolve it now rather than dialling it and timing out.
+   */
+  const hostedPorts = listHostedServers()
+    .filter((server) => isHostedServerRunning(server.id))
+    .map((server) => server.port)
+
+  const resolved = resolveHost({
     host: settings.host,
+    port: settings.port,
+    own: ownAddresses(),
+    hostedPorts
+  })
+
+  if (resolved.note) {
+    log.info(`${settings.username}: ${resolved.note}`)
+    pushEvent(id, 'status', resolved.note)
+    /*
+     * Correct it on disk too, so the screen stops showing an address that does
+     * not work and the next start does not have to work it out again.
+     */
+    if (resolved.persist && resolved.host !== settings.host) {
+      try {
+        updateCompanion(id, { host: resolved.host })
+      } catch (err) {
+        log.warn(`could not save the corrected host for ${settings.username}: ${String(err)}`)
+      }
+    }
+  }
+
+  const config: CompanionConfig = {
+    host: resolved.host,
     port: settings.port,
     username: settings.username,
     auth: settings.auth,
@@ -501,7 +552,17 @@ export function startCompanion(id: string): CompanionState {
     llm: { baseUrl: settings.baseUrl, apiKey, model: settings.model, timeoutMs: 90_000 },
     memory: loadMemory(id),
     // Empty means think with the model; a name makes it a scripted worker.
-    routine: settings.routine ?? ''
+    routine: settings.routine ?? '',
+    /*
+     * Who else is on, so this one can tell an order from an overheard remark.
+     * Read at spawn rather than kept in step afterwards: a companion that
+     * starts later is not yet talking, and the list is only used to decide
+     * whether a line of chat was meant for this bot.
+     */
+    siblings: listCompanions()
+      .filter((c) => c.id !== id && running.has(c.id))
+      .map((c) => c.username)
+      .filter(Boolean)
   }
 
   const script = botScriptPath()
@@ -531,6 +592,9 @@ export function startCompanion(id: string): CompanionState {
     eventId: 0
   })
 
+  // Everyone learns about the new arrival, including the new arrival.
+  broadcastSiblings()
+
   child.stdout?.on('data', (chunk: Buffer) => log.debug(`${settings.username}: ${chunk.toString().trim()}`))
   child.stderr?.on('data', (chunk: Buffer) => log.warn(`${settings.username}: ${chunk.toString().trim()}`))
 
@@ -539,6 +603,9 @@ export function startCompanion(id: string): CompanionState {
   child.on('exit', (code) => {
     const wasError = running.get(id)?.state.status === 'error'
     running.delete(id)
+    // The rest need to know this one has gone, or they keep ignoring chat that
+    // is no longer coming from a companion at all.
+    broadcastSiblings()
     if (!wasError) {
       emit('companion:status', {
         companionId: id,
@@ -564,11 +631,11 @@ export function startCompanion(id: string): CompanionState {
     })
   })
 
-  setStatus(id, 'connecting', `${settings.host}:${settings.port}`)
-  pushEvent(id, 'status', `Connecting to ${settings.host}:${settings.port} as ${settings.username}…`)
+  setStatus(id, 'connecting', `${resolved.host}:${settings.port}`)
+  pushEvent(id, 'status', `Connecting to ${resolved.host}:${settings.port} as ${settings.username}…`)
   post(id, { type: 'start', config })
 
-  log.info(`${settings.username} starting -> ${settings.host}:${settings.port} (model ${settings.model})`)
+  log.info(`${settings.username} starting -> ${resolved.host}:${settings.port} (model ${settings.model})`)
   return getCompanionState(id)
 }
 

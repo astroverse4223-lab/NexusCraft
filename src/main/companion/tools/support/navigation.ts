@@ -9,7 +9,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ToolContext } from '../types'
-import { ACTION_TIMEOUT_MS, FLIGHT_RETRY_AFTER_MS, FLIGHT_TIMEOUT_MS, LIQUID_COST, MAX_FLIGHT_FAILURES, PATH_THINK_TIMEOUT_MS, STUCK_MOVED_BLOCKS, STUCK_SAMPLE_MS } from '../constants'
+import { ACTION_TIMEOUT_MS, FLIGHT_RETRY_AFTER_MS, FLIGHT_TIMEOUT_MS, LIQUID_COST, MAX_FLIGHT_FAILURES,
+  SHORT_HOP_BLOCKS, PATH_THINK_TIMEOUT_MS, STUCK_MOVED_BLOCKS, STUCK_SAMPLE_MS } from '../constants'
 import { nearbyPlayers, withTimeout } from './players'
 import { isCreative, isReplaceable } from './world'
 import { equipBestTool } from './equipment'
@@ -268,6 +269,14 @@ export async function goToBlock(context: ToolContext, x: number, y: number, z: n
  * too long". So arrival is judged by distance instead, and the promise is left
  * to its own devices.
  */
+/**
+ * Why the last flight gave up, for the message the player actually reads.
+ *
+ * Module level because the three legs are inside a closure and the caller that
+ * reports the failure is outside it. Only ever read straight after a failure.
+ */
+let lastFlightFailure = 'could not get there by air'
+
 export async function flyThere(
   context: ToolContext,
   x: number,
@@ -335,6 +344,36 @@ export async function flyThere(
   const destination = new Vec3(x, y, z)
 
   /*
+   * A short hop goes straight there, without climbing first.
+   *
+   * The three-leg route — up to a clear height, across, back down — is right
+   * for crossing terrain and wrong for the commonest move of all: shuffling a
+   * few blocks along a wall being built. Worse, it was the move that failed.
+   * The clearance check only tested the block at cruising height, not the
+   * column on the way up, so a bot standing inside a half-built tower tried to
+   * fly up through its own floor and the server refused it. Measured live:
+   * "could not climb to -53 from -58", five blocks, mid-build, over and over.
+   *
+   * Flying direct also has to be checked, so this only takes the shortcut when
+   * the line really is clear.
+   */
+  const straightLine = destination.minus(here)
+  if (straightLine.norm() <= SHORT_HOP_BLOCKS) {
+    let clear = true
+    const steps = Math.max(1, Math.ceil(straightLine.norm()))
+    for (let i = 1; i <= steps; i += 1) {
+      const at = here.plus(straightLine.scaled(i / steps))
+      const block = bot.blockAt(new Vec3(Math.floor(at.x), Math.floor(at.y), Math.floor(at.z)))
+      if (block && block.name !== 'air' && !isReplaceable(block)) {
+        clear = false
+        break
+      }
+    }
+    if (clear && (await flyLeg(destination, Math.max(3_000, budgetMs / 2), 2))) return true
+    // Not clear, or it did not make it: fall through to the long way round.
+  }
+
+  /*
    * A height with nothing in it, found by looking rather than assuming: the
    * highest of where we are and where we are going, plus clearance, nudged up
    * while there is something solid in the way.
@@ -352,13 +391,32 @@ export async function flyThere(
   // A third of the budget per leg, so no single one can eat the lot.
   const perLeg = Math.max(4_000, Math.floor(budgetMs / 3))
 
+  /*
+   * Each leg names itself when it fails.
+   *
+   * "could not get there by air" was true and useless: three legs can fail for
+   * three unrelated reasons - no room to climb, something in the way across, or
+   * a landing spot inside a wall - and the companion falls back to walking for
+   * all of them, which is what makes a long build crawl. Knowing which leg went
+   * wrong is the difference between fixing it and guessing at it.
+   */
   const climbed = await flyLeg(new Vec3(here.x, cruise, here.z), perLeg)
-  if (!climbed && !signal.aborted) return false
+  if (!climbed && !signal.aborted) {
+    lastFlightFailure = `could not climb to ${Math.round(cruise)} from ${Math.round(here.y)}`
+    return false
+  }
 
   const crossed = await flyLeg(new Vec3(x, cruise, z), perLeg, 4)
-  if (!crossed && !signal.aborted) return false
+  if (!crossed && !signal.aborted) {
+    lastFlightFailure = `could not cross to ${Math.round(x)} ${Math.round(z)} at height ${Math.round(cruise)}`
+    return false
+  }
 
-  return await flyLeg(destination, perLeg, 3)
+  const landed = await flyLeg(destination, perLeg, 3)
+  if (!landed && !signal.aborted) {
+    lastFlightFailure = `could not drop onto ${Math.round(x)} ${Math.round(y)} ${Math.round(z)} — something in the way`
+  }
+  return landed
 }
 
 /** Walks to a position, giving up rather than hanging if the path fails. */
@@ -403,7 +461,7 @@ export async function goTo(
       const budget = Math.min(timeoutMs, Math.max(FLIGHT_TIMEOUT_MS, distance * 400 + 6_000))
 
       const landed = await flyThere(context, x, y, z, budget)
-      if (!landed) throw new Error('could not get there by air')
+      if (!landed) throw new Error(lastFlightFailure)
 
       flightFailures = 0
       return

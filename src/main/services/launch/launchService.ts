@@ -33,7 +33,7 @@ import { preferWindowless, resolveJavaForVersion } from '../java/javaService'
 import { createTask } from '../downloads/downloadManager'
 import { analyseMods } from '../mods/modService'
 import { checkVramBudget } from '../support/vramBudget'
-import { diagnoseCrash } from './crashReport'
+import { diagnoseCrash, type CrashDiagnosis } from './crashReport'
 
 const log = createLogger('launch')
 
@@ -351,36 +351,99 @@ function handleExit(game: RunningGame, code: number | null, signal: NodeJS.Signa
   const clean = code === 0 || signal === 'SIGTERM' || signal === 'SIGKILL'
   const crashReport = clean ? null : game.crashHints.slice(0, 12).join('\n') || null
 
+  /*
+   * A non-zero exit is not proof of a crash.
+   *
+   * Windows reports a game closed from its own window as 4294967295 often
+   * enough that "Minecraft closed unexpectedly. Exit code 4294967295" became
+   * the ordinary way to be told a session had ended - which trains people to
+   * ignore the one message that matters when something really has gone wrong.
+   *
+   * So the alarm now needs evidence: a line in the log that looked like a
+   * failure, or a crash report Minecraft wrote itself. Without either, the
+   * exit code is recorded and nothing is claimed about it. `diagnoseCrash`
+   * below still runs, and still raises the alarm if it finds a real report.
+   */
+  const looksLikeACrash = !clean && game.crashHints.length > 0
+
   // A hard JVM crash leaves the session token sitting in a dump file.
   void redactCrashDumps(game.gameDir)
 
   log.info(`instance ${instanceId} exited with code ${code ?? 'null'} signal ${signal ?? 'none'}`)
   pushLog(game, 'launcher', `Minecraft exited with code ${code ?? 'unknown'}`)
 
-  setState(instanceId, 'exited', clean ? 'Minecraft closed' : 'Minecraft closed unexpectedly', {
+  setState(instanceId, 'exited', looksLikeACrash ? 'Minecraft closed unexpectedly' : 'Minecraft closed', {
     pid: null,
     exitCode: code,
     crashReport
   })
 
+  /*
+   * Says what happened, using the crash report's own explanation when there is
+   * one.
+   *
+   * An exit code is not an explanation. "Exit code 4294967295" is what Windows
+   * reports for a great many endings, and it told the player nothing about a
+   * crash the launcher had already diagnosed correctly — the sentence saying
+   * the world was safe went to the instance screen while the alarming, useless
+   * number went to the toast.
+   */
+  const announce = (crash: CrashDiagnosis | null): void => {
+    if (!looksLikeACrash) return
+
+    /*
+     * Lead with the mod, when there is one.
+     *
+     * "Forge Config API Port crashed" is something a person can act on;
+     * "Unexpected error" is not, and neither is an exit code. The explanation
+     * still follows it, because knowing the world was already saved matters
+     * just as much as knowing what broke.
+     */
+    const blamed = crash?.blame
+    const detail = blamed
+      ? `${blamed.name} is in the crash. ${crash?.explanation ?? 'Disabling it may be enough.'}`
+      : (crash?.explanation ?? `Exit code ${code ?? 'unknown'}. Open the log for details.`)
+
+    const title = blamed
+      ? `Minecraft crashed — ${blamed.name} was involved`
+      : (crash?.description ?? 'Minecraft closed unexpectedly')
+
+    toast('error', title, detail)
+    // The player is usually looking at the game, not the launcher, when this
+    // happens — that is exactly what the desktop notification is for.
+    notifyDesktop({
+      title: 'Minecraft crashed',
+      body: blamed
+        ? `${blamed.name} appears in the crash report.`
+        : (crash?.explanation ?? 'The game closed unexpectedly. Open NexusCraft to see what went wrong.')
+    })
+  }
+
   // Minecraft explains its own failures far better than an exit code does, so
   // read the report it just wrote and republish the state with the real cause.
-  if (!clean) {
-    const instance = findInstance(instanceId)
-    if (instance) {
-      void diagnoseCrash(instance, game.startedAt)
-        .then((crash) => {
-          if (!crash.reportPath) return
-          pushLog(game, 'launcher', `Crash report: ${crash.description ?? crash.cause ?? 'see crash-reports'}`)
-          setState(instanceId, 'exited', 'Minecraft closed unexpectedly', {
-            pid: null,
-            exitCode: code,
-            crashReport,
-            crash
-          })
+  const instance = !clean ? findInstance(instanceId) : null
+  if (instance) {
+    void diagnoseCrash(instance, game.startedAt)
+      .then((crash) => {
+        if (!crash.reportPath) {
+          announce(null)
+          return
+        }
+        pushLog(game, 'launcher', `Crash report: ${crash.description ?? crash.cause ?? 'see crash-reports'}`)
+        setState(instanceId, 'exited', 'Minecraft closed unexpectedly', {
+          pid: null,
+          exitCode: code,
+          crashReport,
+          crash
         })
-        .catch((err) => log.warn('could not read the crash report:', (err as Error).message))
-    }
+        announce(crash)
+      })
+      .catch((err) => {
+        log.warn('could not read the crash report:', (err as Error).message)
+        announce(null)
+      })
+  } else {
+    announce(null)
   }
 
   const settings = getSettings()
@@ -395,15 +458,6 @@ function handleExit(game: RunningGame, code: number | null, signal: NodeJS.Signa
     }
   }
 
-  if (!clean) {
-    toast('error', 'Minecraft closed unexpectedly', `Exit code ${code ?? 'unknown'}. Open the log for details.`)
-    // The player is usually looking at the game, not the launcher, when this
-    // happens — that is exactly what the desktop notification is for.
-    notifyDesktop({
-      title: 'Minecraft crashed',
-      body: 'The game closed unexpectedly. Open NexusCraft to see what went wrong.'
-    })
-  }
 }
 
 /** Asks the game to close, escalating to a hard kill if it ignores us. */

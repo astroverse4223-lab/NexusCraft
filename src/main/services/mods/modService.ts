@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { readdir, rm, stat, copyFile, mkdir } from 'node:fs/promises'
 import { basename, join, extname } from 'node:path'
 import AdmZip from 'adm-zip'
@@ -87,6 +87,51 @@ interface ReadResult {
   unreadable: boolean
 }
 
+/**
+ * What each jar said, remembered against its size and modification time.
+ *
+ * Unzipping 143 jars and decoding their icons takes over a second and yields
+ * several megabytes; a jar does not change under us, so re-reading an unchanged
+ * one is pure waste. Bounded so a launcher left open across many instances
+ * cannot grow without limit.
+ */
+const jarCache = new Map<string, { size: number; mtimeMs: number; result: ReadResult }>()
+const JAR_CACHE_LIMIT = 2000
+
+/** Reads a jar, or returns what it said last time if it has not changed. */
+function readModJarCached(jarPath: string): ReadResult {
+  let key: { size: number; mtimeMs: number }
+  try {
+    const info = statSync(jarPath)
+    key = { size: info.size, mtimeMs: info.mtimeMs }
+  } catch {
+    // Cannot stat it, so cannot trust a cached answer either.
+    return readModJar(jarPath)
+  }
+
+  const seen = jarCache.get(jarPath)
+  if (seen && seen.size === key.size && seen.mtimeMs === key.mtimeMs) return seen.result
+
+  const result = readModJar(jarPath)
+
+  /*
+   * Oldest out first. Map keeps insertion order, so the first key is the least
+   * recently added — good enough for a cache whose job is one folder at a time.
+   */
+  if (jarCache.size >= JAR_CACHE_LIMIT) {
+    const oldest = jarCache.keys().next().value
+    if (oldest !== undefined) jarCache.delete(oldest)
+  }
+
+  jarCache.set(jarPath, { ...key, result })
+  return result
+}
+
+/** Forgets a jar, for when the launcher itself has just rewritten one. */
+export function forgetModJar(jarPath: string): void {
+  jarCache.delete(jarPath)
+}
+
 /** Opens a mod jar and reads whichever loader manifest it contains. */
 function readModJar(jarPath: string): ReadResult {
   try {
@@ -146,6 +191,15 @@ export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
 
   const mods: ModInfo[] = []
 
+  /*
+   * Sinytra Connector loads Fabric mods on Forge. Spotted by filename because
+   * it has to be known before any jar is read — every Fabric mod in the folder
+   * is judged against it.
+   */
+  const hasConnector =
+    target.loader === 'forge' &&
+    entries.some((name) => /^connector[-_]|^sinytra/i.test(name) && name.endsWith('.jar'))
+
   for (const fileName of entries) {
     const enabled = !fileName.endsWith(DISABLED_SUFFIX)
     const bare = enabled ? fileName : fileName.slice(0, -DISABLED_SUFFIX.length)
@@ -180,7 +234,7 @@ export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
     }
 
     const full = join(dir, fileName)
-    const { metadata, iconDataUrl, unreadable } = readModJar(full)
+    const { metadata, iconDataUrl, unreadable } = readModJarCached(full)
     const issues: ModIssue[] = []
 
     if (unreadable) {
@@ -198,7 +252,7 @@ export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
     }
 
     if (metadata && enabled) {
-      const verdict = loaderAccepts(target.loader, metadata.loaders)
+      const verdict = loaderAccepts(target.loader, metadata.loaders, hasConnector)
       if (verdict === 'no') {
         issues.push({
           severity: 'error',

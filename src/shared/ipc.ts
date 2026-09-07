@@ -261,8 +261,17 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     })
   }),
   'mods:checkAllNow': z.object({}),
-  'mods:hollowStatus': z.object({ instanceId: id }),
-  'mods:installHollow': z.object({ instanceId: id }),
+  'mods:bundledStatus': z.object({ instanceId: id }),
+  'voice:status': z.void(),
+  /* Downloading the model is the slow part, so it is asked for explicitly. */
+  'voice:prepare': z.object({ build: z.enum(['q4', 'q8']).optional() }),
+  'voice:speak': z.object({
+    text: z.string().min(1).max(400),
+    voice: z.string().max(40).optional(),
+    build: z.enum(['q4', 'q8']).optional()
+  }),
+  'voice:serveToGame': z.object({ on: z.boolean() }),
+  'mods:installBundled': z.object({ instanceId: id, modId: z.string().min(1).max(64) }),
   'mods:rollbacks': z.object({ instanceId: id }),
   'mods:rollback': z.object({ instanceId: id, fileName: safeSegment }),
   'curseforge:verify': z.object({ key: z.string().optional() }).optional(),
@@ -359,7 +368,32 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     gameMode: z.enum(['survival', 'creative', 'adventure']),
     maxPlayers: z.number().int().min(1).max(100),
     allowCheats: z.boolean(),
-    operators: z.array(z.string().min(1).max(16)).max(20)
+    operators: z.array(z.string().min(1).max(16)).max(20),
+
+    /*
+     * The world and gameplay settings.
+     *
+     * These were missing, and zod strips whatever a schema does not name — so
+     * every one of them was silently discarded on the way through. The settings
+     * screen showed them, the form sent them, the server-properties writer
+     * expected them, and they never arrived: turn on "allow flight", save,
+     * reopen, and it is off again. Spawn protection, view distance, PVP,
+     * hardcore and the seed all went the same way, which is also why the
+     * companions kept being refused near spawn.
+     *
+     * Optional, because a form that has never shown a field should not be
+     * forced to invent a value for it.
+     */
+    levelSeed: z.string().max(120).optional(),
+    pvp: z.boolean().optional(),
+    hardcore: z.boolean().optional(),
+    allowFlight: z.boolean().optional(),
+    spawnProtection: z.number().int().min(0).max(256).optional(),
+    viewDistance: z.number().int().min(2).max(32).optional(),
+    simulationDistance: z.number().int().min(2).max(32).optional(),
+    spawnMonsters: z.boolean().optional(),
+    spawnAnimals: z.boolean().optional(),
+    whitelist: z.boolean().optional()
   }),
   'host:delete': z.object({ id: z.string().min(1), deleteWorld: z.boolean() }),
   'host:install': z.object({ id: z.string().min(1) }),

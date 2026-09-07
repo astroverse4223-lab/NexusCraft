@@ -4,7 +4,9 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { handle, assertAllChannelsHandled } from './registry'
 import { checkCurseForgeUpdates, applyCurseForgeUpdate } from '../services/content/curseforgeUpdates'
-import { hollowStatus, installHollow } from '../services/content/hollowInstall'
+import { allBundledModStatuses, installBundledMod } from '../services/content/bundledMods'
+import * as kokoro from '../services/voice/kokoro'
+import * as speechServer from '../services/voice/speechServer'
 import { toolSetSizes } from '../companion/tools'
 import { setMicrophoneWanted } from '../index'
 import {
@@ -1133,22 +1135,63 @@ export function registerIpcHandlers(): void {
    * The manual "check everything now" behind the settings. Runs the same sweep
    * the timer does, so what you see here is exactly what it would have done.
    */
-  handle('mods:hollowStatus', async (payload: { instanceId: string }) =>
-    await hollowStatus(getInstance(payload.instanceId))
+  handle('mods:bundledStatus', async (payload: { instanceId: string }) =>
+    await allBundledModStatuses(getInstance(payload.instanceId))
   )
 
-  handle('mods:installHollow', async (payload: { instanceId: string }) => {
+  handle('mods:installBundled', async (payload: { instanceId: string; modId: string }) => {
     const instance = getInstance(payload.instanceId)
-    const result = await installHollow(instance)
+    const result = await installBundledMod(instance, payload.modId)
     toast(
       result.warning ? 'warning' : 'success',
-      'Hollow installed',
+      `${result.name} installed`,
       result.warning ??
         (result.model
           ? `Configured to use ${result.model} on your local Ollama.`
-          : 'Installed. Check config/hollow.properties for the model.')
+          : 'Installed. Launch the instance to try it.')
     )
     return result
+  })
+
+  /*
+   * The voice.
+   *
+   * Synthesis happens here rather than in the renderer because the renderer is
+   * held to `connect-src 'self'` and cannot fetch a model, and because the same
+   * loaded model answers both the launcher's companions and Minecraft. The
+   * audio goes back as bytes; only the renderer can actually play a sound.
+   */
+  handle('voice:status', async () => ({
+    ...kokoro.currentStatus(),
+    servingToGame: speechServer.isRunning(),
+    builds: kokoro.BUILDS
+  }))
+
+  handle('voice:prepare', async (payload: { build?: 'q4' | 'q8' }) => {
+    await kokoro.ensureLoaded(payload.build ?? 'q4')
+    return kokoro.currentStatus()
+  })
+
+  handle('voice:speak', async (payload: { text: string; voice?: string; build?: 'q4' | 'q8' }) => {
+    const wav = await kokoro.speak(payload.text, payload.voice, payload.build ?? 'q4')
+    // Base64 rather than a raw buffer: it crosses the IPC boundary intact and
+    // the renderer turns it straight into a blob URL.
+    return { wav: wav.toString('base64') }
+  })
+
+  handle('voice:serveToGame', async (payload: { on: boolean }) => {
+    if (payload.on) {
+      await speechServer.start()
+      toast(
+        'success',
+        'Voice shared with Minecraft',
+        `Set voice=speech in config/hollow.properties and Hollow will speak with this voice. ` +
+          `It already points at port ${speechServer.SPEECH_PORT}.`
+      )
+    } else {
+      await speechServer.stop()
+    }
+    return { running: speechServer.isRunning() }
   })
 
   handle('mods:checkAllNow', async () => await sweepForModUpdates('checked by hand'))
@@ -1861,6 +1904,7 @@ export function registerIpcHandlers(): void {
         id: entry.id,
         name: entry.blueprint.name,
         blurb: entry.blurb,
+        category: entry.category ?? 'building',
         width: size.width,
         height: size.height,
         depth: size.depth,

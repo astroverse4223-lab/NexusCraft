@@ -2,23 +2,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   Bot,
-  CheckCircle2,
-  ExternalLink,
-  Copy,
   Boxes,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
   FolderOpen,
+  Globe,
   HardDrive,
   Link2,
   Play,
   Plus,
-  Send,
-  Globe,
   Search,
+  Send,
   Server,
   Share2,
   Square,
   Trash2,
-  Users
+  Users,
+  Wrench
 } from 'lucide-react'
 import type {
   Instance,
@@ -447,6 +448,64 @@ export function HostServerScreen(): JSX.Element {
     }
   }
 
+  /**
+   * Sets a server up so companions can actually work on it.
+   *
+   * Three settings decide whether an AI companion can build, and all three are
+   * easy to miss. Spawn protection silently refuses every placement a
+   * non-operator makes near spawn - the build reports "12 placements in a row
+   * failed" and looks like a broken blueprint. Flight being off means the bot
+   * walks between every block, which turns a cottage into a twenty minute job.
+   * And a companion that is not an operator is subject to both.
+   *
+   * Doing them one at a time means knowing they exist. This is the button that
+   * knows for you.
+   */
+  async function prepareForCompanions(): Promise<void> {
+    if (!selected) return
+
+    await run(async () => {
+      // The two properties, saved through the same path the settings form uses.
+      const saved = await api.host.save({
+        ...selected,
+        allowFlight: true,
+        spawnProtection: 0
+      })
+      setSelectedId(saved.id)
+
+      /*
+       * Operator status is granted by the running server, not by a file: the
+       * server rewrites ops.json itself, so editing it under a live server is
+       * overwritten. If it is not running, the settings above still apply and
+       * the player is told what is left to do.
+       */
+      const list = await api.companion.list()
+      const running = states[selected.id]?.status === 'running'
+
+      if (running) {
+        for (const companion of list) {
+          if (!companion.username) continue
+          await api.host.command(selected.id, `op ${companion.username}`)
+        }
+      }
+
+      /*
+       * Said here rather than returned: `run` only shows the message it was
+       * given up front, and what to say depends on whether the server answered.
+       */
+      if (!running) {
+        pushToast({
+          kind: 'info',
+          title: 'Flight on, spawn protection off',
+          message:
+            'Start the server and press this again to make the companions operators — that part needs a running server.'
+        })
+      }
+    }, states[selected.id]?.status === 'running'
+      ? 'Ready for companions: flight on, spawn protection off, companions opped'
+      : 'Server settings saved')
+  }
+
   async function applyToCompanion(): Promise<void> {
     if (!selected) return
     await run(async () => {
@@ -684,6 +743,14 @@ export function HostServerScreen(): JSX.Element {
                   </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => void applyToCompanion()} disabled={busy}>
                     <Bot size={14} /> Point every companion here
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void prepareForCompanions()}
+                    disabled={busy}
+                    title="Turns on flight, removes spawn protection, and makes every companion an operator — the three things that stop them building"
+                  >
+                    <Wrench size={14} /> Set up for companions
                   </button>
                   <button
                     className="btn btn-ghost btn-sm"
@@ -1436,7 +1503,7 @@ export function HostServerScreen(): JSX.Element {
             </Field>
 
             <div className="field-grid">
-              <Field label="Spawn protection" hint="Blocks around spawn only operators can build in. 0 disables it.">
+              <Field label="Spawn protection" hint="Blocks around spawn only operators can build in. 0 disables it. Non-operators — including companions — are refused every placement inside it.">
                 <input
                   className="input"
                   type="number"
@@ -1508,7 +1575,7 @@ export function HostServerScreen(): JSX.Element {
 
             <Field
               label="Allow flight"
-              hint="Stops the server kicking survival players for flying. Needed for mods that grant it — it does not grant flight by itself."
+              hint="Stops the server kicking a player who looks like they are flying. It does not grant flight by itself — creative mode and flight mods do that, and a companion building in creative needs this on or the server disconnects it mid-build."
               inline
             >
               <Toggle

@@ -53,6 +53,18 @@ export interface BuildResult extends BuildProgress {
 const PROGRESS_EVERY = 25
 
 /**
+ * The longest a build may go without saying anything, however slowly it is
+ * going.
+ *
+ * Reporting purely every 25 blocks was fine when the bot could fly, and wrong
+ * the moment it had to walk: on a server with flight disabled a single
+ * placement can take several seconds, so 25 of them can outlast the turn's
+ * stall timer. The build was then killed for being idle while it was in fact
+ * working the whole time - which is what "it stops mid build" looked like.
+ */
+const PROGRESS_AT_LEAST_EVERY_MS = 15_000
+
+/**
  * Consecutive failures before giving up.
  *
  * A build that has run out of a block, or is being refused by the server's
@@ -61,6 +73,17 @@ const PROGRESS_EVERY = 25
  * signal is that nothing is landing. Twelve in a row is unambiguous.
  */
 const MAX_CONSECUTIVE_FAILURES = 12
+
+/**
+ * How many times to go round placing what would not go before.
+ *
+ * A pass only retries what is still missing, so a spare one costs almost
+ * nothing, and a tall build genuinely needs several: each course of a fifteen
+ * layer tower waits on the course below being finished. Three left a lighthouse
+ * thirteen blocks short. Passes stop as soon as one places nothing, so this is
+ * a ceiling rather than a cost.
+ */
+const MAX_PASSES = 8
 
 /** What the bot is carrying, as a count per block name. */
 function inventoryCounts(bot: any): Map<string, number> {
@@ -158,7 +181,7 @@ export function groundedOrigin(
   bot: any,
   preferred: { x: number; y: number; z: number },
   size: { width: number; depth: number }
-): { x: number; y: number; z: number } {
+): { x: number; y: number; z: number; grounded: boolean } {
   const { Vec3 } = require('vec3')
 
   const centreX = preferred.x + Math.floor(size.width / 2)
@@ -173,11 +196,21 @@ export function groundedOrigin(
     // `boundingBox === 'block'` skips grass, flowers and snow layers, which
     // cannot be built against and are not the ground.
     if (block && block.name !== 'air' && block.boundingBox === 'block') {
-      return { x: preferred.x, y: y + 1, z: preferred.z }
+      return { x: preferred.x, y: y + 1, z: preferred.z, grounded: true }
     }
   }
 
-  return preferred
+  /*
+   * Nothing solid underneath, anywhere within a hundred blocks.
+   *
+   * This used to hand back the requested spot as though it were fine, and the
+   * builder then tried to lay a house in mid-air: watched live, an Oak Cottage
+   * reported "placed 0 of 202 blocks; 202 failed" after attempting every single
+   * one, because the bot was a hundred blocks up and the search found no floor.
+   * Saying so costs one message; not saying so costs two hundred placements and
+   * a confusing report.
+   */
+  return { ...preferred, grounded: false }
 }
 
 export async function buildBlueprint(
@@ -207,82 +240,161 @@ export async function buildBlueprint(
   await stockForBuild(bot, blueprint)
 
   let consecutiveFailures = 0
+  let lastReportAt = Date.now()
+  /** The most recent refusal, whatever it was, for a build that placed nothing. */
+  let lastFailureReply: string | null = null
 
-  for (const entry of blocks) {
-    if (options.signal?.aborted || context.signal.aborted) {
-      result.stoppedBecause = 'stopped'
-      break
-    }
+  /*
+   * Blocks are laid in more than one pass.
+   *
+   * A block can only be placed against something solid, and a blueprint does
+   * not order itself so that every block's support comes first - a roof edge
+   * over a doorway, a wall on sloped ground, anything overhanging. Those fail,
+   * and in one pass they stayed failed: an Oak Cottage on uneven ground came
+   * out as "placed 56 of 168; 99 failed", because one missing foundation block
+   * failed everything stacked above it.
+   *
+   * Going round again fixes almost all of it, since the neighbours placed later
+   * are exactly the support that was missing. Passes stop as soon as one places
+   * nothing new, so genuinely impossible ground costs one extra sweep rather
+   * than three.
+   */
+  let remaining = blocks
+  const stillFailing: typeof blocks = []
 
-    const x = origin.x + entry.dx
-    const y = origin.y + entry.dy
-    const z = origin.z + entry.dz
+  for (let pass = 1; pass <= MAX_PASSES && remaining.length > 0; pass += 1) {
+    const placedBefore = result.placed
+    stillFailing.length = 0
+    consecutiveFailures = 0
 
-    /*
-     * Skip what is already right. This is what makes a build resumable: run it
-     * again after a failure and it picks up where it left off instead of
-     * fighting to place blocks that are already there.
-     */
-    const current = bot.blockAt(new Vec3(x, y, z))
-    if (current && current.name === entry.block) {
-      result.skipped += 1
-      continue
-    }
-
-    let reply = String(await place.execute(context, { block: entry.block, x, y, z }))
-
-    /*
-     * A stack runs out partway through a wall. In creative that is not a real
-     * shortage, just an empty hand — refill and take the one retry rather than
-     * reporting a shortfall the player cannot act on.
-     */
-    if (/^no .* in the inventory/.test(reply) && (await restock(bot, entry.block))) {
-      reply = String(await place.execute(context, { block: entry.block, x, y, z }))
-    }
-
-    if (reply.startsWith('placed')) {
-      result.placed += 1
-      consecutiveFailures = 0
-      // `current` was read just above, before anything was placed here.
-      result.placements.push({ x, y, z, placed: entry.block, was: current?.name ?? 'air' })
-    } else if (reply.includes('is already at')) {
-      result.skipped += 1
-      consecutiveFailures = 0
-    } else {
-      result.failed += 1
-      consecutiveFailures += 1
-
-      // Out of a material is worth stopping for; there is no point trying the
-      // other three hundred placements of a block that is gone.
-      if (/no .* in the inventory/.test(reply)) {
-        result.stoppedBecause = reply
+    for (let index = 0; index < remaining.length; index += 1) {
+      const entry = remaining[index]
+      if (options.signal?.aborted || context.signal.aborted) {
+        result.stoppedBecause = 'stopped'
         break
       }
 
-      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      const x = origin.x + entry.dx
+      const y = origin.y + entry.dy
+      const z = origin.z + entry.dz
+
+      /*
+       * Skip what is already right. This is what makes a build resumable: run it
+       * again after a failure and it picks up where it left off instead of
+       * fighting to place blocks that are already there.
+       */
+      const current = bot.blockAt(new Vec3(x, y, z))
+      if (current && current.name === entry.block) {
+        result.skipped += 1
+        continue
+      }
+
+      let reply = String(await place.execute(context, { block: entry.block, x, y, z }))
+
+      /*
+       * A stack runs out partway through a wall. In creative that is not a real
+       * shortage, just an empty hand — refill and take the one retry rather than
+       * reporting a shortfall the player cannot act on.
+       */
+      if (/^no .* in the inventory/.test(reply) && (await restock(bot, entry.block))) {
+        reply = String(await place.execute(context, { block: entry.block, x, y, z }))
+      }
+
+      if (reply.startsWith('placed')) {
+        result.placed += 1
+        consecutiveFailures = 0
+        // `current` was read just above, before anything was placed here.
+        result.placements.push({ x, y, z, placed: entry.block, was: current?.name ?? 'air' })
+      } else if (reply.includes('is already at')) {
+        result.skipped += 1
+        consecutiveFailures = 0
+      } else {
+        result.failed += 1
+        consecutiveFailures += 1
+        // Kept for the next pass: its support may be placed later in this one.
+        stillFailing.push(entry)
+        lastFailureReply = reply
+
+        // Out of a material is worth stopping for; there is no point trying the
+        // other three hundred placements of a block that is gone.
+        if (/no .* in the inventory/.test(reply)) {
+          result.stoppedBecause = reply
+          break
+        }
+
         /*
-         * Say what actually happened rather than guessing.
+         * There is no early exit any more; a pass runs to the end.
          *
-         * This used to blame server protection for every run of failures, which
-         * sent people looking at permissions when the real answer was that the
-         * build had been started in mid-air and had nothing to place against.
-         * Protection is only the likely cause when the placements were refused,
-         * not when they had nowhere to go.
+         * Stopping after a run of refusals was self-defeating once builds were
+         * retried: the first row of a raised deck legitimately fails - there is
+         * nothing under it yet - and every pass restarted at that same row, hit
+         * the same dozen refusals and gave up before reaching the block that
+         * would have placed and unlocked the rest. A stilt hut laid its four
+         * legs and stopped, twelve blocks out of a hundred and fifty-seven.
+         *
+         * What a pass placed is the honest test instead, and it is checked
+         * below: a pass that places nothing has nothing left to offer, and that
+         * is equally true of a protected area and of impossible ground.
          */
-        const noSupport = /nothing solid next to|nowhere to stand/.test(reply)
-        result.stoppedBecause =
-          `${MAX_CONSECUTIVE_FAILURES} placements in a row failed — the last said: ${reply}.` +
-          (noSupport
-            ? ' The build has nothing under it, so it was probably started in mid-air. Land first, then build.'
-            : ' On a server this usually means the area is protected.')
-        break
+      }
+
+      const done = result.placed + result.skipped + result.failed
+      const quietFor = Date.now() - lastReportAt
+      if (options.onProgress && (done % PROGRESS_EVERY === 0 || quietFor >= PROGRESS_AT_LEAST_EVERY_MS)) {
+        lastReportAt = Date.now()
+        options.onProgress({ placed: result.placed, skipped: result.skipped, failed: result.failed, total: blocks.length })
       }
     }
 
-    const done = result.placed + result.skipped + result.failed
-    if (options.onProgress && done % PROGRESS_EVERY === 0) {
-      options.onProgress({ placed: result.placed, skipped: result.skipped, failed: result.failed, total: blocks.length })
+    if (result.stoppedBecause === 'stopped') break
+
+    // Nothing new landed, so another sweep would place nothing either.
+    if (result.placed === placedBefore) break
+
+    // Only what is still missing goes into the next pass.
+    remaining = [...stillFailing]
+
+    if (remaining.length > 0) {
+      options.onProgress?.({
+        placed: result.placed,
+        skipped: result.skipped,
+        failed: result.failed,
+        total: blocks.length
+      })
     }
+  }
+
+  /*
+   * The failure count is what is genuinely still missing, worked out at the
+   * end rather than tallied as it goes.
+   *
+   * Counting every attempt meant a build that finished after two passes still
+   * reported the first pass's refusals - "99 failed" on a complete house - and
+   * subtracting them again as passes went by was bookkeeping that drifted: it
+   * reported zero failures on a lighthouse that was thirteen blocks short.
+   */
+  result.failed = Math.max(0, result.total - result.placed - result.skipped)
+
+  /*
+   * If the build came up short, say why, using the last refusal seen.
+   *
+   * The reason has to survive the retries: a block that failed in one pass and
+   * landed in the next is not worth mentioning, but a build that ends with
+   * blocks missing needs to say what stopped them - a protected region, or
+   * nothing underneath to place against.
+   */
+  if (!result.stoppedBecause && result.failed > 0 && lastFailureReply) {
+    const noSupport = /nothing solid next to|nowhere to stand/.test(lastFailureReply)
+    const nothingAtAll = result.placed === 0
+
+    result.stoppedBecause =
+      (nothingAtAll
+        ? 'nothing could be placed'
+        : `${result.failed} block${result.failed === 1 ? '' : 's'} could not be placed`) +
+      ` — the last attempt said: ${lastFailureReply}.` +
+      (noSupport
+        ? ' Those blocks had nothing to build against, so the site is probably uneven or in mid-air.'
+        : ' On a server this usually means the area is protected.')
   }
 
   return result

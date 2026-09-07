@@ -15,6 +15,35 @@ import { EmptyState, ErrorView, Spinner } from '../components/ui'
  * two audiences barely overlap: someone exporting a castle to build themselves
  * over a weekend has no bot, and should not have to make one to reach this.
  */
+/**
+ * The sections, in the order a player is most likely to want them.
+ *
+ * Houses first: it is what people come here for, and it is what got lost when
+ * thirty-five cards shared a single grid — four new houses were reported
+ * missing when they were simply somewhere in the middle of it.
+ */
+const SECTIONS = [
+  { key: 'building', title: 'Houses & buildings', blurb: 'Places to live in, defend, or look at' },
+  { key: 'farm', title: 'Farms & machines', blurb: 'Things that grow, sort or smelt on their own' },
+  { key: 'redstone', title: 'Redstone & contraptions', blurb: 'Circuits, traps, doors and lighting' },
+  { key: 'imported', title: 'Imported', blurb: 'Schematics you brought in yourself' }
+] as const
+
+/** Anything imported belongs in its own section, whatever it contains. */
+function sectionOf(blueprint: BlueprintSummary): string {
+  if (blueprint.imported) return 'imported'
+  return blueprint.category ?? 'building'
+}
+
+/** Matches a name, a blurb, or a material — "oak" should find the cottage. */
+function matchesSearch(blueprint: BlueprintSummary, search: string): boolean {
+  const term = search.trim().toLowerCase()
+  if (!term) return true
+  if (blueprint.name.toLowerCase().includes(term)) return true
+  if (blueprint.blurb.toLowerCase().includes(term)) return true
+  return blueprint.materials.some((material) => material.block.toLowerCase().includes(term))
+}
+
 export function BlueprintsScreen(): JSX.Element {
   const instances = useStore((s) => s.instances)
   const settings = useStore((s) => s.settings)
@@ -31,6 +60,7 @@ export function BlueprintsScreen(): JSX.Element {
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -146,7 +176,9 @@ export function BlueprintsScreen(): JSX.Element {
     setError(null)
     try {
       await api.companion.build(companionId, blueprint.id)
-      setNote(`Told ${companions.find((c) => c.id === companionId)?.username ?? 'the companion'} to build ${blueprint.name}.`)
+      setNote(
+        `Told ${companions.find((c) => c.id === companionId)?.username ?? 'the companion'} to build ${blueprint.name}.`
+      )
     } catch (err) {
       setError(toPayload(err))
     } finally {
@@ -166,6 +198,13 @@ export function BlueprintsScreen(): JSX.Element {
           </p>
         </div>
         <div className="row gap-8">
+          <input
+            className="input"
+            style={{ width: 200 }}
+            placeholder="Search blueprints"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
           <button className="btn" onClick={() => void pick()} disabled={busy}>
             {busy ? <Spinner /> : <Upload size={15} />} Import schematic
           </button>
@@ -186,7 +225,12 @@ export function BlueprintsScreen(): JSX.Element {
             <label className="tiny dim" style={{ display: 'block', marginBottom: 5 }} htmlFor="bp-instance">
               Export into
             </label>
-            <select id="bp-instance" className="input" value={target} onChange={(event) => setTarget(event.target.value)}>
+            <select
+              id="bp-instance"
+              className="input"
+              value={target}
+              onChange={(event) => setTarget(event.target.value)}
+            >
               {instances.length === 0 && servers.length === 0 && <option value="">Nothing to export to yet</option>}
               {instances.length > 0 && (
                 <optgroup label="Instances — for Litematica">
@@ -214,11 +258,7 @@ export function BlueprintsScreen(): JSX.Element {
             style={{ alignSelf: 'flex-end' }}
             onClick={() => void setupLitematica()}
             disabled={busy || !instance}
-            title={
-              instance
-                ? `Install Litematica and MaLiLib into ${instance.name}`
-                : 'Pick an instance first'
-            }
+            title={instance ? `Install Litematica and MaLiLib into ${instance.name}` : 'Pick an instance first'}
           >
             <Boxes size={15} /> Set up Litematica
           </button>
@@ -263,11 +303,11 @@ export function BlueprintsScreen(): JSX.Element {
       </div>
 
       {/*
-        * What has already been built, and the way back out.
-        *
-        * A companion can place thousands of blocks on one instruction, so the
-        * ability to reverse it belongs next to the button that starts it.
-        */}
+       * What has already been built, and the way back out.
+       *
+       * A companion can place thousands of blocks on one instruction, so the
+       * ability to reverse it belongs next to the button that starts it.
+       */}
       {builds.length > 0 && (
         <div className="panel panel-pad mb-16">
           <div className="row gap-8 mb-8">
@@ -280,7 +320,11 @@ export function BlueprintsScreen(): JSX.Element {
                 <div className="flex-1" style={{ minWidth: 0 }}>
                   <div className="truncate" style={{ fontSize: 13 }}>
                     {build.label}
-                    {build.undoneAt && <span className="pill" style={{ marginLeft: 8 }}>undone</span>}
+                    {build.undoneAt && (
+                      <span className="pill" style={{ marginLeft: 8 }}>
+                        undone
+                      </span>
+                    )}
                   </div>
                   <div className="tiny dim">
                     {build.blocks.toLocaleString()} blocks at {build.origin.x}, {build.origin.y}, {build.origin.z} ·{' '}
@@ -324,98 +368,129 @@ export function BlueprintsScreen(): JSX.Element {
             />
           </div>
         ) : (
-          <div className="card-grid">
-            {blueprints.map((blueprint) => (
-              <div key={blueprint.id} className="panel panel-hover">
-                <div className="panel-pad col gap-12">
-                  <div className="row gap-12">
-                    <Package size={17} className="dim" style={{ flexShrink: 0 }} />
-                    <div className="flex-1" style={{ minWidth: 0 }}>
-                      <div className="row gap-8">
-                        <span className="truncate" style={{ fontWeight: 650 }}>
-                          {blueprint.name}
-                        </span>
-                        {blueprint.imported && <span className="pill">imported</span>}
+          <div className="col gap-24">
+            {SECTIONS.map((section) => {
+              const inSection = blueprints.filter((b) => sectionOf(b) === section.key && matchesSearch(b, search))
+              if (inSection.length === 0) return null
+
+              return (
+                <div key={section.key}>
+                  <div className="row between items-end mb-12">
+                    <div>
+                      <div className="settings-group-label" style={{ marginBottom: 2 }}>
+                        {section.title}
                       </div>
-                      <div className="tiny dim truncate">
-                        {blueprint.width}×{blueprint.height}×{blueprint.depth} ·{' '}
-                        {blueprint.blocks.toLocaleString()} blocks
-                      </div>
+                      <div className="tiny dim">{section.blurb}</div>
                     </div>
+                    <span className="pill">{inSection.length}</span>
                   </div>
 
-                  <p className="tiny dim" style={{ margin: 0, lineHeight: 1.5, minHeight: 34 }}>
-                    {blueprint.blurb}
-                  </p>
+                  <div className="card-grid">
+                    {inSection.map((blueprint) => (
+                      <div key={blueprint.id} className="panel panel-hover">
+                        <div className="panel-pad col gap-12">
+                          <div className="row gap-12">
+                            <Package size={17} className="dim" style={{ flexShrink: 0 }} />
+                            <div className="flex-1" style={{ minWidth: 0 }}>
+                              <div className="row gap-8">
+                                <span className="truncate" style={{ fontWeight: 650 }}>
+                                  {blueprint.name}
+                                </span>
+                                {blueprint.imported && <span className="pill">imported</span>}
+                              </div>
+                              <div className="tiny dim truncate">
+                                {blueprint.width}×{blueprint.height}×{blueprint.depth} ·{' '}
+                                {blueprint.blocks.toLocaleString()} blocks
+                              </div>
+                            </div>
+                          </div>
 
-                  <div className="row gap-8 wrap">
-                    <button
-                      className="btn btn-primary btn-sm"
-                      disabled={busy || !hasTarget}
-                      onClick={() => void exportTo(blueprint, 'schem')}
-                      title="Write a .schem for Litematica or WorldEdit"
-                    >
-                      <Download size={14} /> Export
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busy || !hasTarget}
-                      onClick={() => void exportTo(blueprint, 'nbt')}
-                      title="Write a vanilla structure file, for a structure block"
-                    >
-                      .nbt
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => setExpanded(expanded === blueprint.id ? null : blueprint.id)}
-                    >
-                      Materials
-                    </button>
-                  </div>
+                          <p className="tiny dim" style={{ margin: 0, lineHeight: 1.5, minHeight: 34 }}>
+                            {blueprint.blurb}
+                          </p>
 
-                  {running.length > 0 && (
-                    <div className="row gap-8">
-                      <Bot size={14} className="dim" style={{ flexShrink: 0 }} />
-                      <select
-                        className="input"
-                        style={{ flex: 1, minWidth: 0 }}
-                        value=""
-                        disabled={busy}
-                        onChange={(event) => {
-                          if (event.target.value) void buildWith(blueprint, event.target.value)
-                        }}
-                        title="Have a running companion build this"
-                      >
-                        <option value="">Have a companion build it…</option>
-                        {running.map((companion) => (
-                          <option key={companion.id} value={companion.id}>
-                            {companion.username}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                          <div className="row gap-8 wrap">
+                            <button
+                              className="btn btn-primary btn-sm"
+                              disabled={busy || !hasTarget}
+                              onClick={() => void exportTo(blueprint, 'schem')}
+                              title="Write a .schem for Litematica or WorldEdit"
+                            >
+                              <Download size={14} /> Export
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              disabled={busy || !hasTarget}
+                              onClick={() => void exportTo(blueprint, 'nbt')}
+                              title="Write a vanilla structure file, for a structure block"
+                            >
+                              .nbt
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              onClick={() => setExpanded(expanded === blueprint.id ? null : blueprint.id)}
+                            >
+                              Materials
+                            </button>
+                          </div>
 
-                  {expanded === blueprint.id && (
-                    <div className="col gap-8">
-                      <div className="row gap-8 wrap">
-                        {blueprint.materials.map((material) => (
-                          <span key={material.block} className="pill">
-                            {material.count}× {material.block}
-                          </span>
-                        ))}
-                      </div>
-                      {blueprint.notes?.map((entry) => (
-                        <div key={entry} className="row gap-8 tiny" style={{ color: 'var(--warning)' }}>
-                          <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 2 }} />
-                          <span>{entry}</span>
+                          {running.length > 0 && (
+                            <div className="row gap-8">
+                              <Bot size={14} className="dim" style={{ flexShrink: 0 }} />
+                              <select
+                                className="input"
+                                style={{ flex: 1, minWidth: 0 }}
+                                value=""
+                                disabled={busy}
+                                onChange={(event) => {
+                                  if (event.target.value) void buildWith(blueprint, event.target.value)
+                                }}
+                                title="Have a running companion build this"
+                              >
+                                <option value="">Have a companion build it…</option>
+                                {running.map((companion) => (
+                                  <option key={companion.id} value={companion.id}>
+                                    {companion.username}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {expanded === blueprint.id && (
+                            <div className="col gap-8">
+                              <div className="row gap-8 wrap">
+                                {blueprint.materials.map((material) => (
+                                  <span key={material.block} className="pill">
+                                    {material.count}× {material.block}
+                                  </span>
+                                ))}
+                              </div>
+                              {blueprint.notes?.map((entry) => (
+                                <div key={entry} className="row gap-8 tiny" style={{ color: 'var(--warning)' }}>
+                                  <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 2 }} />
+                                  <span>{entry}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
+              )
+            })}
+
+            {/*
+             * Nothing matched, which only a search can cause — the sections
+             * themselves are never all empty.
+             */}
+            {blueprints.filter((b) => matchesSearch(b, search)).length === 0 && (
+              <div className="panel panel-pad muted small">
+                Nothing matches “{search}”. Try a block name, like “oak” or “stone”.
               </div>
-            ))}
+            )}
           </div>
         )}
       </DropZone>
@@ -423,8 +498,8 @@ export function BlueprintsScreen(): JSX.Element {
       <p className="tiny dim" style={{ marginTop: 20, lineHeight: 1.6, maxWidth: '70ch' }}>
         <Hammer size={12} style={{ verticalAlign: -1, marginRight: 5 }} />
         Imported schematics keep their shape and blocks but not block orientation, so stairs and doors come out facing
-        default. Legacy MCEdit <code>.schematic</code> files are refused — open one in WorldEdit or Amulet and save it as
-        a <code>.schem</code> first.
+        default. Legacy MCEdit <code>.schematic</code> files are refused — open one in WorldEdit or Amulet and save it
+        as a <code>.schem</code> first.
       </p>
     </>
   )

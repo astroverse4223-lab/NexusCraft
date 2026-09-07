@@ -2,6 +2,8 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Instance } from '@shared/types'
 import { createLogger } from '../../core/logger'
+import { blameFor } from './crashBlame'
+import { analyseMods } from '../mods/modService'
 
 const log = createLogger('crash')
 
@@ -18,6 +20,23 @@ export interface CrashDiagnosis {
   actions: string[]
   /** Trimmed excerpt of the report for the technical detail panel. */
   excerpt: string | null
+  /**
+   * The mod whose code appears highest in the trace, when one does.
+   *
+   * A suspect rather than a verdict: matching is on package names, and a mod
+   * author is not obliged to name their packages after their mod. It is right
+   * far more often than "exit code 4294967295" is useful.
+   */
+  blame: CrashBlame | null
+}
+
+/** Named separately so the renderer can import it without the parser. */
+export interface CrashBlame {
+  fileName: string
+  name: string
+  modId: string | null
+  frame: string
+  depth: number
 }
 
 /**
@@ -132,7 +151,8 @@ export async function diagnoseCrash(instance: Instance, since: number): Promise<
     description: null,
     explanation: null,
     actions: [],
-    excerpt: null
+    excerpt: null,
+    blame: null
   }
 
   const dir = join(instance.gameDir, 'crash-reports')
@@ -180,12 +200,28 @@ export async function diagnoseCrash(instance: Instance, since: number): Promise<
 
   log.info(`crash report parsed: ${description ?? 'no description'} / ${cause ?? 'no cause'}`)
 
+  /*
+   * Which mod is in the trace.
+   *
+   * The mod list is already cached by then — the scan that runs before every
+   * launch warmed it — so this costs a walk over the frames rather than a
+   * second pass over the jars.
+   */
+  let blame = null
+  try {
+    blame = blameFor(text, await analyseMods(instance))
+    if (blame) log.info(`crash points at ${blame.name} (${blame.frame})`)
+  } catch (error) {
+    log.warn('could not work out which mod crashed:', (error as Error).message)
+  }
+
   return {
     reportPath: newest.path,
     cause,
     description,
     explanation: known?.explanation ?? null,
     actions: known?.actions ?? [],
-    excerpt
+    excerpt,
+    blame
   }
 }

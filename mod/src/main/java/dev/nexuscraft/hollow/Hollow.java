@@ -19,6 +19,7 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.math.Vec3d;
@@ -186,11 +187,54 @@ public class Hollow implements ModInitializer {
                 return ActionResult.SUCCESS;
             }
 
+            /*
+             * Picking him up, when the click landed on the floor behind him.
+             *
+             * This is the normal case, not an edge one. He is a small thing
+             * lying on the ground, so the crosshair aimed at him is also aimed
+             * at the block underneath — and the game reports that as a block
+             * interaction. Handling only the "used an item in the air" event
+             * meant right-click worked when pointing at the sky and never on a
+             * ball resting on the floor, which is every actual attempt.
+             */
+            ItemEntity underCursor = Ball.lookedAt(serverWorld, server, 4.5);
+            if (underCursor != null
+                    && underCursor.getEntityPos().squaredDistanceTo(server.getEyePos())
+                        < hit.getPos().squaredDistanceTo(server.getEyePos()) + 1.0
+                    && Ball.pickUp(serverWorld, server, underCursor)) {
+                return ActionResult.SUCCESS;
+            }
+
             if (block.contains("bed")) Watcher.sawSleep(state, serverWorld, pos);
             else Watcher.sawStorage(state, serverWorld, pos);
 
             // Never consumes the interaction; the player still opens the chest.
             return ActionResult.PASS;
+        });
+
+        /*
+         * Right-clicking him picks him up.
+         *
+         * Registered against the "used an item" event rather than the "used an
+         * entity" one, which never fires here: the game does not consider a
+         * dropped item something you can point at, so an entity interaction on
+         * the ball is not an event that exists. This fires on any right-click
+         * that did not hit a block, and the aiming is done in `lookedAt`.
+         */
+        UseItemCallback.EVENT.register((player, world, hand) -> {
+            if (!(world instanceof ServerWorld serverWorld)
+                    || !(player instanceof ServerPlayerEntity server)) {
+                return ActionResult.PASS;
+            }
+            // Main hand only, or one click is handled twice.
+            if (hand != net.minecraft.util.Hand.MAIN_HAND) return ActionResult.PASS;
+
+            ItemEntity ball = Ball.lookedAt(serverWorld, server, 4.5);
+            if (ball == null) return ActionResult.PASS;
+            if (!Ball.pickUp(serverWorld, server, ball)) return ActionResult.PASS;
+
+            // Consumed, so the item in hand is not also used on him.
+            return ActionResult.SUCCESS;
         });
 
         ServerTickEvents.END_SERVER_TICK.register(this::tick);

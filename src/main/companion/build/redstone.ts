@@ -137,6 +137,7 @@ export const REDSTONE_LIBRARY: LibraryEntry[] = [
 
   {
     id: 'sugar-farm',
+    category: 'farm',
     blurb: 'A 7x5x4 observer sugar cane farm. Five columns, cut and dropped without you.',
     blueprint: {
       name: 'Sugar Cane Farm',
@@ -190,6 +191,7 @@ export const REDSTONE_LIBRARY: LibraryEntry[] = [
 
   {
     id: 'auto-smelter',
+    category: 'farm',
     blurb: 'A 3x5x5 furnace tower — fuel one side, ore on top, output to a chest below.',
     blueprint: {
       name: 'Auto Smelter',
@@ -218,6 +220,7 @@ export const REDSTONE_LIBRARY: LibraryEntry[] = [
 
   {
     id: 'item-sorter',
+    category: 'farm',
     blurb: 'One sorting channel, 5x4x4. Stand several side by side to sort a whole wall of items.',
     blueprint: {
       name: 'Item Sorter (one channel)',
@@ -531,6 +534,7 @@ export const REDSTONE_LIBRARY: LibraryEntry[] = [
 
   {
     id: 'crop-flush',
+    category: 'farm',
     blurb: 'A 9x6x3 harvester. One lever washes the whole field into the hoppers.',
     blueprint: {
       name: 'Water Flush Farm',
@@ -627,6 +631,7 @@ export const REDSTONE_LIBRARY: LibraryEntry[] = [
 
   {
     id: 'auto-composter',
+    category: 'farm',
     blurb: 'A 3x3x6 composter tower. Crops in the top, bone meal out of the bottom.',
     blueprint: {
       name: 'Auto Composter',
@@ -652,6 +657,7 @@ export const REDSTONE_LIBRARY: LibraryEntry[] = [
 
   {
     id: 'bubble-lift',
+    category: 'farm',
     blurb: 'A 5x3x7 water lift — up one column, down the other. No redstone, and no ladders.',
     blueprint: {
       name: 'Bubble Lift',

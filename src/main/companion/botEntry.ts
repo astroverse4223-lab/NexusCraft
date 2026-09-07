@@ -20,6 +20,8 @@ import type { ToolContext } from './tools/types'
 import { watchOwnerDeath, type DeathWatch } from './tools/support/deathWatch'
 import { setCrewSnapshot } from './tools'
 import { findRoutine, RoutineRunner } from './routines'
+import { isForMe } from './chatGate'
+import { ownAddresses, unreachableAdvice } from './hostResolve'
 
 const send = (message: CompanionOutbound): void => {
   process.send?.(message)
@@ -35,6 +37,16 @@ let runner: RoutineRunner | null = null
 let deathWatch: DeathWatch | null = null
 /** Lets a routine's tools be cut short when the worker is told to stop. */
 let routineStop = new AbortController()
+/**
+ * The other companions currently connected.
+ *
+ * Module level because two places need it and they are not in the same
+ * scope: the chat handler, which uses it to tell an order from another
+ * bot's chatter, and the message handler, which is told when the list
+ * changes. Seeded at start and kept current after.
+ */
+let siblings: string[] = []
+
 let tickTimer: NodeJS.Timeout | null = null
 let stopping = false
 let spawned = false
@@ -401,6 +413,8 @@ async function start(config: CompanionConfig): Promise<void> {
       {
         log,
         thought: (text) => send({ type: 'thought', text }),
+        // Shown as the companion speaking, because that is what it is.
+        spoke: (text) => send({ type: 'chat', from: bot.username, message: text }),
         action: (name, args, result) => send({ type: 'action', name, args, result }),
         memoryChanged: (notes) => send({ type: 'memory', notes }),
         goalChanged: (goal) => send({ type: 'goal', goal }),
@@ -420,22 +434,32 @@ async function start(config: CompanionConfig): Promise<void> {
     instinctTimer = setInterval(() => void runInstincts(bot), 2000)
   })
 
+  // Whoever was already connected when this one started. Updated later by
+  // the launcher whenever another companion joins or leaves.
+  siblings = config.siblings ?? []
+
   bot.on('chat', (username: string, message: string) => {
     if (username === bot.username) return
     send({ type: 'chat', from: username, message })
 
-    // Only react when spoken to, or when the message names the bot, so it does
-    // not interrupt every conversation on a busy server.
-    const mentioned =
-      message.toLowerCase().includes(bot.username.toLowerCase()) ||
-      !config.owner ||
-      username === config.owner
+    /*
+     * Whether this was meant for us at all.
+     *
+     * The rules live in `chatGate` so they can be tested: every companion
+     * hears every message, and a rule that is slightly too generous turns
+     * one instruction into four bots working at once - which on a local
+     * model is the launcher appearing to freeze.
+     */
+    if (!isForMe(username, message, { me: bot.username, siblings, owner: config.owner || null })) {
+      return
+    }
+
     /*
      * A person's words go to the front of the queue. They used to go behind
-     * whatever the companion had decided to do on its own, which on a busy bot
-     * meant an instruction sat unanswered for minutes and looked ignored.
+     * whatever the companion had decided to do on its own, which on a busy
+     * bot meant an instruction sat unanswered for minutes and looked ignored.
      */
-    if (mentioned) agent?.queue(`${username} said in chat: "${message}"`, true)
+    agent?.queue(`${username} said in chat: "${message}"`, true)
   })
 
   let lastHealth = 20
@@ -683,7 +707,14 @@ function describeFailure(err: unknown, config: CompanionConfig): string {
     case 'EAI_AGAIN':
       return `Could not find a server at "${config.host}". Check the address for a typo.`
     case 'ETIMEDOUT':
-      return `${where} never answered. Check the port and whether a firewall is blocking it.`
+      /*
+       * A timeout here is usually a saved address from another network rather
+       * than a firewall: the machine's LAN address changes when it moves
+       * between networks, and the old one simply stops answering. Blaming the
+       * firewall sent people hunting through Windows Defender for a server
+       * that was running the whole time.
+       */
+      return unreachableAdvice(config.host, config.port, ownAddresses())
     case 'ECONNRESET':
       /*
        * Two very different servers close a connection this abruptly, and
@@ -916,6 +947,15 @@ process.on('message', (message: CompanionInbound) => {
         .catch((err) => log(`the undo stopped: ${(err as Error).message}`))
       break
     }
+
+    case 'siblings':
+      /*
+       * Kept current, so a companion that started first still learns about
+       * the ones that joined after it. Without this the first bot to start
+       * treats everything the others say as an instruction.
+       */
+      siblings = message.names
+      break
 
     case 'interrupt':
       if (agent) {
