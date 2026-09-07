@@ -22,9 +22,42 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           // The companion bot runs as its own process, so it is bundled
           // separately and spawned rather than imported.
-          bot: resolve(__dirname, 'src/main/companion/botEntry.ts')
+          bot: resolve(__dirname, 'src/main/companion/botEntry.ts'),
+          // Speech synthesis, for the same reason as the bot: it is heavy
+          // enough that running it in the main process freezes the window.
+          voice: resolve(__dirname, 'src/main/services/voice/voiceWorker.ts')
         },
-        external: ['better-sqlite3', 'mineflayer', 'mineflayer-pathfinder', 'minecraft-data', 'vec3']
+        /*
+         * Left for Node to require at runtime rather than bundled.
+         *
+         * Anything with a native binary has to be here. onnxruntime-node finds
+         * its own `.node` file with a dynamic require built from the platform
+         * name, and a bundler cannot follow that — it inlines the JavaScript,
+         * the computed path stops pointing at anything, and the first attempt
+         * to load a voice fails with "Could not dynamically require
+         * ../bin/napi-v3/win32/x64/onnxruntime_binding.node".
+         *
+         * That failure only appears in a built app. Running the same source
+         * directly works, because nothing has been bundled yet — which is
+         * exactly how it got missed.
+         *
+         * sharp comes in under @huggingface/transformers and is native for the
+         * same reason.
+         */
+        external: [
+          'better-sqlite3',
+          'mineflayer',
+          'mineflayer-pathfinder',
+          'minecraft-data',
+          'vec3',
+          'kokoro-js',
+          '@huggingface/transformers',
+          'onnxruntime-node',
+          'onnxruntime-web',
+          'onnxruntime-common',
+          'phonemizer',
+          'sharp'
+        ]
       }
     },
     resolve: {

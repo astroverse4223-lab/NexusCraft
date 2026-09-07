@@ -1,18 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import {
   AlertTriangle,
+  ArrowUpCircle,
   ChevronDown,
   ChevronUp,
   FolderOpen,
   Image as ImageIcon,
+  Layers,
   Package,
   Palette,
   Plus,
   RefreshCw,
-  ShieldCheck,
   Search,
+  ShieldCheck,
   Sparkles,
-  ArrowUpCircle,
   Trash2,
   Undo2
 } from 'lucide-react'
@@ -26,7 +27,7 @@ import type {
   ModUpdate
 } from '@shared/types'
 import { api, toPayload, type Screenshot } from '../api'
-import { HollowCard } from '../components/HollowCard'
+import { BundledMods } from '../components/BundledModCard'
 import { useStore, focusedInstance } from '../store/useStore'
 import { ConfirmDialog, EmptyState, ErrorView, Spinner, Toggle } from '../components/ui'
 import { DropZone } from '../components/DropZone'
@@ -114,7 +115,7 @@ export function ModsScreen(): JSX.Element {
             * is also where "get me a mod" belongs.
             */}
           <div className="mb-16">
-            <HollowCard instance={instance} />
+            <BundledMods instance={instance} />
           </div>
           <BrowseTab instance={instance} />
         </>
@@ -149,17 +150,34 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
   const [deleting, setDeleting] = useState<ModInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [updates, setUpdates] = useState<ModUpdate[] | null>(null)
+  const [checkingAll, setCheckingAll] = useState(false)
+  const [sweepResult, setSweepResult] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const [fixing, setFixing] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
   const [rollbacks, setRollbacks] = useState<ModRollback[]>([])
   const [rollingBack, setRollingBack] = useState<string | null>(null)
 
+  /*
+   * Which instance the newest scan was for.
+   *
+   * A scan of a large pack takes over a second, so switching instance while one
+   * is running let the older, slower answer land last and replace the newer
+   * one — the screen then listed the previous instance's mods under the current
+   * instance's name, with nothing to show anything was wrong.
+   */
+  const wantedRef = useRef(instance.id)
+
   const load = useCallback(async () => {
+    const wanted = instance.id
+    wantedRef.current = wanted
     try {
-      setMods(await api.mods.list(instance.id))
+      const list = await api.mods.list(wanted)
+      if (wantedRef.current !== wanted) return
+      setMods(list)
       setError(null)
     } catch (err) {
+      if (wantedRef.current !== wanted) return
       setError(toPayload(err))
       setMods([])
     }
@@ -239,6 +257,37 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       await installJars(files)
     } catch (err) {
       setError(toPayload(err))
+    }
+  }
+
+  /**
+   * Checks every instance, not just this one.
+   *
+   * This existed only on the Settings screen, which is not where anybody
+   * manages mods — so the way to update a dozen instances was to open each in
+   * turn and press "Check for updates" on every one. The sweep was already
+   * there; it was simply nowhere near the mods.
+   */
+  async function checkEveryInstance(): Promise<void> {
+    setCheckingAll(true)
+    setError(null)
+    try {
+      const sweep = await api.mods.checkAllNow()
+      const skipped = sweep.skipped > 0 ? `, ${sweep.skipped} skipped while running` : ''
+      setSweepResult(
+        sweep.found === 0
+          ? `Everything is up to date across ${sweep.checked} instance${sweep.checked === 1 ? '' : 's'}${skipped}.`
+          : `${sweep.found} update${sweep.found === 1 ? '' : 's'} found across ${sweep.checked} instances` +
+            (sweep.installed > 0 ? `, ${sweep.installed} installed` : '') +
+            (sweep.heldBack > 0 ? `, ${sweep.heldBack} held for review` : '') +
+            `${skipped}.`
+      )
+      // This instance may have been one of them.
+      await checkUpdates()
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setCheckingAll(false)
     }
   }
 
@@ -361,11 +410,28 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
           <button className="btn" disabled={checking} onClick={() => void checkUpdates()}>
             {checking ? <Spinner /> : <ArrowUpCircle size={15} />} Check for updates
           </button>
+          <button
+            className="btn"
+            disabled={checkingAll}
+            onClick={() => void checkEveryInstance()}
+            title="Check every instance you have, not just this one"
+          >
+            {checkingAll ? <Spinner /> : <Layers size={15} />} Check all instances
+          </button>
           <button className="btn btn-ghost btn-icon" title="Refresh" onClick={() => void load()}>
             <RefreshCw size={15} />
           </button>
         </div>
       </div>
+
+      {sweepResult && (
+        <div className="panel panel-pad mb-16 row between items-center">
+          <span className="small">{sweepResult}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSweepResult(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-16">

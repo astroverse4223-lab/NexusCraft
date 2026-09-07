@@ -92,5 +92,14 @@ export const FORBIDDEN_COMMANDS = new Set([
 
 export const MAX_FLIGHT_FAILURES = 3
 
+/**
+ * How far counts as a short hop, taken directly rather than over the top.
+ *
+ * Sixteen blocks covers moving along a wall, round a corner, or to the next
+ * course of a build — the moves a companion makes hundreds of times and the
+ * ones the climb-and-cross route handled worst.
+ */
+export const SHORT_HOP_BLOCKS = 16
+
 /** Flight is retried after a pause; abandoning it for the session was worse. */
 export const FLIGHT_RETRY_AFTER_MS = 60_000

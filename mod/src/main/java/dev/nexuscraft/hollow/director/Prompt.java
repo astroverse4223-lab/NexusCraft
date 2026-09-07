@@ -204,6 +204,18 @@ public final class Prompt {
      * floating face, "none" is a bug the player can see, so it is treated as
      * the silence it was meant to be.
      */
+    /**
+     * Markdown off both ends of a value.
+     *
+     * Stripping only the start of the line is not enough. A model that decides
+     * the label should be bold writes `**SAY:** the line`, and taking off the
+     * leading asterisks leaves the closing pair sitting in front of the words —
+     * so the companion said "** stop that" out loud, asterisks and all.
+     */
+    private static String strip(String value) {
+        return value.replaceAll("^[*_`\\s]+", "").replaceAll("[*_`\\s]+$", "");
+    }
+
     private static boolean isNotDialogue(String say) {
         String bare = say.toLowerCase().replaceAll("[^a-z]", "");
         return bare.isEmpty() || bare.equals("none") || bare.equals("nothing")
@@ -228,9 +240,9 @@ public final class Prompt {
             String upper = cleaned.toUpperCase();
 
             if (upper.startsWith("SAY:")) {
-                say = cleaned.substring(4).trim().replaceAll("^[\"']|[\"']$", "");
+                say = strip(cleaned.substring(4)).replaceAll("^[\"']|[\"']$", "");
             } else if (upper.startsWith("BEAT:")) {
-                beat = Beat.fromName(cleaned.substring(5).trim());
+                beat = Beat.fromName(strip(cleaned.substring(5)));
             }
         }
 

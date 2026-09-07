@@ -53,10 +53,24 @@ describe('groundedOrigin', () => {
     expect(groundedOrigin(bot, { x: 0, y: 90, z: 0 }, SIZE).y).toBe(71)
   })
 
-  it('returns the point unchanged over the void, rather than inventing ground', () => {
+  it('says it found no ground over the void, rather than inventing some', () => {
     const bot = fakeBot(0, 'void')
     const asked = { x: 10, y: 100, z: 10 }
-    expect(groundedOrigin(bot, asked, SIZE)).toEqual(asked)
+    const origin = groundedOrigin(bot, asked, SIZE)
+
+    expect(origin).toMatchObject(asked)
+
+    /*
+     * The flag is the point. Returning the requested spot silently meant the
+     * builder went ahead and laid a house in mid-air — watched live, an Oak
+     * Cottage reported "placed 0 of 202 blocks; 202 failed" having attempted
+     * every one of them.
+     */
+    expect(origin.grounded).toBe(false)
+  })
+
+  it('says it did find ground when there is some', () => {
+    expect(groundedOrigin(fakeBot(64), { x: 0, y: 64, z: 0 }, SIZE).grounded).toBe(true)
   })
 
   it('looks a little above the origin, for a bot stood in a doorway', () => {

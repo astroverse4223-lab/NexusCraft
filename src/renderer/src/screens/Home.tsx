@@ -81,7 +81,7 @@ function Dashboard(): JSX.Element {
         <StatTile icon={<Server size={17} />} label="Saved servers" value={loading ? '…' : String(servers.length)} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
         <section>
           <div className="section-title">Recently played</div>
           {recent.length === 0 ? (

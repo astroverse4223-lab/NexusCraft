@@ -13,12 +13,40 @@ files:
   - '!**/*.map'
   - '!**/{.eslintrc,.editorconfig,.prettierrc}'
 
+  # The speech model is downloaded on demand into the user's data directory and
+  # must never be baked into the installer. It lands in node_modules by default
+  # if anything ever runs the library from a checkout, and it is ~300MB.
+  - '!node_modules/@huggingface/transformers/.cache/**'
+
+  # onnxruntime ships prebuilt binaries for every platform it supports - macOS,
+  # Linux, and both Windows architectures - which is 208MB to deliver a 34MB
+  # one. This is a Windows x64 build, so the rest is dead weight that would
+  # more than double the installer.
+  - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
+  - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
+  - '!node_modules/onnxruntime-node/bin/napi-v6/{darwin,linux}/**'
+  - '!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**'
+
+  # minecraft-data ships the data files for every Minecraft version ever
+  # released, on both editions. Bedrock accounts for 329MB of the 426MB and this
+  # is a Java Edition launcher — mineflayer speaks the Java protocol only, and
+  # bedrock-protocol is not a dependency, so none of it is ever read.
+  - '!node_modules/minecraft-data/minecraft-data/data/bedrock/**'
+
+  # The browser build of the runtime. Synthesis runs in the main process on the
+  # node backend; the renderer never loads a model, by design.
+  - '!node_modules/onnxruntime-web/dist/**'
+
 # Native modules cannot be loaded from inside an asar archive, so better-sqlite3
 # is unpacked next to it. The launcher falls back to its JSON store if the
 # module still fails to load on the target machine.
 asarUnpack:
   - '**/*.node'
   - node_modules/better-sqlite3/**/*
+  # onnxruntime's binding loads onnxruntime.dll and DirectML.dll from beside
+  # itself, and a DLL cannot be loaded out of an asar. Unpacking only the .node
+  # would get the binding onto disk and leave it unable to find its own library.
+  - node_modules/onnxruntime-node/bin/**
 
 # The tray reads its icon from disk at runtime, so the .ico has to exist as a
 # real file next to the app rather than only inside the asar.

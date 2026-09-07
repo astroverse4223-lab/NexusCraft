@@ -122,7 +122,21 @@ export function toolSetSizes(): { full: number; core: number; fullTokens: number
 
 export type ToolSetName = 'full' | 'core'
 
-export function schemasFor(set: ToolSetName): ToolSchema[] {
-  if (set !== 'core') return TOOL_SCHEMAS
-  return TOOL_SCHEMAS.filter((schema) => CORE_TOOL_NAMES.includes(schema.name))
+/**
+ * The tools that only mean anything on a crew.
+ *
+ * Offered unconditionally, they are three schemas of noise on every request and
+ * an active distraction: a companion working alone spent a whole turn reasoning
+ * about which crew member to assign a job to, called `crew_status`, and was
+ * told "you are not in a crew" - having done nothing else with the turn.
+ */
+const CREW_TOOL_NAMES = ['crew_status', 'assign_task', 'crew_note']
+
+export function schemasFor(set: ToolSetName, options?: { inCrew?: boolean }): ToolSchema[] {
+  const all = set === 'core'
+    ? TOOL_SCHEMAS.filter((schema) => CORE_TOOL_NAMES.includes(schema.name))
+    : TOOL_SCHEMAS
+
+  if (options?.inCrew) return all
+  return all.filter((schema) => !CREW_TOOL_NAMES.includes(schema.name))
 }

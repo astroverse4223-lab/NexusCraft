@@ -99,11 +99,28 @@ public final class Speech {
                 byte[] wav = synthesise(text);
                 if (wav != null && wav.length > 0) play(wav);
             } catch (Exception e) {
+                /*
+                 * A dead engine stands aside rather than holding the voice.
+                 *
+                 * Nothing here can tell at startup whether the configured
+                 * engine is actually running — checking would mean a blocking
+                 * request on the client thread before the menu draws. So the
+                 * first line is the test, and failing it switches this off, at
+                 * which point the narrator picks the lines up instead.
+                 *
+                 * Without this, choosing `both` with no engine installed was
+                 * total silence: speech claimed the lines and then dropped
+                 * every one of them, and the narrator never saw any.
+                 */
+                enabled = false;
                 if (!warned) {
                     warned = true;
-                    Hollow.LOG.warn("speech engine unreachable ({}); falling back to silence", e.toString());
-                    Hollow.LOG.warn("check `speechUrl` in config/hollow.properties, or set voice=narrator");
+                    Hollow.LOG.warn("speech engine unreachable ({})", e.toString());
+                    Hollow.LOG.warn("falling back to the game's narrator; check `speechUrl` "
+                            + "in config/hollow.properties");
                 }
+                // The line that failed is still worth saying.
+                Narration.narrate(text);
             }
         });
     }

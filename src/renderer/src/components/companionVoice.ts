@@ -1,12 +1,22 @@
+import { api } from '../api'
+
 /**
  * Giving the companion a voice.
  *
- * Uses the speech synthesis built into Chromium, which Electron already is. No
- * dependency, no API key, no model to download, and it works with the network
- * off — it speaks through the voices Windows already has installed. A neural
- * voice would sound better, but it would mean shipping a few hundred megabytes
- * and a second runtime to say "I found some iron", and the thing that makes a
- * companion feel present is that it speaks at all, not how well.
+ * Two engines, and the choice is a real one.
+ *
+ * The system voice is Chromium's, which Electron already is: no dependency, no
+ * key, nothing to download, works offline, and sounds like a train station.
+ * Kokoro is a neural model running on this machine — enormously better, at the
+ * cost of a one-time download and about a second a line. The original argument
+ * for shipping only the system voice was that presence comes from speaking at
+ * all rather than from speaking well, and that is true right up until you hear
+ * the two side by side.
+ *
+ * Synthesis for the neural voice happens in the main process, not here. The
+ * renderer is held to `connect-src 'self'` and cannot fetch a model, and the
+ * same loaded model is shared with the Minecraft mod rather than downloaded
+ * twice.
  *
  * Two rules shape everything here.
  *
@@ -20,7 +30,24 @@
  * no longer true is worse than silence.
  */
 
+/**
+ * Which engine says the lines.
+ *
+ * `system` is Windows' own synthesiser through Chromium — instant, free, and
+ * unmistakably a robot. `kokoro` is a neural model running on this machine,
+ * which sounds enormously better and costs a one-time download and about a
+ * second a line.
+ *
+ * Microsoft's Edge voices are deliberately absent. They are not a public API
+ * but a private protocol behind a rolling signed token, so an implementation
+ * works right up until Microsoft rotates it and then fails silently.
+ */
+export type VoiceEngine = 'system' | 'kokoro'
+
 export interface VoiceSettings {
+  engine: VoiceEngine
+  /** Which Kokoro voice, e.g. af_sky. Ignored by the system engine. */
+  kokoroVoice: string
   enabled: boolean
   /** 0 to 1. */
   volume: number
@@ -31,6 +58,9 @@ export interface VoiceSettings {
 }
 
 export const DEFAULT_VOICE: VoiceSettings = {
+  // The system voice needs no download, so it is what a fresh install gets.
+  engine: 'system',
+  kokoroVoice: 'af_sky',
   enabled: false,
   volume: 0.9,
   // Slightly quicker than default, which otherwise sounds like a announcement.
@@ -115,7 +145,6 @@ let lastSpokenAt = 0
  */
 export function say(text: string, companionId: string, settings: VoiceSettings): void {
   if (!settings.enabled) return
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
 
   const line = speakable(text)
   if (!line) return
@@ -125,6 +154,13 @@ export function say(text: string, companionId: string, settings: VoiceSettings):
   const now = Date.now()
   if (now - lastSpokenAt < 400) return
   lastSpokenAt = now
+
+  if (settings.engine === 'kokoro') {
+    void sayWithKokoro(line, settings)
+    return
+  }
+
+  if (typeof window === 'undefined' || !window.speechSynthesis) return
 
   const utterance = new SpeechSynthesisUtterance(
     line.length > MAX_CHARS ? `${line.slice(0, MAX_CHARS)}…` : line
@@ -145,4 +181,64 @@ export function say(text: string, companionId: string, settings: VoiceSettings):
 /** Stops immediately — for closing the screen, or a mute. */
 export function hush(): void {
   if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel()
+  // Whichever engine was talking, stop it.
+  latestRequest++
+  stopClip()
+}
+
+/**
+ * The neural voice, synthesised in the main process and played here.
+ *
+ * Two things make this behave rather than pile up. Only one clip is ever
+ * playing, and a new line stops the old one — the same rule as the system
+ * voice, for the same reason: a companion working through a backlog is
+ * narrating things that stopped being true minutes ago.
+ *
+ * And a line that is still being synthesised when the next one arrives is
+ * abandoned. Synthesis takes about a second, which is easily long enough for
+ * two lines to overlap, and playing both is worse than dropping one.
+ */
+let playing: HTMLAudioElement | null = null
+let latestRequest = 0
+
+async function sayWithKokoro(line: string, settings: VoiceSettings): Promise<void> {
+  const mine = ++latestRequest
+
+  try {
+    const { wav } = await api.voice.speak(line.slice(0, 400), settings.kokoroVoice)
+
+    // Something newer was asked for while this was being made.
+    if (mine !== latestRequest) return
+
+    stopClip()
+
+    const blob = new Blob([Uint8Array.from(atob(wav), (c) => c.charCodeAt(0))], {
+      type: 'audio/wav'
+    })
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio(url)
+    audio.volume = Math.min(Math.max(settings.volume, 0), 1)
+    // Kokoro speaks at a natural pace already, so the slider is a nudge here
+    // rather than the wholesale speed-up a system voice needs.
+    audio.playbackRate = Math.min(Math.max(settings.rate, 0.5), 2)
+
+    // Revoked on the way out, or every line leaks a few hundred kilobytes.
+    audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true })
+
+    playing = audio
+    await audio.play()
+  } catch {
+    /*
+     * Silent on failure, deliberately. The model may still be downloading, or
+     * absent entirely, and a toast for every line a companion says would be
+     * far worse than the line not being spoken.
+     */
+  }
+}
+
+function stopClip(): void {
+  if (!playing) return
+  playing.pause()
+  playing.currentTime = 0
+  playing = null
 }

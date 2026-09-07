@@ -48,7 +48,9 @@ export const TOOLS: Tool[] = [
     schema: {
       name: 'survey_chests',
       description:
-        'Look inside every nearby chest, barrel and shulker box and remember what is in them, so you can answer questions about where things are kept. Do this once when you arrive somewhere, then use recall_item.',
+        'Look inside every nearby chest, barrel and shulker box and remember what is in them. ' +
+        'This is about storage containers in the world, NOT about what you are carrying — use ' +
+        '"inventory" for that. Do this once when you arrive somewhere, then use recall_item.',
       parameters: {
         type: 'object',
         properties: {

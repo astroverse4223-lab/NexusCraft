@@ -6,7 +6,6 @@ import net.minecraft.component.type.NbtComponent;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
@@ -45,13 +44,30 @@ public final class Ball {
     private Ball() {}
 
     /**
-     * What it looks like: a pale round thing that already exists in the game.
+     * What it looks like: a yellow ball, drawn for this and nothing else.
      *
-     * Heart of the Sea, because it is one of the few vanilla items rendered as a
-     * rounded shape rather than a flat sprite of a tool, and because nobody has
-     * a stack of them lying around to be confused with this one.
+     * The texture is ours; the item underneath is vanilla, and that combination
+     * is deliberate. Registering a proper item was the obvious way to do this
+     * and it was wrong: a modded registry entry makes the whole mod mandatory
+     * on the client, and the server starts turning people away with "this
+     * server requires Fabric Loader and Fabric API installed on your client".
+     * It also locked out the scripted client every one of these behaviours is
+     * tested with.
+     *
+     * The `item_model` component gets the same picture with none of that. It
+     * rides on the stack rather than the registry, so nothing needs syncing,
+     * anyone can still connect, and a client that has this mod draws the ball.
+     *
+     * Magma cream underneath because it is inert - no right-click behaviour to
+     * accidentally trigger while carrying him, unlike a snowball, which would
+     * be thrown and lost - and because on a client without the mod it is at
+     * least still a small yellow ball.
      */
-    private static final net.minecraft.item.Item ITEM = Items.HEART_OF_THE_SEA;
+    private static final net.minecraft.item.Item ITEM = net.minecraft.item.Items.MAGMA_CREAM;
+
+    /** Our own artwork, applied per stack rather than per item. */
+    private static final net.minecraft.util.Identifier MODEL =
+            net.minecraft.util.Identifier.of("hollow", "hollow_ball");
 
     /**
      * The tag that makes one of these actually him.
@@ -97,8 +113,9 @@ public final class Ball {
     public static ItemStack stack() {
         ItemStack stack = new ItemStack(ITEM);
         stack.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(MARKER));
+        stack.set(DataComponentTypes.ITEM_MODEL, MODEL);
         // Named so it is obvious in a hotbar what the odd item is, and so it
-        // does not stack with an ordinary Heart of the Sea.
+        // never stacks with an ordinary one of whatever it is built on.
         stack.set(DataComponentTypes.CUSTOM_NAME, Text.literal("Hollow"));
         return stack;
     }
@@ -164,7 +181,32 @@ public final class Ball {
             }
         }
         if (found != null) BY_PLAYER.put(player.getUuid(), found.getUuid());
+        sweepOldBodies(world, player);
         return found;
+    }
+
+    /**
+     * Clears out the shape he used to have.
+     *
+     * A world played before the ball had its own item has a marked Heart of the
+     * Sea lying in it, and that thing is now unrecognisable to everything here —
+     * so it would never be found, never be picked up, and never despawn, because
+     * the old code had already told it not to. An abandoned uncollectable item
+     * where your companion used to be is a poor thing to leave behind, and it
+     * costs one scan to not do it.
+     */
+    private static void sweepOldBodies(ServerWorld world, ServerPlayerEntity player) {
+        for (ItemEntity stale : world.getEntitiesByClass(ItemEntity.class,
+                player.getBoundingBox().expand(48), entity -> {
+                    ItemStack stack = entity.getStack();
+                    if (stack.isEmpty() || !stack.isOf(net.minecraft.item.Items.HEART_OF_THE_SEA)) {
+                        return false;
+                    }
+                    return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT)
+                            .matches(MARKER);
+                })) {
+            stale.discard();
+        }
     }
 
     public static void forget(java.util.UUID player) {
@@ -192,6 +234,56 @@ public final class Ball {
     public static boolean tryPickUp(ServerWorld world, ServerPlayerEntity player, ItemEntity ball) {
         if (!player.isSneaking()) return false;
         if (ball.getEntityPos().squaredDistanceTo(player.getEntityPos()) > 2.5 * 2.5) return false;
+        return pickUp(world, player, ball);
+    }
+
+    /**
+     * The ball the player is pointing at, if any.
+     *
+     * Aimed at by hand, because the game will not do it. An item entity is not
+     * a raycast target — `canHit` is false for one — so it cannot be
+     * right-clicked, punched or focused the way a mob can, and there is no flag
+     * to turn that on. Crouching was the workaround, and it was the wrong shape:
+     * right-clicking a thing you are looking at is what everything else in
+     * Minecraft does, so anything else reads as broken.
+     *
+     * This measures how far the ball sits from the player's line of sight
+     * rather than intersecting a box, which is both simpler and more forgiving —
+     * the ball is small and rolling, and it should not take precision to pick
+     * your companion up.
+     */
+    public static ItemEntity lookedAt(ServerWorld world, ServerPlayerEntity player, double reach) {
+        Vec3d eye = player.getEyePos();
+        Vec3d look = player.getRotationVec(1f);
+
+        ItemEntity best = null;
+        double bestDistance = Double.MAX_VALUE;
+
+        for (ItemEntity candidate : world.getEntitiesByClass(ItemEntity.class,
+                player.getBoundingBox().expand(reach + 1), entity -> isHollow(entity.getStack()))) {
+
+            // Its middle, not its feet; an item entity is a quarter block tall.
+            Vec3d centre = candidate.getEntityPos().add(0, 0.12, 0);
+            Vec3d toBall = centre.subtract(eye);
+
+            double along = toBall.dotProduct(look);
+            // Behind the player, or past their arm's length.
+            if (along < 0 || along > reach) continue;
+
+            // How far off the line of sight it sits at its closest point.
+            double off = toBall.subtract(look.multiply(along)).length();
+            if (off > 0.75) continue;
+
+            if (along < bestDistance) {
+                bestDistance = along;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    /** Takes it off the floor and into the inventory. */
+    public static boolean pickUp(ServerWorld world, ServerPlayerEntity player, ItemEntity ball) {
         if (!player.getInventory().insertStack(stack())) return false;
 
         ball.discard();

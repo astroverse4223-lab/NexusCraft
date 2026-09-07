@@ -229,7 +229,13 @@ export function CompanionScreen(): JSX.Element {
        * once, so it would otherwise close over whatever the settings were at
        * mount and never see a change.
        */
-      if (event.kind === 'chat' || event.kind === 'thought') {
+      /*
+       * Only what it actually said. A "thought" is the model's working, which
+       * on a local model is often several hundred words of it reasoning about
+       * which tool to call — measured at six seconds to synthesise, for
+       * something no one wants read aloud in the first place.
+       */
+      if (event.kind === 'chat') {
         say(event.text, event.companionId, voiceRef.current)
       }
 
@@ -501,7 +507,7 @@ export function CompanionScreen(): JSX.Element {
       {tab === 'crew' ? (
         <CrewPanel companions={companions} statuses={statuses} />
       ) : tab === 'activity' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
           <div>
             {/*
               * What it is doing, above the log rather than in it.
@@ -693,7 +699,7 @@ export function CompanionScreen(): JSX.Element {
           </div>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
           {/* --------------------------------------------- how it decides */}
           <div className="panel panel-pad" style={{ gridColumn: '1 / -1' }}>
             <div className="section-title">How this companion decides</div>

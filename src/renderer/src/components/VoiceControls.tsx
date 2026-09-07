@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Volume2, VolumeX } from 'lucide-react'
-import { availableVoices, hush, type VoiceSettings } from './companionVoice'
+import { useCallback, useEffect, useState } from 'react'
+import { Volume2, VolumeX, Download, Loader2 } from 'lucide-react'
+import { api } from '../api'
+import { availableVoices, hush, type VoiceSettings, type VoiceEngine } from './companionVoice'
 
 /**
  * Turning the companion's voice on, and choosing it.
@@ -46,6 +47,40 @@ export function VoiceControls({
 }): JSX.Element {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>(availableVoices())
 
+  /*
+   * What the neural voice is doing, if anything.
+   *
+   * Polled only while it is loading. The download is a few hundred megabytes
+   * and takes a minute or so, and a progress-less spinner with no end in sight
+   * is how people conclude an app has hung — so the state is visible and the
+   * size is stated up front rather than discovered.
+   */
+  const [neural, setNeural] = useState<{
+    state: string
+    voices?: string[]
+    message?: string
+    servingToGame: boolean
+    builds?: Record<string, { downloadMb: number; typicalMs: number }>
+  }>({ state: 'idle', servingToGame: false })
+
+  const refreshNeural = useCallback(async () => {
+    try {
+      setNeural(await api.voice.status())
+    } catch {
+      /* the panel still works with a system voice */
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshNeural()
+  }, [refreshNeural])
+
+  useEffect(() => {
+    if (neural.state !== 'loading') return
+    const timer = setInterval(() => void refreshNeural(), 1500)
+    return () => clearInterval(timer)
+  }, [neural.state, refreshNeural])
+
   useEffect(() => {
     /*
      * Chromium fills the voice list asynchronously and returns nothing on the
@@ -80,17 +115,78 @@ export function VoiceControls({
         <>
           <select
             className="input"
-            style={{ maxWidth: 220 }}
-            value={settings.voiceName}
-            onChange={(event) => update({ voiceName: event.target.value })}
+            style={{ maxWidth: 150 }}
+            value={settings.engine}
+            onChange={(event) => update({ engine: event.target.value as VoiceEngine })}
+            title="Which engine speaks the lines"
           >
-            <option value="">Automatic (one per companion)</option>
-            {voices.map((voice) => (
-              <option key={voice.name} value={voice.name}>
-                {voice.name}
-              </option>
-            ))}
+            <option value="system">System — instant</option>
+            <option value="kokoro">Kokoro — offline</option>
           </select>
+
+          {settings.engine === 'system' ? (
+            <select
+              className="input"
+              style={{ maxWidth: 220 }}
+              value={settings.voiceName}
+              onChange={(event) => update({ voiceName: event.target.value })}
+            >
+              <option value="">Automatic (one per companion)</option>
+              {voices.map((voice) => (
+                <option key={voice.name} value={voice.name}>
+                  {voice.name}
+                </option>
+              ))}
+            </select>
+          ) : neural.state === 'ready' ? (
+            <>
+              <select
+                className="input"
+                style={{ maxWidth: 160 }}
+                value={settings.kokoroVoice}
+                onChange={(event) => update({ kokoroVoice: event.target.value })}
+              >
+                {(neural.voices ?? []).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+
+              <label className="row gap-6 items-center tiny dim" title="Let the Hollow mod use this same voice in Minecraft">
+                <input
+                  type="checkbox"
+                  checked={neural.servingToGame}
+                  onChange={async (event) => {
+                    await api.voice.serveToGame(event.target.checked)
+                    void refreshNeural()
+                  }}
+                />
+                also use in Minecraft
+              </label>
+            </>
+          ) : neural.state === 'loading' ? (
+            <span className="row gap-6 items-center tiny dim">
+              <Loader2 size={13} className="spin" />
+              downloading the voice model, once — about{' '}
+              {neural.builds?.q4?.downloadMb ?? 300}MB
+            </span>
+          ) : (
+            <button
+              className="btn btn-sm"
+              onClick={async () => {
+                setNeural({ ...neural, state: 'loading' })
+                try {
+                  await api.voice.prepare('q4')
+                } finally {
+                  void refreshNeural()
+                }
+              }}
+            >
+              <Download size={13} />
+              Get the voice (~{neural.builds?.q4?.downloadMb ?? 300}MB, once)
+            </button>
+          )}
 
           <div className="row gap-8 items-center">
             <span className="tiny dim">speed</span>
@@ -109,8 +205,12 @@ export function VoiceControls({
             </span>
           </div>
 
-          {voices.length === 0 && (
+          {settings.engine === 'system' && voices.length === 0 && (
             <span className="tiny dim">no speech voices installed on this PC</span>
+          )}
+
+          {neural.state === 'failed' && settings.engine === 'kokoro' && (
+            <span className="tiny dim">voice model unavailable — {neural.message}</span>
           )}
         </>
       )}

@@ -62,6 +62,30 @@ public final class Narration {
         }
     }
 
+    /**
+     * Reads one line through the game's narrator.
+     *
+     * Public because {@link Speech} calls it when its engine turns out not to
+     * be there — the voice falls back rather than the line being lost.
+     *
+     * Hopped onto the client thread with {@code execute}, since the only caller
+     * outside this class is a background HTTP worker and the narrator is not
+     * safe to poke from one.
+     */
+    static void narrate(String text) {
+        if (text == null || text.isBlank()) return;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) return;
+
+        client.execute(() -> {
+            // Switched on here too: a player who configured a speech engine
+            // never asked for the narrator, so it is off until it is needed.
+            if (client.options != null) enable(client);
+            client.getNarratorManager().narrateSystemImmediately(text);
+        });
+    }
+
     public static void register() {
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (!enabled || overlay) return;

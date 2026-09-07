@@ -58,14 +58,43 @@ describe('bundled blueprint library', () => {
   )
 
   it.each(BLUEPRINT_LIBRARY.map((entry) => [entry.id, entry] as const))(
-    '"%s" has a solid ground course to build off',
+    '"%s" has a ground course the rest can be built off',
     (_id, entry) => {
-      // The bottom layer carries everything above it; if it is mostly holes the
-      // layers above have nothing to be placed against.
-      const bottom = entry.blueprint.layers[0]
+      /*
+       * The bottom layer carries everything above it. A mostly hollow one
+       * usually means the build starts in mid-air, with nothing for the next
+       * course to be placed against.
+       *
+       * Legs are the exception, and a real one: a hut on stilts is four posts
+       * on the ground holding a deck, and every one of those posts rests on the
+       * ground and carries the block directly above it. So the rule is not
+       * "mostly solid" but "solid, or deliberately standing on columns" —
+       * anything else is a fragment floating in the air.
+       */
+      const [bottom, next] = entry.blueprint.layers
       const cells = bottom.join('').length
       const filled = bottom.join('').split('').filter((c) => c !== '.').length
-      expect(filled / cells).toBeGreaterThan(0.3)
+
+      if (filled / cells > 0.3) return
+
+      expect(next, 'a sparse ground course needs something above it to be legs for').toBeDefined()
+
+      const solidAt = (layer: string[], x: number, z: number): boolean =>
+        layer[z]?.[x] !== undefined && layer[z][x] !== '.'
+
+      let legs = 0
+      let orphans = 0
+      for (let z = 0; z < bottom.length; z += 1) {
+        for (let x = 0; x < bottom[z].length; x += 1) {
+          if (!solidAt(bottom, x, z)) continue
+          if (solidAt(next, x, z)) legs += 1
+          else orphans += 1
+        }
+      }
+
+      // Every block on the ground is holding something up.
+      expect(orphans, 'ground blocks carrying nothing above them').toBe(0)
+      expect(legs).toBeGreaterThan(0)
     }
   )
 

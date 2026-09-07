@@ -271,12 +271,24 @@ export function parseModManifest(manifests: {
 /* ------------------------------------------------------------- analysis */
 
 /** Loaders that can run each other's mods. */
-export function loaderAccepts(instanceLoader: LoaderId, modLoaders: LoaderId[]): 'yes' | 'maybe' | 'no' {
+export function loaderAccepts(
+  instanceLoader: LoaderId,
+  modLoaders: LoaderId[],
+  /**
+   * Whether Sinytra Connector is installed alongside. Connector runs Fabric
+   * mods on Forge, so a pack shipping it means its Fabric mods belong there —
+   * without this the launcher refuses to start a working modpack over the very
+   * mods it was built around.
+   */
+  hasConnector = false
+): 'yes' | 'maybe' | 'no' {
   if (modLoaders.length === 0) return 'maybe'
   if (modLoaders.includes(instanceLoader)) return 'yes'
 
   // Quilt runs Fabric mods natively.
   if (instanceLoader === 'quilt' && modLoaders.includes('fabric')) return 'yes'
+  // Connector does the same for Forge, given the pack ships it.
+  if (hasConnector && instanceLoader === 'forge' && modLoaders.includes('fabric')) return 'yes'
   // Forge and NeoForge share a manifest format on 1.20.1 and diverge after,
   // so this is a warning rather than a hard failure.
   if (
@@ -296,6 +308,22 @@ export function loaderAccepts(instanceLoader: LoaderId, modLoaders: LoaderId[]):
 export function versionSatisfies(version: string, range: string): boolean {
   const trimmed = range.trim()
   if (!trimmed || trimmed === '*') return true
+
+  /*
+   * Several clauses at once, which is how Fabric mods normally write a range:
+   * ">=1.20 <=1.20.2", ">=1.20.1 <1.21". Only the first operator used to be
+   * read and everything after it went to the comparator as though it were part
+   * of the version — so a mod that declared support for exactly the instance
+   * it was sitting in got warned about anyway.
+   *
+   * Maven ranges are excluded: "[1.20,1.21)" holds a comma of its own and is
+   * parsed whole, further down.
+   */
+  const isMaven = /^[[(]/.test(trimmed)
+  if (!isMaven && /[\s,]/.test(trimmed)) {
+    const clauses = trimmed.split(/[\s,]+/).filter(Boolean)
+    if (clauses.length > 1) return clauses.every((clause) => versionSatisfies(version, clause))
+  }
 
   // Fabric-style: ">=1.20.1", "~1.20", "1.20.x"
   if (/^[><=~^]/.test(trimmed)) {

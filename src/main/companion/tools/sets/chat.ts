@@ -6,7 +6,7 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { FORBIDDEN_COMMANDS } from '../constants'
+import { forbiddenVerb } from '../support/commandSafety'
 import type { Tool } from '../types'
 import { gameModeName } from '../support/world'
 import { itemCounts, nearbyPlayers } from '../support/players'
@@ -117,7 +117,17 @@ export const TOOLS: Tool[] = [
   {
     schema: {
       name: 'set_goal',
-      description: 'Record what you are currently working towards, so you keep track across turns. Set it to an empty string when finished.',
+      /*
+       * The warning is in the description because that is the text the model
+       * reads at the moment it is deciding to call this. A rule sitting in the
+       * system prompt is a paragraph away by then, and the observed failure was
+       * a question in chat being turned into a multi-stage building project.
+       */
+      description:
+        'Record what you are currently working towards, so you keep track across turns. ' +
+        'Set it to an empty string when finished. Only for work you were actually asked to do, ' +
+        'or genuinely chose yourself — never set a goal just because somebody said something ' +
+        'to you. A question is not a job.',
       parameters: {
         type: 'object',
         properties: { goal: { type: 'string', description: 'The current objective' } },
@@ -143,11 +153,21 @@ export const TOOLS: Tool[] = [
     execute: async ({ signal }, { seconds }) => {
       const ms = Math.max(1, Math.min(Number(seconds) || 5, 30)) * 1000
       await new Promise((resolve) => {
-        const timer = setTimeout(resolve, ms)
-        signal.addEventListener('abort', () => {
+        /*
+         * The listener comes off again when the wait ends normally.
+         *
+         * `once: true` only removes it when the event fires, and it usually
+         * never does — so every wait left one behind on a signal that lasts the
+         * whole turn, which is the leak Node warns about as
+         * "MaxListenersExceededWarning: 11 abort listeners added".
+         */
+        const done = (): void => {
           clearTimeout(timer)
+          signal.removeEventListener('abort', done)
           resolve(null)
-        }, { once: true })
+        }
+        const timer = setTimeout(done, ms)
+        signal.addEventListener('abort', done, { once: true })
       })
       return 'waited'
     }
@@ -175,13 +195,13 @@ export const TOOLS: Tool[] = [
       const verb = text.split(/\s+/)[0].toLowerCase()
 
       /*
-       * Administrative and irreversible commands are refused outright. The model
-       * is not malicious, but it is confused often enough that "it seemed like a
-       * good idea" should not be able to ban a player, wipe a world or strip the
-       * owner's operator status.
+       * Administrative and irreversible commands are refused outright, wherever
+       * they appear. Reading only the first word let `execute as @a run stop`
+       * through, because the word it saw was `execute`.
        */
-      if (FORBIDDEN_COMMANDS.has(verb)) {
-        return `refusing to run "${verb}" — that one can lock people out or destroy things that cannot be undone. Ask the player to run it themselves.`
+      const refused = forbiddenVerb(text)
+      if (refused) {
+        return `refusing to run "${refused}" — that one can lock people out or destroy things that cannot be undone. Ask the player to run it themselves.`
       }
 
       if (text.length > 200) return 'that command is too long'

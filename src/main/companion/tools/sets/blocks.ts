@@ -4,8 +4,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { MAX_MINE, MAX_UNREACHABLE, MINE_APPROACH_TIMEOUT_MS, MOVE_TO_PLACE_TIMEOUT_MS, REACH_BLOCKS, VERTICAL_PENALTY } from '../constants'
-import type { Tool } from '../types'
+import type { Tool, ToolContext } from '../types'
 import { canHarvest, isCreative, isReplaceable, standingSpotNear } from '../support/world'
+import { standingIn, stepAsideSpots } from '../../build/selfSpace'
 import { collectDropsNear, goTo, goToBlock } from '../support/navigation'
 import { digAllowanceMs, equipBestTool } from '../support/equipment'
 import { itemCounts, withTimeout } from '../support/players'
@@ -252,6 +253,9 @@ export const TOOLS: Tool[] = [
     }
   },
 
+
+/** The fluids a blueprint can ask for, and what carries them. */
+
   {
     schema: {
       name: 'place_block',
@@ -271,6 +275,22 @@ export const TOOLS: Tool[] = [
     execute: async (context, { block, x, y, z }) => {
       const { bot } = context
       const name = String(block ?? '').replace(/^minecraft:/, '')
+
+      /*
+       * Water and lava are poured, not placed.
+       *
+       * There is no water item to hold, so the ordinary path reported "no water
+       * in the inventory" and every blueprint with a water feature - the well,
+       * the sugar cane farm, the bubble lift - came out dry with a hole where
+       * the water should be. A bucket is how a player does it, and it is the
+       * only way that works.
+       */
+      const bucket = FLUID_BUCKETS[name]
+      if (bucket) {
+        if (x == null || y == null || z == null) return `${name} needs coordinates`
+        return await pourFluid(context, name, bucket, Math.floor(Number(x)), Math.floor(Number(y)), Math.floor(Number(z)))
+      }
+
       const held = bot.inventory.items().find((i: any) => i.name === name)
       if (!held) return `no ${name} in the inventory. Carrying: ${itemCounts(bot)}`
 
@@ -330,6 +350,38 @@ export const TOOLS: Tool[] = [
 
       if (!reference) {
         return `nothing solid next to ${target.x} ${target.y} ${target.z} to build against — place a block beside it first`
+      }
+
+      /*
+       * Get out of the way first.
+       *
+       * A block cannot be placed inside a player's own collision box, so a bot
+       * standing in the gap it is filling is refused every time — and, since
+       * nothing moved it, refused identically on every later pass. Walls came
+       * out with a bot-shaped hole that no amount of retrying would close.
+       */
+      if (standingIn(bot.entity.position, target)) {
+        let moved = false
+        for (const spot of stepAsideSpots(bot.entity.position, target)) {
+          const feet = bot.blockAt(new Vec3(spot.x, spot.y, spot.z))
+          const head = bot.blockAt(new Vec3(spot.x, spot.y + 1, spot.z))
+          const under = bot.blockAt(new Vec3(spot.x, spot.y - 1, spot.z))
+          if (!feet || !head || !under) continue
+          if (!isReplaceable(feet) || !isReplaceable(head)) continue
+          if (under.boundingBox !== 'block') continue
+
+          try {
+            await goTo(context, spot.x, spot.y, spot.z, 1, MOVE_TO_PLACE_TIMEOUT_MS)
+            moved = true
+            break
+          } catch {
+            // That spot did not work out; try the next one.
+          }
+        }
+
+        if (!moved || standingIn(bot.entity.position, target)) {
+          return `standing in ${target.x} ${target.y} ${target.z} and could not step out of the way to place ${name}`
+        }
       }
 
       /*
@@ -446,3 +498,106 @@ export const TOOLS: Tool[] = [
     }
   }
 ]
+
+const FLUID_BUCKETS: Record<string, string> = {
+  water: 'water_bucket',
+  lava: 'lava_bucket'
+}
+
+/**
+ * Empties a bucket into one block of space.
+ *
+ * A bucket is used, not placed: the server traces a line from the player's eye,
+ * finds the face of a solid block, and puts the fluid in the empty space in
+ * front of it. So this aims at the face of a neighbour rather than at the
+ * target itself, which is air and would let the ray straight through.
+ *
+ * Creative refills the bucket, which matters: a well needs two water blocks and
+ * a bubble lift needs a column of them, and an emptied bucket becomes a plain
+ * bucket that places nothing at all.
+ */
+async function pourFluid(
+  context: ToolContext,
+  fluid: string,
+  bucketName: string,
+  x: number,
+  y: number,
+  z: number
+): Promise<string> {
+  const { bot } = context
+  const { Vec3 } = require('vec3')
+  const target = new Vec3(x, y, z)
+
+  const existing = bot.blockAt(target)
+  if (existing && existing.name === fluid) return `${fluid} is already at ${x} ${y} ${z}`
+  if (existing && !isReplaceable(existing) && existing.name !== 'air') {
+    return `${existing.name} is already at ${x} ${y} ${z}`
+  }
+
+  // A face to aim at. Without a neighbour there is nothing for the ray to hit
+  // and the bucket does nothing at all.
+  const faces = [
+    new Vec3(0, -1, 0),
+    new Vec3(-1, 0, 0),
+    new Vec3(1, 0, 0),
+    new Vec3(0, 0, -1),
+    new Vec3(0, 0, 1),
+    new Vec3(0, 1, 0)
+  ]
+
+  let aimAt: any = null
+  for (const offset of faces) {
+    const neighbour = bot.blockAt(target.plus(offset))
+    if (neighbour && neighbour.name !== 'air' && neighbour.boundingBox === 'block') {
+      // The centre of the face that touches the target.
+      aimAt = neighbour.position
+        .offset(0.5, 0.5, 0.5)
+        .plus(new Vec3(-offset.x * 0.5, -offset.y * 0.5, -offset.z * 0.5))
+      break
+    }
+  }
+  if (!aimAt) return `nothing solid next to ${x} ${y} ${z} to pour ${fluid} against`
+
+  if (bot.entity.position.distanceTo(target) > 4) {
+    const spot = standingSpotNear(bot, target)
+    if (!spot) return `nowhere to stand near ${x} ${y} ${z} to pour ${fluid} from`
+    try {
+      await goTo(context, spot.x, spot.y, spot.z, 2, MOVE_TO_PLACE_TIMEOUT_MS)
+    } catch (err) {
+      return `could not get close enough to pour ${fluid}: ${(err as Error).message}`
+    }
+  }
+
+  let bucket = bot.inventory.items().find((item: any) => item.name === bucketName)
+  if (!bucket && isCreative(bot)) {
+    try {
+      const mcData = require('minecraft-data')(bot.version)
+      const itemType = mcData.itemsByName[bucketName]
+      const slot = bot.inventory.firstEmptyInventorySlot()
+      if (itemType && slot != null) {
+        const ItemClass = require('prismarine-item')(bot.version)
+        await bot.creative.setInventorySlot(slot, new ItemClass(itemType.id, 1))
+        bucket = bot.inventory.items().find((item: any) => item.name === bucketName)
+      }
+    } catch {
+      /* reported just below as a missing bucket */
+    }
+  }
+  if (!bucket) return `no ${bucketName} to pour ${fluid} with`
+
+  try {
+    await bot.equip(bucket, 'hand')
+    await bot.lookAt(aimAt, true)
+    bot.activateItem()
+    // The server sends the block change a tick or two later.
+    await new Promise((resolve) => setTimeout(resolve, 350))
+  } catch (err) {
+    return `could not pour ${fluid} at ${x} ${y} ${z}: ${(err as Error).message}`
+  }
+
+  const landed = bot.blockAt(target)
+  if (landed && (landed.name === fluid || landed.name === 'flowing_' + fluid)) {
+    return `placed ${fluid} at ${x} ${y} ${z}`
+  }
+  return `could not pour ${fluid} at ${x} ${y} ${z}: nothing arrived`
+}

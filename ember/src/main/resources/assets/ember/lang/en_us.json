@@ -1,0 +1,12 @@
+{
+  "entity.ember.ember": "Ember",
+  "item.ember.ember_lantern": "Ember's Lantern",
+  "item.ember.ember_lantern.summoned": "Ember flickers into life beside you.",
+  "item.ember.ember_lantern.dismissed": "Ember gutters out.",
+  "item.ember.ember_lantern.none": "Ember is not with you.",
+  "item.ember.ember_lantern.lighting_on": "Ember will light the dark again.",
+  "item.ember.ember_lantern.lighting_off": "Ember will leave the dark alone.",
+  "key.categories.ember.ember": "Ember",
+  "key.ember.grab": "Pick up Ember (sneak to throw)",
+  "key.ember.satchel": "Open what Ember is carrying"
+}

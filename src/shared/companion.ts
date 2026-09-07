@@ -44,6 +44,17 @@ export interface CompanionConfig {
    * jobs need doing rather than deciding.
    */
   routine?: string
+
+  /**
+   * The other companions currently connected.
+   *
+   * Needed so a bot can tell an instruction from an overheard remark. Every
+   * companion listens to chat, so without this they all answered everything —
+   * including each other. One announcing "building Stone Watchtower..." set the
+   * other three building it too, and four bots asking one local model at once
+   * is what made the launcher appear to freeze.
+   */
+  siblings?: string[]
 }
 
 /** A scripted worker, as offered to the interface. */
@@ -62,6 +73,14 @@ export type CompanionInbound =
   | { type: 'instruct'; text: string }
   | { type: 'say'; text: string }
   | { type: 'configure'; autonomy: boolean; personality: string; idleIntervalSec: number }
+  /**
+   * Who else is connected, pushed whenever that changes.
+   *
+   * Sent as well as passed at start, because the list at start is wrong for
+   * whoever starts first: it has nobody in it, so that companion carried on
+   * answering every other companion's chatter and taking it as orders.
+   */
+  | { type: 'siblings'; names: string[] }
   /** The crew as it currently stands, pushed whenever it changes. */
   | { type: 'crew'; snapshot: CrewSnapshot }
   /** Start or stop streaming a view of the bot's surroundings. */
@@ -111,6 +130,14 @@ export interface BlueprintSummary {
   blocks: number
   /** Biggest material requirements first. */
   materials: Array<{ block: string; count: number }>
+  /**
+   * Which section it belongs to on the Blueprints screen.
+   *
+   * The list reached thirty-five entries in one flat grid, where four new
+   * houses were reported missing simply because they sat in the middle of two
+   * dozen redstone contraptions.
+   */
+  category?: 'building' | 'redstone' | 'farm'
   /** Set for a schematic read off disk rather than a bundled entry. */
   imported?: boolean
   /** Anything lost on import, e.g. dropped block states. */

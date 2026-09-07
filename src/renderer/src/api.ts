@@ -194,6 +194,24 @@ export interface ModpackServerOptions {
   memoryMb?: number
 }
 
+/** One mod this launcher ships, as the Mods screen sees it. */
+export interface BundledModStatus {
+  id: string
+  name: string
+  blurb: string
+  icon: 'ghost' | 'flame'
+  wantsModel: boolean
+  /** What it needs, already phrased for the pill — "Fabric 1.21.11". */
+  requires: string
+  available: boolean
+  compatible: boolean
+  installed: boolean
+  reason: string | null
+  hasFabricApi: boolean
+  suggestedModel: string | null
+  compatibleInstances: string[]
+}
+
 export const api = {
   app: {
     info: () => call<AppInfo>('app:info'),
@@ -322,21 +340,17 @@ export const api = {
     autoUpdateSettings: () => call<ModAutoUpdateSettings>('mods:autoUpdateSettings', {}),
     setAutoUpdateSettings: (patch: Partial<Omit<ModAutoUpdateSettings, 'lastCheck'>>) =>
       call<ModAutoUpdateSettings>('mods:setAutoUpdateSettings', { patch }),
-    hollowStatus: (instanceId: string) =>
+    bundledStatus: (instanceId: string) =>
+      call<BundledModStatus[]>('mods:bundledStatus', { instanceId }),
+    installBundled: (instanceId: string, modId: string) =>
       call<{
-        available: boolean
-        compatible: boolean
-        installed: boolean
-        reason: string | null
-        hasFabricApi: boolean
-        suggestedModel: string | null
-        compatibleInstances: string[]
-      }>('mods:hollowStatus', { instanceId }),
-    installHollow: (instanceId: string) =>
-      call<{ installedJar: boolean; wroteConfig: boolean; model: string | null; warning: string | null }>(
-        'mods:installHollow',
-        { instanceId }
-      ),
+        id: string
+        name: string
+        installedJar: boolean
+        wroteConfig: boolean
+        model: string | null
+        warning: string | null
+      }>('mods:installBundled', { instanceId, modId }),
     checkAllNow: () => call<ModUpdateSweep>('mods:checkAllNow', {}),
     rollbacks: (instanceId: string) => call<ModRollback[]>('mods:rollbacks', { instanceId }),
     rollback: (instanceId: string, fileName: string) =>
@@ -346,6 +360,31 @@ export const api = {
     remove: (instanceId: string, fileName: string) => call<boolean>('mods:delete', { instanceId, fileName }),
     import: (instanceId: string, files: string[]) => call<{ imported: number }>('mods:import', { instanceId, files }),
     openFolder: (instanceId: string) => call<boolean>('mods:openFolder', { instanceId })
+  },
+
+  /*
+   * The offline voice.
+   *
+   * Synthesis runs in the main process and comes back as bytes, because the
+   * renderer is held to `connect-src 'self'` and cannot fetch a model, and
+   * because the same loaded model also answers Minecraft. Playing the sound is
+   * the renderer's job and only the renderer's.
+   */
+  voice: {
+    status: () =>
+      call<{
+        state: 'idle' | 'loading' | 'ready' | 'failed'
+        build?: 'q4' | 'q8'
+        voices?: string[]
+        message?: string
+        servingToGame: boolean
+        builds: Record<'q4' | 'q8', { dtype: string; downloadMb: number; typicalMs: number }>
+      }>('voice:status', undefined),
+    prepare: (build?: 'q4' | 'q8') =>
+      call<{ state: string; voices?: string[]; message?: string }>('voice:prepare', { build }),
+    speak: (text: string, voice?: string, build?: 'q4' | 'q8') =>
+      call<{ wav: string }>('voice:speak', { text, voice, build }),
+    serveToGame: (on: boolean) => call<{ running: boolean }>('voice:serveToGame', { on })
   },
 
   content: {

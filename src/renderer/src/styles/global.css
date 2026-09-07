@@ -187,7 +187,19 @@ textarea {
 
 .app-body {
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
+  /*
+   * `minmax(0, 1fr)`, not `1fr`.
+   *
+   * An `fr` track has an implicit minimum of `auto`, so it refuses to shrink
+   * below its widest child: a toolbar of four buttons pushed the whole content
+   * column wider than the window, and `.screen`'s `overflow-x: hidden` then
+   * sliced the ends off rather than letting anything wrap. The buttons were
+   * cut off at both edges with no way to reach them.
+   *
+   * With a zero minimum the column fits the window, and the wrapping rules on
+   * headers and rows can do their job.
+   */
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -204,6 +216,28 @@ textarea {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 24px;
+
+  /*
+   * Wraps rather than overflows.
+   *
+   * Every screen puts a title on the left and a row of buttons on the right,
+   * and with no wrapping the buttons ran off the edge of the window instead of
+   * moving down — "Import instance", "Import modpack", "From another launcher"
+   * and "New instance" were cut off at both ends with no way to reach them.
+   * Thirteen screens share this header, so they all had the same fault.
+   */
+  flex-wrap: wrap;
+}
+
+/*
+ * The buttons in a header wrap among themselves too, and stay on the right.
+ *
+ * Scoped to the header rather than applied to every `.row`, because plenty of
+ * rows elsewhere are deliberately single-line.
+ */
+.screen-header > .row {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .screen-header .eyebrow {
@@ -295,6 +329,19 @@ textarea {
   border-right: 1px solid var(--border);
   min-height: 0;
   position: relative;
+
+  /*
+   * Scrolls when the window is short rather than cutting items off.
+   *
+   * The nav sits above a footer pinned with `margin-top: auto`, and with no
+   * scrolling a window shorter than the two of them simply clipped whatever did
+   * not fit — "Settings" sliced in half and the account card cut off below it,
+   * with no way to reach either.
+   */
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* A thin scrollbar, and only while the pointer is over the sidebar. */
+  scrollbar-width: thin;
   z-index: 20;
 }
 
@@ -410,6 +457,18 @@ textarea {
   backdrop-filter: blur(18px);
   /* Lit top edge plus a contact shadow: the two cues that read as "raised". */
   box-shadow: var(--edge), var(--shadow-sm);
+
+  /*
+   * A panel never widens the page to fit its contents.
+   *
+   * A flex or grid child sizes to its longest unbreakable line by default, so
+   * one long line - a full inventory listing, a file path, a stack trace -
+   * stretched the panel, then the column, then the window, and the only way to
+   * read the rest was to drag the app wider. Wrapping inside a panel that stays
+   * put is always the better answer.
+   */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .panel-pad {
@@ -737,8 +796,23 @@ textarea {
 
 .field-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Same reason as the shell: an `fr` track will not shrink below its content,
+     and these hold inputs with long hint text beneath them. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
+}
+
+/*
+ * Two fields side by side stop being two when there is no room for two.
+ *
+ * The settings screens pair things up — spawn protection beside view distance —
+ * and at a narrow window those columns squeeze to a few characters each rather
+ * than stacking, which is unreadable and unusable.
+ */
+@media (max-width: 1180px) {
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ---------------------------------------------------------------- pills */
@@ -969,6 +1043,9 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Same reason as .panel: a flex item defaults to min-width:auto and refuses
+     to shrink below its content, which is what pushes a layout off-screen. */
+  min-width: 0;
 }
 .col {
   display: flex;

@@ -17,6 +17,8 @@ import type { DeathWatch } from './tools/support/deathWatch'
 export interface AgentEvents {
   log: (message: string) => void
   thought: (text: string) => void
+  /** A line the companion actually said out loud in the game. */
+  spoke?: (text: string) => void
   action: (name: string, args: Record<string, unknown>, result: string) => void
   memoryChanged: (notes: string[]) => void
   goalChanged: (goal: string | null) => void
@@ -54,17 +56,125 @@ export interface AgentOptions {
 const MAX_STEPS = 24
 
 /**
- * How long one instruction may run before it is abandoned.
+ * How long a turn may go without anything happening before it is abandoned.
  *
- * There was no limit at all, and a turn that wedged — a pathfind into terrain
- * it could not cross, a build it could not place — blocked every later
- * instruction for as long as the companion stayed connected. Four minutes is
- * long enough for a real build and short enough that a person notices the
- * companion is free again.
+ * This is a stall detector, not a time limit on work — every report of progress
+ * pushes it out again. Four minutes of complete silence is a wedged pathfind or
+ * a model that never answered.
  */
 const MAX_TURN_MS = 4 * 60_000
+
+/**
+ * The longest a single turn may run at all, however busy it looks.
+ *
+ * Without this a tool that logs in a loop could hold a turn open forever, since
+ * every log resets the stall timer. Twenty minutes is far longer than any real
+ * build and short enough that a runaway is not left overnight.
+ */
+const MAX_TURN_TOTAL_MS = 20 * 60_000
+/**
+ * How many times one call may fail identically before the turn is abandoned.
+ *
+ * Three is enough to rule out a passing problem - a chunk still loading, a mob
+ * in the way - and few enough that a model stuck in a loop does not spend a
+ * whole turn and twenty-four model calls on it.
+ */
+const MAX_IDENTICAL_FAILURES = 3
+
+/**
+ * How many times one tool may be used in a single turn.
+ *
+ * Watched live, asked only to say hello: the companion said it, then called
+ * `survey_chests` twenty times in a row with a slightly different radius each
+ * time until it hit the step limit. Another turn spent itself on `equip_armor`
+ * and `attack_nearest` the same way.
+ *
+ * The identical-call guard could not see it, because varying one argument makes
+ * every call look new. Counting by tool catches the shape of the problem
+ * instead of its details: nothing a companion does needs the same tool six
+ * times in one turn, and a model that wants a seventh has stopped making
+ * progress. This is also most of the cost — twenty-four model calls where two
+ * would do, on a machine that is also running the game.
+ */
+const MAX_CALLS_PER_TOOL = 6
+
 const MAX_HISTORY = 60
 const MAX_MEMORY = 60
+
+/**
+ * A thinking model's working, cut to something a person will read.
+ *
+ * Kept whole it is unusable: qwen3 produced four paragraphs of "Okay, let's
+ * see. The user provided a tool response..." for a single decision, which
+ * filled the activity feed and buried everything the companion actually did.
+ */
+/**
+ * Talk about tools, rather than talk.
+ *
+ * Some models answer an instruction by describing their own tool-calling
+ * situation — "No function calls needed for 'say goodbye'", "No function call
+ * available", "none of the provided tools support time manipulation". qwen3
+ * does it for almost everything. It is not dialogue, and it was being said out
+ * loud in Minecraft chat, so the companion stood there narrating its own API to
+ * the player.
+ *
+ * Only lines that are *about* function calling are caught. A companion saying
+ * "I cannot reach that tool chest" is talking about a chest, and must survive.
+ */
+export function isToolChatter(line: string): boolean {
+  const text = line.trim().toLowerCase()
+  if (!text) return true
+
+  /*
+   * Two shapes, both of them the model describing its situation rather than
+   * speaking to anybody.
+   *
+   * The first is about tool calling outright. The second is third person about
+   * the person it is talking to — "The user's request 'say hello' does not…",
+   * "The command 'say goodbye' is not supported". A companion addresses the
+   * player as *you*; anything narrating "the user" in the third person is
+   * commentary that escaped, and it was being said aloud in Minecraft chat.
+   */
+  const mentionsCalling = /\b(function|tool)[ _-]?calls?\b/.test(text)
+  const talksAboutTheUser = /\bthe (user|request|command|instruction)\b/.test(text)
+
+  /*
+   * The same commentary without the word "call".
+   *
+   * "No function available to set game time to 1000. The provided tools do not
+   * include time manipulation capabilities." went out to Minecraft chat in
+   * full: it never says "function call", so neither of the shapes above caught
+   * it. What gives it away is a companion talking about its own tools and
+   * functions at all — a player has no idea what a "provided tool" is.
+   */
+  const describesItsTooling =
+    /\bno (function|tool)s? (is |are )?(available|provided|exists?)/.test(text) ||
+    /\b(the )?(provided|available|current|given) (tools?|functions?)\b/.test(text) ||
+    /\b(do|does) not (include|have|support|provide) [^.]{0,40}\b(capabilit|function|tool)/.test(text) ||
+    /\bi (do not|don't) have (a |any )?(tool|function)\b/.test(text)
+
+  if (!mentionsCalling && !talksAboutTheUser && !describesItsTooling) return false
+
+  /*
+   * Only short lines are caught. Every observed example is a terse note about
+   * the model's own situation — the longest seen is "No function available to
+   * set game time to 1000. The provided tools do not include time manipulation
+   * capabilities.", at 118 characters. A companion writing three
+   * sentences is having a conversation, even if it mentions a tool along the
+   * way, and silencing that would be the worse mistake by far.
+   */
+  return text.length < 200
+}
+
+export function summarise(reasoning: string, limit = 200): string {
+  const flat = reasoning.replace(/\s+/g, ' ').trim()
+  if (flat.length <= limit) return flat
+
+  // Prefer to end on a sentence rather than mid-word.
+  const cut = flat.slice(0, limit)
+  const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '))
+  return (lastStop > limit * 0.5 ? cut.slice(0, lastStop + 1) : cut.trimEnd()) + '…'
+}
 
 export class Agent {
   private history: ChatMessage[] = []
@@ -81,6 +191,14 @@ export class Agent {
    * MaxListenersExceededWarning this used to produce after a dozen turns.
    */
   private turnController: AbortController | null = null
+
+  /**
+   * Pushes the current turn's stall deadline out.
+   *
+   * Set while a turn is running and null otherwise, so a tool reporting
+   * progress after its turn has already ended cannot resurrect the timer.
+   */
+  private touchTurn: (() => void) | null = null
   /** What the companion is working on right now, for the interface. */
   private current: string | null = null
   private currentSince = 0
@@ -265,7 +383,28 @@ export class Agent {
       '- Use tools to act. Chat alone does nothing in the world.',
       '- Use the "say" tool when you have something worth saying: an answer, a warning, a result,',
       '  or a bit of company. Not a running commentary on your own actions.',
+      /*
+       * Said separately and firmly, because the failure is specific and was
+       * watched happening: asked "what are you carrying?", the companion called
+       * the inventory tool, read the answer, and then ended its turn without
+       * telling anyone. From the player's side that is indistinguishable from
+       * being ignored — the one thing a companion must never look like.
+       */
+      '- If you were asked something, you must answer with "say" before you finish. Looking',
+      '  something up and then saying nothing is the same as ignoring the person who asked.',
       '- Prefer doing over asking. If an instruction is clear, act on it.',
+      /*
+       * Told explicitly, because the rest of this brief is all about acting and
+       * a model reading it treats every line addressed to it as work. The
+       * result is a companion that answers "what materials do you need?" by
+       * adopting a multi-stage construction goal and walking off — it has not
+       * misunderstood the words, it has been told its job is to do things.
+       */
+      '- Most of what people say to you is conversation, not orders. A question wants an answer;',
+      '  a remark wants a reply. Only treat something as work when it actually asks you to do',
+      '  something. "What are you building?" is a question. "Build me a house" is a job.',
+      '- Never change your goal because of something that was not an instruction. Answer with "say"',
+      '  and carry on with what you were already doing.',
       '- Work in small steps and check results before continuing.',
       '- To build anything bigger than a couple of blocks — a house, a tower, a wall, a bridge — use',
       '  "build_structure" with a description. It plans the whole thing and puts it up. Placing a hundred',
@@ -344,17 +483,54 @@ export class Agent {
     const turn = this.turnController
     const signal = AbortSignal.any([this.controller.signal, turn.signal])
 
-    const deadline = setTimeout(() => {
-      if (!turn.signal.aborted) {
-        this.events.log(`gave up on "${trigger.slice(0, 60)}" after ${Math.round(MAX_TURN_MS / 1000)}s`)
-        turn.abort()
-      }
-    }, MAX_TURN_MS)
+    /*
+     * The deadline watches for a turn that has stopped getting anywhere, not
+     * for one that is taking a while.
+     *
+     * It used to be a flat four minutes from the start, which quietly capped
+     * how big a thing the companion could build. A cottage is 168 blocks and
+     * goes up at about one every two seconds, so it was killed at 131 with the
+     * roof missing — and the log said "stopped", which reads like the blueprint
+     * failed rather than like a stopwatch ran out.
+     *
+     * Any progress pushes the deadline out. A build laying blocks stays alive
+     * for as long as it keeps laying them; a wedged pathfind still dies, which
+     * is the case this was added for. `cap` is the backstop, so a tool stuck in
+     * a loop that chatters forever cannot hold a turn open all day.
+     */
+    let deadline: NodeJS.Timeout | undefined
+    const startedAt = Date.now()
+
+    const giveUp = (why: string): void => {
+      if (turn.signal.aborted) return
+      this.events.log(`gave up on "${trigger.slice(0, 60)}" ${why}`)
+      turn.abort()
+    }
+
+    const arm = (): void => {
+      clearTimeout(deadline)
+      deadline = setTimeout(
+        () => giveUp(`after ${Math.round(MAX_TURN_MS / 1000)}s with nothing happening`),
+        MAX_TURN_MS
+      )
+    }
+
+    const cap = setTimeout(
+      () => giveUp(`after ${Math.round(MAX_TURN_TOTAL_MS / 60_000)} minutes`),
+      MAX_TURN_TOTAL_MS
+    )
+
+    arm()
+    this.touchTurn = () => {
+      if (Date.now() - startedAt < MAX_TURN_TOTAL_MS) arm()
+    }
 
     try {
       await this.runTurnInner(trigger, signal)
     } finally {
       clearTimeout(deadline)
+      clearTimeout(cap)
+      this.touchTurn = null
       if (this.turnController === turn) this.turnController = null
     }
   }
@@ -366,7 +542,18 @@ export class Agent {
       goals: this.deps.goals,
       Movements: this.deps.Movements,
       owner: this.options.owner,
-      log: this.events.log,
+      /*
+       * Reporting progress also holds the turn open.
+       *
+       * This is the whole mechanism: a build that logs "96/168 blocks placed"
+       * is demonstrably not stuck, so the stall timer restarts. Nothing had to
+       * be told about builds specifically — any tool that says what it is doing
+       * gets the same treatment, and one that goes quiet still gets cut off.
+       */
+      log: (message: string) => {
+        this.touchTurn?.()
+        this.events.log(message)
+      },
       addMemory: (note) => {
         this.memory.push(note)
         if (this.memory.length > MAX_MEMORY) this.memory = this.memory.slice(-MAX_MEMORY)
@@ -388,6 +575,20 @@ export class Agent {
 
     let invalidCalls = 0
 
+    /*
+     * How many times each identical call has come back with the same failure.
+     *
+     * A model that cannot get a tool to work will try it again, unchanged, for
+     * as long as it is allowed to. Watched live: `build_structure` was asked
+     * for the same cottage ten times in a row, failed with "no JSON object in
+     * the reply" every time, and used the entire turn - twenty-four actions,
+     * twenty-four model calls, and nothing built. Repeating a failure is never
+     * the answer; being told to stop repeating it sometimes is.
+     */
+    const stuckCalls = new Map<string, number>()
+    /** How many times each tool has been used this turn, whatever the arguments. */
+    const callsPerTool = new Map<string, number>()
+
     for (let step = 0; step < MAX_STEPS + Math.min(invalidCalls, MAX_STEPS); step++) {
       if (signal.aborted) return
 
@@ -396,7 +597,7 @@ export class Agent {
         reply = await chat(
           this.options.llm,
           [{ role: 'system', content: this.systemPrompt() }, ...this.history],
-          schemasFor(this.options.toolSet ?? 'full'),
+          schemasFor(this.options.toolSet ?? 'full', { inCrew: Boolean(this.options.crew) }),
           signal
         )
       } catch (err) {
@@ -406,16 +607,46 @@ export class Agent {
       }
 
       if (reply.usage) this.events.usage?.(reply.usage)
-      if (reply.content) this.events.thought(reply.content)
+
+      /*
+       * What it said goes to the feed in full. What it was thinking goes there
+       * trimmed, and only when there is nothing else - a local model's working
+       * runs to hundreds of words of it talking itself through the tool list,
+       * and printing all of it buries everything that matters.
+       */
+      /*
+       * Thinking and speaking are shown differently, because they are
+       * different. Content that arrives with no tool calls is spoken in game a
+       * few lines below — so it is the companion talking, not musing, and
+       * labelling it as a thought made the one thing the player was waiting for
+       * look like internal noise.
+       */
+      const willSpeak =
+        reply.toolCalls.length === 0 &&
+        Boolean(reply.content?.trim()) &&
+        !isToolChatter(reply.content ?? '')
+      if (reply.content && !willSpeak) this.events.thought(reply.content)
+      else if (!reply.content && reply.reasoning) this.events.thought(summarise(reply.reasoning))
 
       // No tool calls means the model is done deciding for this turn.
       if (reply.toolCalls.length === 0) {
-        this.history.push({ role: 'assistant', content: reply.content ?? '' })
+        /*
+         * Only a real reply goes into the history.
+         *
+         * A thinking model that reasoned and then called nothing leaves no
+         * content at all, and pushing an empty assistant message for it is
+         * both useless as context and rejected outright by some endpoints. The
+         * thinking has already gone to the activity feed, trimmed, so the turn
+         * is visible without being recorded as something the companion said.
+         */
+        if (reply.content) this.history.push({ role: 'assistant', content: reply.content })
         // A reply with words but no tool call would be invisible in game, so
         // it gets spoken rather than silently dropped.
-        if (reply.content && reply.content.trim()) {
+        if (reply.content && reply.content.trim() && !isToolChatter(reply.content)) {
+          const line = reply.content.trim().slice(0, 240)
           try {
-            this.bot.chat(reply.content.trim().slice(0, 240))
+            this.bot.chat(line)
+            this.events.spoke?.(line)
           } catch {
             /* not connected any more */
           }
@@ -437,6 +668,47 @@ export class Agent {
         // The turn signal, so an interrupt stops the remaining tool calls too.
         if (signal.aborted) return
 
+        /*
+         * A call that has already failed repeatedly is not run again.
+         *
+         * Warning the model and running the tool anyway was not enough: asked
+         * what it was carrying, a companion called `equip_armor` six times in
+         * one turn, straight through three warnings. Refusing to execute makes
+         * the loop free instead of merely discouraged, and the turn still has
+         * steps left to do something useful with.
+         */
+        /*
+         * The same tool, over and over, whatever the arguments.
+         *
+         * Counted before anything runs, so a model circling one tool costs a
+         * message rather than twenty tool calls and twenty model round trips.
+         */
+        const used = (callsPerTool.get(call.name) ?? 0) + 1
+        callsPerTool.set(call.name, used)
+
+        if (used > MAX_CALLS_PER_TOOL) {
+          const enough =
+            `"${call.name}" has already been used ${used - 1} times this turn and was not run again. ` +
+            'You are going round in circles. Say something to the player, or do something different.'
+          this.events.action(call.name, call.args, enough)
+          this.history.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: enough })
+          if (used > MAX_CALLS_PER_TOOL + 2) {
+            this.events.log(`stopped the turn; ${call.name} was called ${used} times`)
+            return
+          }
+          continue
+        }
+
+        const stuckKey = `${call.name}:${JSON.stringify(call.args)}`
+        if ((stuckCalls.get(stuckKey) ?? 0) >= MAX_IDENTICAL_FAILURES) {
+          const refusal =
+            `"${call.name}" has already failed repeatedly with these arguments and was not run again. ` +
+            'Do something different, or tell the player what you are stuck on.'
+          this.events.action(call.name, call.args, refusal)
+          this.history.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: refusal })
+          continue
+        }
+
         const tool = findTool(call.name)
         let result: string
         if (!tool) {
@@ -446,7 +718,7 @@ export class Agent {
            * walk_north, move, walk, north and go_north in succession — because
            * nothing in the reply told them what the real names were.
            */
-          result = `there is no tool called "${call.name}". Available tools: ${schemasFor(this.options.toolSet ?? 'full').map((schema) => schema.name).join(", ")}`
+          result = `there is no tool called "${call.name}". Available tools: ${schemasFor(this.options.toolSet ?? 'full', { inCrew: Boolean(this.options.crew) }).map((schema) => schema.name).join(", ")}`
           invalidCalls++
         } else {
           try {
@@ -455,6 +727,43 @@ export class Agent {
             result = await tool.execute(context, call.args, this.memory)
           } catch (err) {
             result = `failed: ${(err as Error).message}`
+          }
+        }
+
+        /*
+         * The same call, failing the same way, is stopped after a few goes.
+         *
+         * The reply says so plainly rather than repeating the error, because
+         * the error is evidently not telling the model anything it can act on.
+         */
+        const failed = !/^(placed|said|walked|mined|crafted|equipped|remembered|working towards|waited|sent|collected|ate|built)/i.test(
+          result
+        )
+
+        if (failed) {
+          const times = (stuckCalls.get(stuckKey) ?? 0) + 1
+          stuckCalls.set(stuckKey, times)
+
+          /*
+           * Told to stop, but given the chance to recover.
+           *
+           * Ending the turn outright was too blunt: asked what it was carrying,
+           * a companion checked its inventory, tried `equip_armor` three times
+           * with nothing to wear, and the turn was killed before it ever
+           * answered the question. The guard caused the silence it exists to
+           * prevent. Replacing the result and carrying on lets it say something
+           * instead; only a model that ignores the warning entirely loses the
+           * turn.
+           */
+          if (times >= MAX_IDENTICAL_FAILURES) {
+            const advice =
+              `"${call.name}" has failed the same way ${times} times: ${result}. ` +
+              'Stop calling it. Do something else, or tell the player what you are stuck on.'
+
+            this.events.action(call.name, call.args, advice)
+            this.history.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: advice })
+
+            continue
           }
         }
 
