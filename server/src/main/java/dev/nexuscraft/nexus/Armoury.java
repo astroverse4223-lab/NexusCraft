@@ -203,6 +203,18 @@ public final class Armoury {
     }
 
     /**
+     * The set attached to a particular thing, or null when none is.
+     *
+     * Unlike dropSet this does not fall back to the first set: a kit that
+     * nobody has attached armour to should give what it has always given, not
+     * quietly start handing out a set because a pack was built.
+     */
+    public String setFor(String path) {
+        String id = nexus.getConfig().getString("armouryDrops." + path, "");
+        return has(id) ? id.toLowerCase(Locale.ROOT) : null;
+    }
+
+    /**
      * A set worth dropping, or null when the pack defines none.
      *
      * Pinned by config when somebody wants a particular set to be the boss

@@ -200,6 +200,24 @@ public final class Challenges {
                     + challenge.giveAmount() + " x " + pretty(challenge.gives()) + "."));
             player.playSound(player, Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1.2f);
 
+            /*
+             * The end of the ladder, which had nothing to mark it.
+             *
+             * Every rung paid money and handed over an item, including the
+             * last one, so finishing the whole thing felt like finishing the
+             * ninth. A set of armour nobody can craft is the one reward that
+             * says a player got to the end of something.
+             */
+            if (challenge.id().equals(LADDER[LADDER.length - 1].id())) {
+                String set = nexus.armoury().dropSet("ladder");
+
+                if (set != null && nexus.armoury().give(player, set)) {
+                    nexus.feed().say(Feed.Weight.BIG, player.getName()
+                            + " finished every challenge and earned the "
+                            + nexus.armoury().get(set).label() + " set.");
+                }
+            }
+
             show(player);
             return;
         }

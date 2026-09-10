@@ -335,6 +335,25 @@ public final class Kits {
             }
         }
 
+        /*
+         * And the armour attached to this kit, if any is.
+         *
+         * Read from config rather than written into the kit, because the sets
+         * come from whatever pack was built and a kit defined in Java cannot
+         * know their names. Nothing is attached by default: a kit that has
+         * always given six steaks should not start handing out a set because
+         * somebody built a pack.
+         */
+        String set = nexus.armoury().setFor("kits." + kit.id());
+        if (set != null) {
+            for (ItemStack piece : nexus.armoury().whole(set)) {
+                for (ItemStack extra : player.getInventory().addItem(piece).values()) {
+                    nexus.vault().store(who, extra);
+                    spilled++;
+                }
+            }
+        }
+
         taken.computeIfAbsent(who, id -> new HashMap<>())
                 .put(kit.id(), (int) (System.currentTimeMillis() / 1000));
         save();

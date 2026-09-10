@@ -58,6 +58,15 @@ armouryDrops:
   # A chance for a legendary crate to carry a set as well as its prize.
   crate: ''
   legendaryChance: 0.125
+  # Given for finishing every challenge on the ladder.
+  ladder: ''
+  # Sets attached to kits, by kit id. Nothing is attached by default - a kit
+  # that has always given six steaks should not start handing out armour
+  # because somebody built a pack. Name a set here to add one:
+  #
+  #   kits:
+  #     legend: emberforged
+  kits: {}
 
 # A copy of the server's chat, posted into a Discord channel.
 #
