@@ -67,9 +67,7 @@ const bannerWord = z
 const bannerDesign = z.object({
   name: z.string().max(48),
   base: bannerWord,
-  layers: z
-    .array(z.object({ pattern: bannerWord, colour: bannerWord }))
-    .max(6)
+  layers: z.array(z.object({ pattern: bannerWord, colour: bannerWord })).max(6)
 })
 
 /**
@@ -133,12 +131,26 @@ const resourcePackDraft = z.object({
           .string()
           .min(1)
           .max(200)
-          .regex(/^[a-z0-9][a-z0-9_\-]*(\/[a-z0-9][a-z0-9_\-]*)*$/)
+          .regex(/^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/)
           .refine((v) => !v.includes('..'), { message: 'no traversal' }),
         image: pngDataUrl
       })
     )
-    .max(512),
+    /*
+     * More than the game has.
+     *
+     * This was 512, which is thirteen per cent of the 3,855 textures a 26.2
+     * jar ships - so "restyle the whole pack", the feature this array exists
+     * for, could not be sent at all. Every serve and every autosave was
+     * rejected here before reaching a handler, and because the save path
+     * carries no cap the pack saved fine and then refused to be used: 3,446
+     * textures, 2.87 MB, rejected on the way out.
+     *
+     * The bound worth having is on the payload, not the count, and 3,446 of
+     * them measured 870 bytes each. Four thousand covers the whole vanilla
+     * set with room for the versions that add to it.
+     */
+    .max(4096),
   panorama: z.array(pngDataUrl).length(6).nullable(),
   logo: pngDataUrl.nullable()
 })
@@ -722,7 +734,10 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
 
   'mapart:writeServer': z.object({
     serverId: id,
-    tiles: z.array(z.array(z.number().int().min(0).max(255)).length(16384)).min(1).max(16),
+    tiles: z
+      .array(z.array(z.number().int().min(0).max(255)).length(16384))
+      .min(1)
+      .max(16),
     across: z.number().int().min(1).max(4),
     down: z.number().int().min(1).max(4)
   }),
@@ -730,7 +745,10 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'mapart:write': z.object({
     instanceId: id,
     worldFolder: z.string().min(1).max(255),
-    tiles: z.array(z.array(z.number().int().min(0).max(255)).length(16384)).min(1).max(16),
+    tiles: z
+      .array(z.array(z.number().int().min(0).max(255)).length(16384))
+      .min(1)
+      .max(16),
     across: z.number().int().min(1).max(4),
     down: z.number().int().min(1).max(4)
   }),
@@ -765,7 +783,11 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'resourcepack:textures': z.object({ minecraftVersion: z.string().min(1).max(32) }),
   'resourcepack:texture': z.object({
     minecraftVersion: z.string().min(1).max(32),
-    path: z.string().min(1).max(200).regex(/^[a-z0-9][a-z0-9_\-]*(\/[a-z0-9][a-z0-9_\-]*)*$/)
+    path: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/)
   }),
   'resourcepack:open': z.object({ file: path }),
   'resourcepack:remember': z.object({ draft: resourcePackDraft }),

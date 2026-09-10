@@ -225,6 +225,10 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
   const [outcome, setOutcome] = useState<string | null>(null)
 
   const [tab, setTab] = useState<PackTab>('textures')
+  const top = useRef<HTMLDivElement>(null)
+
+  /** Why the draft is not being kept, when it is not. */
+  const [keepFailed, setKeepFailed] = useState<string | null>(null)
   const [brains, setBrains] = useState<{ id: string; label: string }[]>([])
   const [brain, setBrain] = useState('')
   const [wish, setWish] = useState('')
@@ -244,9 +248,20 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     if (isEmpty(draft)) return
 
     const timer = setTimeout(() => {
-      void api.resourcePack.remember(draft).catch(() => {
-        /* A draft that will not keep is not worth interrupting somebody over. */
-      })
+      void api.resourcePack
+        .remember(draft)
+        .then(() => setKeepFailed(null))
+        .catch((err) => {
+          /*
+           * Quiet, but not silent.
+           *
+           * This swallowed everything, so when the payload cap started
+           * refusing every save the screen went on looking like a screen that
+           * was keeping your work. It is not worth a dialog - it is worth a
+           * line saying so, next to the name of the thing not being kept.
+           */
+          setKeepFailed(toPayload(err).title)
+        })
     }, 3000)
 
     return () => clearTimeout(timer)
@@ -989,9 +1004,21 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
   const nothing = isEmpty(draft)
 
+  /*
+   * Errors are reported at the top and acted on at the bottom.
+   *
+   * The build button used to sit nineteen hundred lines down a single column,
+   * so a refused build put a red panel somewhere off-screen and the button
+   * appeared to do nothing at all. That is exactly what a rejected payload
+   * looked like for as long as the cap was wrong.
+   */
+  useEffect(() => {
+    if (error) top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [error])
+
   return (
     <div className="col gap-16">
-      {error && <ErrorView error={error} onDismiss={() => setError(null)} />}
+      <div ref={top}>{error && <ErrorView error={error} onDismiss={() => setError(null)} />}</div>
 
       <div className="panel panel-pad col gap-12">
         <div className="section-title">The pack</div>
@@ -1012,6 +1039,13 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             onChange={(e) => setDraft({ description: e.target.value.slice(0, 256) })}
           />
         </div>
+
+        {keepFailed && (
+          <p className="small" style={{ color: 'var(--warning)', margin: 0 }}>
+            Not being kept as you work &mdash; {keepFailed}. Save it by hand on the Saved tab before you close the
+            launcher.
+          </p>
+        )}
       </div>
 
       {/*
