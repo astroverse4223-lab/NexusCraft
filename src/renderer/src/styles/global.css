@@ -1514,6 +1514,42 @@ textarea {
   color: var(--text);
 }
 
+/*
+ * One layer of a banner, on one line.
+ *
+ * A row rather than a panel, because a layer is not a thing in its own right -
+ * it is one line of a recipe - and five of them wrapped in five panels read as
+ * five separate designs rather than one.
+ */
+.banner-layer {
+  align-items: center;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-flat);
+  border: 1px solid var(--border);
+}
+
+/*
+ * The finished banner, which stays put while it is being designed.
+ *
+ * Sticky rather than fixed so it still scrolls away with the page once there
+ * is genuinely more page than screen, and it falls back to a normal column at
+ * the width where the two columns stack - a preview stuck to the top of a
+ * single column would cover the controls under it.
+ */
+.banner-result {
+  width: 340px;
+  position: sticky;
+  top: 12px;
+}
+
+@media (max-width: 900px) {
+  .banner-result {
+    position: static;
+    width: 100%;
+  }
+}
+
 /* Where the server can be reached, meant to be read and copied. */
 .host-address {
   font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);

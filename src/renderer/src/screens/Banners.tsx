@@ -13,17 +13,7 @@
  * the exported file are produced by the same code.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  ArrowDown,
-  ArrowUp,
-  Copy,
-  Flag,
-  Image as ImageIcon,
-  Plus,
-  Sparkles,
-  Trash2,
-  Wand2
-} from 'lucide-react'
+import { ArrowDown, ArrowUp, Copy, Flag, Image as ImageIcon, Plus, Sparkles, Trash2, Wand2 } from 'lucide-react'
 
 import type { HostedServer, LauncherErrorPayload } from '@shared/types'
 import {
@@ -85,8 +75,7 @@ function paint(
 /** The base colour, darkened, so a banner has something to sit against. */
 function backdrop(design: BannerDesign, amount = 0.28): string {
   const hexish = DYES[design.base] ?? DYES.black
-  const channel = (at: number): number =>
-    Math.round(parseInt(hexish.slice(at, at + 2), 16) * amount)
+  const channel = (at: number): number => Math.round(parseInt(hexish.slice(at, at + 2), 16) * amount)
   return `rgb(${channel(1)}, ${channel(3)}, ${channel(5)})`
 }
 
@@ -180,6 +169,9 @@ function listingPng(design: BannerDesign, name: string, tagline: string): string
 /* ------------------------------------------------------------------ screen */
 
 const BLANK: BannerDesign = { name: 'Banner', base: 'white', layers: [] }
+
+/** The three things one design turns into. */
+type Use = 'game' | 'icon' | 'listing'
 
 export function BannersScreen(): JSX.Element {
   const pushToast = useStore((s) => s.pushToast)
@@ -281,8 +273,7 @@ export function BannersScreen(): JSX.Element {
    * something is typed - at which point the typing wins and stays won, which is
    * why the empty string is meaningful here rather than a missing value.
    */
-  const listingName =
-    title || (design.name && design.name !== 'Banner' ? design.name : server?.name ?? '')
+  const listingName = title || (design.name && design.name !== 'Banner' ? design.name : (server?.name ?? ''))
 
   /* The text is a parameter so a suggestion chip does not ask with the last one. */
   const ask = useCallback(
@@ -403,6 +394,12 @@ export function BannersScreen(): JSX.Element {
     })
   }
 
+  /** Which of the three uses is on show. */
+  const [use, setUse] = useState<Use>('game')
+
+  /** Which layer's dyes are open, since only one is ever being changed. */
+  const [tinting, setTinting] = useState<number | null>(null)
+
   const tooOld = server ? !supportsGive(server.minecraftVersion) : false
   const ready = brains?.filter((b) => b.ready) ?? []
 
@@ -413,15 +410,23 @@ export function BannersScreen(): JSX.Element {
           <div className="eyebrow">Your server</div>
           <h1>Banners</h1>
           <p className="subtitle">
-            Design a banner once and use it three ways — as a block a player can hold, as the icon
-            your server shows in the server list, and as a wide image for a listing site. The
-            preview uses Minecraft&apos;s own artwork, so what you see is what gets built.
+            Design a banner once and use it three ways — as a block a player can hold, as the icon your server shows in
+            the server list, and as a wide image for a listing site. The preview uses Minecraft&apos;s own artwork, so
+            what you see is what gets built.
           </p>
         </div>
       </div>
 
       {error && <ErrorView error={error} onDismiss={() => setError(null)} />}
 
+      {/*
+       * Two columns, and the one on the right does not move.
+       *
+       * The banner used to sit below six panels of controls in a column that
+       * scrolled, so by the time you were editing the third layer the thing
+       * you were editing had gone off the top of the screen. It is stuck to
+       * the top now, which is the whole point of a preview.
+       */}
       <div className="row gap-24 items-start wrap">
         {/* ------------------------------------------------------ designing */}
         <div className="flex-1 col gap-12" style={{ minWidth: 380 }}>
@@ -434,8 +439,8 @@ export function BannersScreen(): JSX.Element {
               <Spinner />
             ) : ready.length === 0 ? (
               <p className="small muted">
-                No AI is set up yet. Add one on the AI Companion tab — Ollama runs on this PC for
-                free — or just build a banner by hand below.
+                No AI is set up yet. Add one on the AI Companion tab — Ollama runs on this PC for free — or just build a
+                banner by hand below.
               </p>
             ) : (
               <>
@@ -461,11 +466,7 @@ export function BannersScreen(): JSX.Element {
                       </option>
                     ))}
                   </select>
-                  <button
-                    className="btn btn-primary"
-                    disabled={designing || !prompt.trim()}
-                    onClick={() => void ask()}
-                  >
+                  <button className="btn btn-primary" disabled={designing || !prompt.trim()} onClick={() => void ask()}>
                     {designing ? <Spinner /> : <Sparkles size={15} />} Design it
                   </button>
                 </div>
@@ -494,19 +495,12 @@ export function BannersScreen(): JSX.Element {
           />
 
           {/* ---------------------------------------------------- by hand */}
-          <div className="panel panel-pad col gap-12">
-            <div className="section-title">
-              <Flag size={15} /> Base colour
-            </div>
-            <Swatches
-              selected={design.base}
-              onPick={(base) => setDesign((d) => ({ ...d, base }))}
-            />
-          </div>
 
-          <div className="panel panel-pad col gap-12">
+          <div className="panel panel-pad col gap-14">
             <div className="row gap-8" style={{ justifyContent: 'space-between' }}>
-              <div className="section-title">Layers</div>
+              <div className="section-title">
+                <Flag size={15} /> The design
+              </div>
               <button
                 className="btn btn-sm"
                 disabled={design.layers.length >= MAX_LAYERS}
@@ -521,184 +515,227 @@ export function BannersScreen(): JSX.Element {
               </button>
             </div>
 
-            {design.layers.length === 0 && (
-              <p className="small muted">
-                A plain banner. Add up to {MAX_LAYERS} layers — the same limit a loom has.
-              </p>
-            )}
+            <div className="col gap-8">
+              <span className="tiny dim">Base colour</span>
+              <Swatches selected={design.base} onPick={(base) => setDesign((d) => ({ ...d, base }))} />
+            </div>
 
-            {design.layers.map((layer, index) => (
-              <div key={index} className="panel panel-pad col gap-8">
-                <div className="row gap-8">
-                  <BannerView
-                    design={{ ...design, layers: design.layers.slice(0, index + 1) }}
-                    width={20}
-                    height={40}
-                  />
-                  <button
-                    className="btn btn-sm flex-1"
-                    onClick={() => setPicking(index)}
-                    title="Choose a pattern"
-                  >
-                    {patternLabel(layer.pattern)}
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-icon"
-                    disabled={index === 0}
-                    onClick={() => move(index, -1)}
-                    title="Move back"
-                  >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-icon"
-                    disabled={index === design.layers.length - 1}
-                    onClick={() => move(index, 1)}
-                    title="Move forward"
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-icon"
-                    onClick={() =>
-                      setDesign((d) => ({ ...d, layers: d.layers.filter((_, i) => i !== index) }))
-                    }
-                    title="Remove"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                <Swatches
-                  selected={layer.colour}
-                  onPick={(colour) => setLayer(index, { colour })}
-                />
+            {design.layers.length === 0 ? (
+              <p className="small muted">
+                A plain banner. Add up to {MAX_LAYERS} layers &mdash; the same limit a loom has.
+              </p>
+            ) : (
+              <div className="col gap-6">
+                {/*
+                 * One row per layer, and the dyes only for the one being
+                 * changed.
+                 *
+                 * Every layer used to carry its own panel and its own grid of
+                 * sixteen swatches, so a five layer banner was five nested
+                 * boxes and eighty coloured squares - taller than the window,
+                 * for a design that fits in a thumbnail.
+                 */}
+                {design.layers.map((layer, index) => (
+                  <div key={index} className="col gap-6">
+                    <div className="banner-layer row gap-8">
+                      <BannerView
+                        design={{ ...design, layers: design.layers.slice(0, index + 1) }}
+                        width={18}
+                        height={36}
+                      />
+
+                      <button
+                        className="btn btn-sm flex-1"
+                        style={{ justifyContent: 'flex-start' }}
+                        onClick={() => setPicking(index)}
+                        title="Choose a pattern"
+                      >
+                        {patternLabel(layer.pattern)}
+                      </button>
+
+                      <button
+                        title={`${dyeLabel(layer.colour)} — click to change`}
+                        onClick={() => setTinting(tinting === index ? null : index)}
+                        style={{
+                          width: 26,
+                          height: 26,
+                          flexShrink: 0,
+                          borderRadius: 6,
+                          background: DYES[layer.colour],
+                          cursor: 'pointer',
+                          border: tinting === index ? '2px solid var(--text)' : '1px solid rgba(0, 0, 0, 0.35)'
+                        }}
+                      />
+
+                      <button
+                        className="btn btn-ghost btn-icon"
+                        disabled={index === 0}
+                        onClick={() => move(index, -1)}
+                        title="Move back"
+                      >
+                        <ArrowUp size={14} />
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-icon"
+                        disabled={index === design.layers.length - 1}
+                        onClick={() => move(index, 1)}
+                        title="Move forward"
+                      >
+                        <ArrowDown size={14} />
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-icon"
+                        onClick={() => {
+                          setTinting(null)
+                          setDesign((d) => ({
+                            ...d,
+                            layers: d.layers.filter((_, i) => i !== index)
+                          }))
+                        }}
+                        title="Remove"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+
+                    {tinting === index && (
+                      <Swatches selected={layer.colour} onPick={(colour) => setLayer(index, { colour })} />
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         </div>
 
         {/* -------------------------------------------------------- output */}
-        <div className="col gap-12" style={{ width: 340 }}>
+        <div className="banner-result col gap-12">
           <div className="panel panel-pad col gap-12">
             <div className="section-title">The banner</div>
-            <div
-              className="row gap-24 center"
-              style={{ background: backdrop(design), borderRadius: 8, padding: 16 }}
-            >
-              <BannerView design={design} width={120} height={240} title={describeDesign(design)} />
+            <div className="row gap-24 center" style={{ background: backdrop(design), borderRadius: 8, padding: 16 }}>
+              <BannerView design={design} width={110} height={220} title={describeDesign(design)} />
             </div>
             <p className="tiny dim">{describeDesign(design)}</p>
           </div>
 
-          <div className="panel panel-pad col gap-12">
-            <div className="section-title">Where it goes</div>
+          {/*
+           * One panel with three tabs rather than three panels.
+           *
+           * They are three uses of the one design - a block, an icon, a wide
+           * picture for a listing - and stacked they ran well past the bottom
+           * of the window, so the last was found by scrolling for it.
+           */}
+          <div className="tab-strip">
+            {(
+              [
+                ['game', 'In game'],
+                ['icon', 'Server icon'],
+                ['listing', 'Listing']
+              ] as [Use, string][]
+            ).map(([key, label]) => (
+              <button key={key} className={use === key ? 'tab active' : 'tab'} onClick={() => setUse(key)}>
+                {label}
+              </button>
+            ))}
+          </div>
 
-            {servers.length === 0 ? (
-              <p className="small muted">
-                No server is set up here yet. You can still save the images below.
-              </p>
-            ) : (
-              <select
-                className="input"
-                value={serverId}
-                onChange={(e) => setServerId(e.target.value)}
-              >
-                {servers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.minecraftVersion})
-                  </option>
-                ))}
-              </select>
-            )}
+          {use === 'game' && (
+            <div className="panel panel-pad col gap-12">
+              <div className="section-title">Where it goes</div>
 
-            {server && (
-              <>
-                <div className="field">
-                  <label className="field-label">Give it to</label>
-                  <select
-                    className="select"
-                    value={target}
-                    onChange={(e) => setTarget(e.target.value)}
-                  >
-                    <option value="@a">Everyone</option>
-                    <option value="@p">Nearest player</option>
-                    {players.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="field-hint mt-8">
-                    {players.length === 0
-                      ? 'Nobody is on the server right now.'
-                      : `${players.length} online.`}
-                  </p>
-                </div>
+              {servers.length === 0 ? (
+                <p className="small muted">No server is set up here yet. You can still save the images below.</p>
+              ) : (
+                <select className="input" value={serverId} onChange={(e) => setServerId(e.target.value)}>
+                  {servers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.minecraftVersion})
+                    </option>
+                  ))}
+                </select>
+              )}
 
-                {tooOld ? (
-                  <p className="small muted">
-                    Minecraft {server.minecraftVersion} describes banner items in an older way this
-                    does not write. The images below still work.
-                  </p>
-                ) : (
-                  <div className="row gap-8 wrap">
-                    <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void give()}>
-                      <Flag size={14} /> Give in game
-                    </button>
-                    <button className="btn btn-sm" onClick={() => void copyCommand()}>
-                      <Copy size={14} /> Copy command
-                    </button>
+              {server && (
+                <>
+                  <div className="field">
+                    <label className="field-label">Give it to</label>
+                    <select className="select" value={target} onChange={(e) => setTarget(e.target.value)}>
+                      <option value="@a">Everyone</option>
+                      <option value="@p">Nearest player</option>
+                      {players.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="field-hint mt-8">
+                      {players.length === 0 ? 'Nobody is on the server right now.' : `${players.length} online.`}
+                    </p>
                   </div>
-                )}
-              </>
-            )}
-          </div>
 
-          <div className="panel panel-pad col gap-12">
-            <div className="section-title">Server icon</div>
-            <div className="row gap-12 center">
-              <IconPreview design={design} />
+                  {tooOld ? (
+                    <p className="small muted">
+                      Minecraft {server.minecraftVersion} describes banner items in an older way this does not write.
+                      The images below still work.
+                    </p>
+                  ) : (
+                    <div className="row gap-8 wrap">
+                      <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void give()}>
+                        <Flag size={14} /> Give in game
+                      </button>
+                      <button className="btn btn-sm" onClick={() => void copyCommand()}>
+                        <Copy size={14} /> Copy command
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-            <button
-              className="btn btn-sm"
-              disabled={busy || !server}
-              onClick={() => void setIcon()}
-            >
-              <ImageIcon size={14} /> Set as this server&apos;s icon
-            </button>
-            <p className="tiny dim">
-              Written as server-icon.png. Minecraft reads it when the server starts.
-            </p>
-          </div>
+          )}
 
-          <div className="panel panel-pad col gap-12">
-            <div className="section-title">Listing image</div>
-            <div className="field">
-              <label className="field-label">Title</label>
-              <input
-                className="input"
-                value={listingName}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Your Server"
-              />
+          {use === 'icon' && (
+            <div className="panel panel-pad col gap-12">
+              <div className="section-title">Server icon</div>
+              <div className="row gap-12 center">
+                <IconPreview design={design} />
+              </div>
+              <button className="btn btn-sm" disabled={busy || !server} onClick={() => void setIcon()}>
+                <ImageIcon size={14} /> Set as this server&apos;s icon
+              </button>
+              <p className="tiny dim">Written as server-icon.png. Minecraft reads it when the server starts.</p>
             </div>
-            <div className="field">
-              <label className="field-label">Tagline</label>
-              <input
-                className="input"
-                value={tagline}
-                onChange={(e) => setTagline(e.target.value)}
-                placeholder="Minigames, survival and more"
-              />
+          )}
+
+          {use === 'listing' && (
+            <div className="panel panel-pad col gap-12">
+              <div className="section-title">Listing image</div>
+              <div className="field">
+                <label className="field-label">Title</label>
+                <input
+                  className="input"
+                  value={listingName}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Your Server"
+                />
+              </div>
+              <div className="field">
+                <label className="field-label">Tagline</label>
+                <input
+                  className="input"
+                  value={tagline}
+                  onChange={(e) => setTagline(e.target.value)}
+                  placeholder="Minigames, survival and more"
+                />
+              </div>
+              <ListingPreview design={design} name={listingName} tagline={tagline} />
+              <button className="btn btn-sm" disabled={busy} onClick={() => void saveListing()}>
+                <ImageIcon size={14} /> Save the image
+              </button>
+              <p className="tiny dim">
+                {LISTING_WIDTH}x{LISTING_HEIGHT}, which most listing sites accept.
+              </p>
             </div>
-            <ListingPreview design={design} name={listingName} tagline={tagline} />
-            <button className="btn btn-sm" disabled={busy} onClick={() => void saveListing()}>
-              <ImageIcon size={14} /> Save the image
-            </button>
-            <p className="tiny dim">
-              {LISTING_WIDTH}x{LISTING_HEIGHT}, which most listing sites accept.
-            </p>
-          </div>
+          )}
         </div>
       </div>
 
@@ -718,13 +755,7 @@ export function BannersScreen(): JSX.Element {
 
 /* ----------------------------------------------------------------- pieces */
 
-function Swatches({
-  selected,
-  onPick
-}: {
-  selected: string
-  onPick: (dye: string) => void
-}): JSX.Element {
+function Swatches({ selected, onPick }: { selected: string; onPick: (dye: string) => void }): JSX.Element {
   return (
     <div className="row gap-8 wrap">
       {Object.entries(DYES).map(([dye, hexish]) => (
@@ -738,8 +769,7 @@ function Swatches({
             borderRadius: 6,
             background: hexish,
             cursor: 'pointer',
-            border:
-              dye === selected ? '2px solid var(--text, #fff)' : '1px solid rgba(0, 0, 0, 0.35)',
+            border: dye === selected ? '2px solid var(--text, #fff)' : '1px solid rgba(0, 0, 0, 0.35)',
             outline: dye === selected ? '1px solid rgba(0, 0, 0, 0.5)' : 'none'
           }}
         />
@@ -802,10 +832,7 @@ function PatternPicker({
 
   const preview = (pattern: string): BannerDesign => ({
     ...design,
-    layers: [
-      ...design.layers.slice(0, index),
-      { pattern, colour: layer?.colour ?? 'black' }
-    ]
+    layers: [...design.layers.slice(0, index), { pattern, colour: layer?.colour ?? 'black' }]
   })
 
   const grid = (patterns: readonly string[]): JSX.Element => (
@@ -819,8 +846,7 @@ function PatternPicker({
           style={{
             padding: 6,
             cursor: 'pointer',
-            border:
-              layer?.pattern === pattern ? '2px solid var(--accent, #7aa2ff)' : '1px solid transparent'
+            border: layer?.pattern === pattern ? '2px solid var(--accent, #7aa2ff)' : '1px solid transparent'
           }}
         >
           <BannerView design={preview(pattern)} width={30} height={60} />
@@ -836,8 +862,8 @@ function PatternPicker({
 
         <div className="section-title mt-8">Needs a pattern item</div>
         <p className="tiny dim">
-          These cannot be made from a dye alone — the banner still works, but a player could not
-          reproduce it at a loom without finding or trading for the pattern first.
+          These cannot be made from a dye alone — the banner still works, but a player could not reproduce it at a loom
+          without finding or trading for the pattern first.
         </p>
         {grid(SPECIAL_PATTERNS)}
       </div>
