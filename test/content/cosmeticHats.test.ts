@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { COSMETIC_HATS } from '../../src/shared/resourcePacks'
+import { BASE_ITEMS, COSMETIC_HATS } from '../../src/shared/resourcePacks'
 
 /**
  * The hat ids are a contract with the server, kept in two languages.
@@ -42,5 +42,35 @@ describe('the cosmetic hat contract', () => {
 
   it('builds on a real vanilla item', () => {
     for (const hat of COSMETIC_HATS) expect(hat.base).toMatch(/^minecraft:[a-z_]+$/)
+  })
+
+  /*
+   * Why the Items tab must not list hats.
+   *
+   * A hat is stored as an item, so all eight appeared there beside anything
+   * else - with a base dropdown offering only BASE_ITEMS. A dragon egg is not
+   * on that list, so the select fell back to showing its first entry and every
+   * hat read "stick"; the label field beside it rewrites the id from what you
+   * type, and the plugin looks for `hat_dragon_egg` exactly.
+   */
+  it('is built on items the Items dropdown does not offer', () => {
+    for (const hat of COSMETIC_HATS) expect(BASE_ITEMS).not.toContain(hat.base)
+  })
+
+  /*
+   * The other half of the contract, in the other file.
+   *
+   * The ids can match perfectly and still resolve to nothing if the two sides
+   * disagree about the namespace they live under.
+   */
+  it('agrees with the builder about the namespace', () => {
+    const plugin = java.match(/PACK_NAMESPACE = "([a-z0-9_.-]+)"/)
+    const builder = readFileSync(
+      'src/main/services/content/resourcePackService.ts',
+      'utf8'
+    ).match(/const NAMESPACE = '([a-z0-9_.-]+)'/)
+
+    expect(plugin?.[1]).toBeTruthy()
+    expect(plugin?.[1]).toBe(builder?.[1])
   })
 })

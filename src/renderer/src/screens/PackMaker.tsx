@@ -85,7 +85,7 @@ function countFor(tab: PackTab, draft: ResourcePackDraft): number {
    * than for a share of some total.
    */
   if (tab === 'hats') return draft.items.filter((item) => HAT_IDS.has(item.id)).length
-  if (tab === 'items') return draft.items.length
+  if (tab === 'items') return draft.items.filter((item) => !HAT_IDS.has(item.id)).length
 
   return 0
 }
@@ -864,6 +864,21 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     setDraft({ items: draft.items.map((item, i) => (i === at ? { ...item, ...next } : item)) })
   }
 
+  /*
+   * Items that are not hats, carrying the index they came from.
+   *
+   * A hat is stored as an item, so all eight of them were listed on the Items
+   * tab beside anything else - and not harmlessly. That row renames the id
+   * from the label as you type, and the plugin looks for `hat_dragon_egg`
+   * exactly; the base dropdown offers a fixed list that a dragon egg is not
+   * on, so a hat showed "stick" and would have become one on a stray click.
+   *
+   * The index is carried because the row edits and deletes by position in the
+   * real array, and filtering a list you then index into is how you delete the
+   * wrong thing.
+   */
+  const plainItems = draft.items.map((item, at) => ({ item, at })).filter(({ item }) => !HAT_IDS.has(item.id))
+
   /* ------------------------------------------------------------ sounds -- */
 
   const addSound = async (): Promise<void> => {
@@ -1038,6 +1053,16 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             placeholder="What it is, shown in the pack list"
             onChange={(e) => setDraft({ description: e.target.value.slice(0, 256) })}
           />
+        </div>
+
+        <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+          <button className="btn btn-sm" disabled={nothing} onClick={() => void keep()}>
+            <Save size={14} /> Save this pack
+          </button>
+
+          <span className="tiny dim">
+            {nothing ? 'Nothing in it yet.' : 'Kept as you work as well, so closing the launcher does not lose it.'}
+          </span>
         </div>
 
         {keepFailed && (
@@ -1426,7 +1451,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             />
           </div>
 
-          {draft.items.length === 0 ? (
+          {plainItems.length === 0 ? (
             <p className="small muted">
               Drop in any picture and it becomes a 16 by 16 item texture. By default it is a new look the item points
               at, so ordinary sticks are left alone — which is what pairs with the custom items you already make in
@@ -1434,8 +1459,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             </p>
           ) : (
             <div className="col gap-8">
-              {draft.items.map((item, at) => (
-                <div key={at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+              {plainItems.map(({ item, at }) => (
+                <div key={item.id} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
                   <img
                     src={item.image}
                     alt={item.label}
