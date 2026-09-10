@@ -156,6 +156,18 @@ interface Target {
   label: string
   kind: 'server' | 'instance'
   serverId?: string
+
+  /**
+   * Which Minecraft the pack is for.
+   *
+   * Not a detail. The textures being restyled are read out of a version's own
+   * jar, and the pack format written into pack.mcmeta comes from wherever it
+   * is going - so a pack for a 26.2 server built from an instance's 1.21.11
+   * textures is restyling the wrong three thousand files, missing the several
+   * hundred 26.2 added, and saying "1.21.11" on a screen aimed at a 26.2
+   * server.
+   */
+  minecraftVersion: string
 }
 
 export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element {
@@ -412,7 +424,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
       setBusy(true)
 
-      const made = await api.resourcePack.build(draft, instance.minecraftVersion, where)
+      const made = await api.resourcePack.build(draft, packVersion, where)
 
       setBuilt(made)
       setUrl('')
@@ -497,7 +509,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
     try {
       for (const path of paths) {
-        const original = await api.resourcePack.texture(instance.minecraftVersion, path)
+        const original = await api.resourcePack.texture(packVersion, path)
         if (original) done.push({ path, image: await restyle(original, style) })
 
         if (done.length % 20 === 0) setProgress({ done: done.length, total: paths.length })
@@ -615,7 +627,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
       const made: { path: string; before: string; after: string }[] = []
 
       for (const path of SAMPLES) {
-        const before = await api.resourcePack.texture(instance.minecraftVersion, path)
+        const before = await api.resourcePack.texture(packVersion, path)
         if (!before) continue
 
         made.push({ path, before, after: await restyle(before, recipe) })
@@ -678,7 +690,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
     try {
       for (const path of paths) {
-        const original = await api.resourcePack.texture(instance.minecraftVersion, path)
+        const original = await api.resourcePack.texture(packVersion, path)
         if (original) done.push({ path, image: await restyle(original, style) })
 
         // Every twenty, not every one: repainting the screen three thousand
@@ -708,7 +720,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     setWorking(path)
 
     try {
-      const original = await api.resourcePack.texture(instance.minecraftVersion, path)
+      const original = await api.resourcePack.texture(packVersion, path)
       if (!original) return
 
       const image = await restyle(original, style)
@@ -841,14 +853,20 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             id: `server:${server.id}`,
             label: `${server.name} (server)`,
             kind: 'server',
-            serverId: server.id
+            serverId: server.id,
+            minecraftVersion: server.minecraftVersion
           })
         }
       } catch {
         /* Having no servers is not an error to report here. */
       }
 
-      found.push({ id: 'instance', label: `${instance.name} (just me)`, kind: 'instance' })
+      found.push({
+        id: 'instance',
+        label: `${instance.name} (just me)`,
+        kind: 'instance',
+        minecraftVersion: instance.minecraftVersion
+      })
 
       setTargets(found)
       setTargetId((was) => (found.some((t) => t.id === was) ? was : (found[0]?.id ?? '')))
@@ -857,12 +875,6 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         setHost(await api.resourcePack.hostStatus())
       } catch {
         setHost(null)
-      }
-
-      try {
-        setVanilla(await api.resourcePack.textures(instance.minecraftVersion))
-      } catch {
-        setVanilla([])
       }
 
       try {
@@ -904,6 +916,23 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
   }, [instance.name])
 
   const target = targets.find((t) => t.id === targetId) ?? null
+
+  /** The version whose textures are read and whose format is written. */
+  const packVersion = target?.minecraftVersion ?? instance.minecraftVersion
+
+  /*
+   * Re-read when the target changes, because switching from a server to "just
+   * me" can move between two entirely different sets of textures.
+   */
+  useEffect(() => {
+    void (async () => {
+      try {
+        setVanilla(await api.resourcePack.textures(packVersion))
+      } catch {
+        setVanilla([])
+      }
+    })()
+  }, [packVersion])
 
   /* ------------------------------------------------------------- items -- */
 
@@ -1223,8 +1252,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
           </div>
 
           <p className="small muted">
-            Everything the game draws &mdash; {vanilla.length.toLocaleString()} textures in {instance.minecraftVersion}:
-            blocks, items, mobs, particles, paintings, menus. Search for what you want to change, or import a folder and
+            Everything the game draws &mdash; {vanilla.length.toLocaleString()} textures in {packVersion}: blocks,
+            items, mobs, particles, paintings, menus. Search for what you want to change, or import a folder and
             everything in it is filed by where it sits. Your Desktop has the whole lot already, in
             <code> minecraft-textures</code> &mdash; edit those in place and import the folder back.
           </p>
