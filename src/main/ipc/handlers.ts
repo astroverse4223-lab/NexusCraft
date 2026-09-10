@@ -15,6 +15,63 @@ import {
   sweepForModUpdates,
   type ModUpdateSettings
 } from '../services/content/modUpdateScheduler'
+import {
+  applyMotd,
+  applyServerIcon,
+  bannerBrains,
+  designBanner,
+  designFirework,
+  designIcon,
+  designItem,
+  designLogo,
+  designMany,
+  designMotd,
+  designRecipe,
+  designRecipes,
+  exportRecipePack,
+  giveBanner,
+  installRecipePack,
+  installRecipePackIntoWorld,
+  worldFolderOf,
+  designAdvancements,
+  installAdvancementPack,
+  installAdvancementPackIntoWorld,
+  exportAdvancementPack,
+  designLoot,
+  installLootPack,
+  installLootPackIntoWorld,
+  exportLootPack,
+  giveDesigned,
+  saveBannerImage
+} from '../services/banners/bannerService'
+import type { BannerDesign } from '@shared/banners'
+import { readLoot, readRecipes, type MotdDesign } from '@shared/creations'
+import { writeMapArt, writeMapArtToServer } from '../services/content/mapArtService'
+import {
+  installResourcePack,
+  readResourcePack,
+  vanillaTexture,
+  vanillaTextures,
+  pointServerAtPack,
+  writeResourcePack
+} from '../services/content/resourcePackService'
+import {
+  packHostStatus,
+  packUrl,
+  servePack,
+  startPackHost,
+  stopPackHost
+} from '../services/content/packHost'
+import type { ResourcePackDraft } from '@shared/resourcePacks'
+import { readAdvancements, type AdvancementPack } from '@shared/advancements'
+import type { CreationKind } from '@shared/types'
+import {
+  deleteCreation,
+  listCreations,
+  renameCreation,
+  saveCreation
+} from '../services/banners/creationLibrary'
+import { checkFromOutside } from '../services/servers/outsideCheck'
 import { LauncherError } from '../core/errors'
 import { createLogger } from '../core/logger'
 import { dataRoot, logsRoot } from '../core/paths'
@@ -88,7 +145,7 @@ import {
   savesDir,
   worldMap
 } from '../services/worlds/worldService'
-import { rankInstancesForServer } from '../services/servers/joinMatch'
+import { rankInstancesForServer, versionTableReady } from '../services/servers/joinMatch'
 import {
   serverRestartSettings,
   setServerRestartSettings,
@@ -138,6 +195,7 @@ import {
   instancesThatCanJoin,
   isHostedServerRunning,
   getHostedServer,
+  getHostedServerState,
   hostedServerDir,
   serverAddress,
   connectAddress,
@@ -250,7 +308,19 @@ import {
   serverWorldName
 } from '../companion/build/schematicExport'
 import { randomUUID } from 'node:crypto'
+import { db } from '../core/database'
 import { clearPresence, showIdlePresence } from '../services/presence/presenceService'
+import { externalAddress } from '../services/servers/portForwarding'
+import { localNetworkAddress } from '../services/servers/hostService'
+import {
+  getSiteConfig,
+  renderSite,
+  saveSiteConfig,
+  votifierInfo,
+  votifierPortOf
+} from '../services/content/siteService'
+import { canFetch, serveSite } from '../services/content/packHost'
+import type { SiteConfig } from '@shared/serverSite'
 import {
   discoverGateway,
   openPort,
@@ -259,6 +329,12 @@ import {
   keepPortOpen,
   stopKeepingPortOpen
 } from '../services/servers/portForwarding'
+import {
+  allow as allowThroughFirewall,
+  revoke as revokeFirewallRule,
+  isAllowed as firewallAllows,
+  manualCommandFor
+} from '../services/servers/firewall'
 import {
   checkModUpdates,
   applyModUpdate,
@@ -345,7 +421,21 @@ const ALLOWED_EXTERNAL_DOMAINS = [
   'github.com',
   // Where to get the relay agent the launcher can drive, for people whose
   // router cannot forward a port at all.
-  'playit.gg'
+  'playit.gg',
+  /*
+   * The listing sites the share dialog offers.
+   *
+   * They are named in the interface as buttons, and without them here every
+   * one of those buttons refused to open with a message about the link being
+   * blocked - an allowlist quietly disagreeing with the screen in front of it.
+   * The set is fixed and comes from that list, not from anything a server or a
+   * page can influence.
+   */
+  'minecraft-server-list.com',
+  'minecraftservers.org',
+  'topminecraftservers.org',
+  'minecraft-mp.com',
+  'planetminecraft.com'
 ]
 
 /** True when `hostname` is one of the allowed domains, or a subdomain of one. */
@@ -1271,7 +1361,19 @@ export function registerIpcHandlers(): void {
   handle('host:forwardStatus', async (payload: { id: string }) => {
     const server = getHostedServer(payload.id)
     const [host] = connectAddress(server).split(':')
-    return await forwardingStatus(server.port, host)
+
+    // The firewall is reported alongside the router, because a port that is
+    // forwarded and then blocked locally is indistinguishable from one that
+    // was never forwarded - and that is the whole confusion being removed.
+    return {
+      ...(await forwardingStatus(server.port, host)),
+      firewall: {
+        allowed: await firewallAllows(server.port),
+        alreadyThere: true,
+        reason: null,
+        manualCommand: manualCommandFor(server.port)
+      }
+    }
   })
 
   /**
@@ -1323,7 +1425,19 @@ export function registerIpcHandlers(): void {
     // one, so it has to be renewed or an overnight server quietly goes dark.
     keepPortOpen(server.port, host, label)
 
-    return await forwardingStatus(server.port, host)
+    /*
+     * And the other half of the path.
+     *
+     * A forwarded port only carries a connection as far as this machine;
+     * Windows Firewall decides whether anything may receive it, and for a Java
+     * process nobody has approved the answer is no. Traffic it blocks is
+     * dropped without a word, so opening only the router produced a server that
+     * every friend timed out on while the router and the server both reported
+     * themselves as working.
+     */
+    const firewall = await allowThroughFirewall(server.port, server.name)
+
+    return { ...(await forwardingStatus(server.port, host)), firewall }
   })
 
   handle('host:closePort', async (payload: { id: string }) => {
@@ -1332,6 +1446,11 @@ export function registerIpcHandlers(): void {
 
     const gateway = await discoverGateway()
     if (!gateway) return { closed: false }
+
+    // The firewall rule goes whether or not the router answered - it is this
+    // machine's own, and leaving it behind leaves a port open on a server
+    // somebody has just said they are finished with.
+    await revokeFirewallRule(server.port)
 
     const closed = await closePort(gateway, server.port)
     if (closed) log.info(`closed port ${server.port} for "${server.name}"`)
@@ -1646,12 +1765,23 @@ export function registerIpcHandlers(): void {
         ok: candidates.length > 0,
         instanceName: candidates[0]?.instance.name ?? null,
         serverVersions: serverVersions.slice(0, 6),
+        /*
+         * Three different situations, and they used to share one sentence.
+         *
+         * "It did not say which version it runs" is a claim about the server,
+         * and for a while it was printed on every card in the list when the
+         * real problem was at this end — the launcher's own version table had
+         * failed to load. Saying whose fault it is costs one branch and saves
+         * a long hunt through somebody else's server.
+         */
         reason:
           candidates.length > 0
             ? null
-            : serverVersions.length === 0
-              ? 'it did not say which version it runs'
-              : `needs ${serverVersions[0]}`
+            : !versionTableReady()
+              ? 'the launcher could not read its version table — pick an instance by hand'
+              : serverVersions.length === 0
+                ? 'it did not say which version it runs'
+                : `needs ${serverVersions[0]}`
       }
     }
 
@@ -1789,6 +1919,802 @@ export function registerIpcHandlers(): void {
     else toast('info', 'Nothing new to import', 'Every server in that instance is already saved.')
     return { imported: count }
   })
+
+  handle('host:checkOutside', async (payload: { id: string }) => await checkFromOutside(payload.id))
+
+  /* ------------------------------------------------------------- banners */
+
+  handle('banners:brains', () => bannerBrains())
+
+  handle('banners:design', async (payload: { prompt: string; companionId: string }) =>
+    await designBanner(payload)
+  )
+
+  handle('banners:designIcon', async (payload: { prompt: string; companionId: string }) =>
+    await designIcon(payload)
+  )
+
+  handle('banners:designMotd', async (payload: { prompt: string; companionId: string }) =>
+    await designMotd(payload)
+  )
+
+  handle('banners:designLogo', async (payload: { prompt: string; companionId: string }) =>
+    await designLogo(payload)
+  )
+
+  handle('banners:designFirework', async (payload: { prompt: string; companionId: string }) =>
+    await designFirework(payload)
+  )
+
+  handle('banners:designItem', async (payload: { prompt: string; companionId: string }) =>
+    await designItem(payload)
+  )
+
+  handle('banners:applyMotd', (payload: { serverId: string; design: MotdDesign }) => {
+    const result = applyMotd(payload.serverId, payload.design)
+    toast('success', 'Message saved', 'It shows in the server list once the server restarts.')
+    return result
+  })
+
+  /**
+   * Several ideas at once.
+   *
+   * The kind picks which designer runs; the parallelism and the tolerance for
+   * one of them failing lives in `designMany`, so every generator gets the same
+   * behaviour without repeating it six times.
+   */
+  handle(
+    'banners:variations',
+    async (payload: {
+      kind: 'banner' | 'icon' | 'motd' | 'logo' | 'firework' | 'item' | 'datapack' | 'loot'
+      prompt: string
+      companionId: string
+      count: number
+    }) => {
+      const request = { prompt: payload.prompt, companionId: payload.companionId }
+
+      const one: () => Promise<unknown> = {
+        banner: async () => (await designBanner(request)).design,
+        icon: async () => (await designIcon(request)).art,
+        motd: async () => (await designMotd(request)).design,
+        logo: async () => (await designLogo(request)).design,
+        firework: async () => (await designFirework(request)).design,
+        item: async () => (await designItem(request)).design,
+        datapack: async () => (await designRecipes(request)).pack,
+        loot: async () => (await designLoot(request)).pack
+      }[payload.kind]
+
+      /*
+       * Refused rather than left to fail inside the fan-out.
+       *
+       * Two kinds were missing from this table, so asking for four ideas on
+       * those tabs called `undefined` four times over and reported it as the
+       * model having failed.
+       */
+      if (!one) {
+        throw new LauncherError('INVALID_INPUT', `no designer for ${payload.kind}`, {
+          title: 'That generator cannot make variations yet',
+          message: 'Use Refine instead, which works from what is on screen.'
+        })
+      }
+
+      return await designMany(payload.count, one)
+    }
+  )
+
+  handle(
+    'banners:designRecipes',
+    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
+      await designRecipes(payload)
+  )
+
+  handle(
+    'banners:designLoot',
+    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
+      await designLoot(payload)
+  )
+
+  /**
+   * Says out loud when a rule was left out.
+   *
+   * A skipped rule means the vanilla table could not be read, so the drop
+   * simply is not there - which looks exactly like the generator having
+   * ignored what was asked for unless somebody is told.
+   */
+  const lootToast = (result: { fileCount: number; world: string; skipped: string[] }): void => {
+    if (result.skipped.length > 0) {
+      toast(
+        'warning',
+        'Some rules were left out',
+        `${result.skipped.length} could not be added: ${result.skipped.join('; ')}`
+      )
+      return
+    }
+
+    toast('success', 'Loot installed', `Written into ${result.world}.`)
+  }
+
+  handle(
+    'banners:designAdvancements',
+    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
+      await designAdvancements(payload)
+  )
+
+  const checkedAdvancements = (raw: unknown): AdvancementPack => {
+    const read = readAdvancements(raw)
+    if (!read) {
+      throw new LauncherError('INVALID_INPUT', 'no usable advancements', {
+        title: 'Nothing in that pack would work',
+        message: 'Every one of them names an item or a mob the game does not have.'
+      })
+    }
+    return read.pack
+  }
+
+  handle('banners:installAdvancements', async (payload: { serverId: string; pack: unknown }) => {
+    const result = await installAdvancementPack(
+      payload.serverId,
+      checkedAdvancements(payload.pack)
+    )
+
+    toast('success', 'Advancements installed', `Written into ${result.world}.`)
+    return result
+  })
+
+  handle(
+    'banners:installAdvancementsWorld',
+    async (payload: { instanceId: string; worldFolder: string; pack: unknown }) => {
+      const result = await installAdvancementPackIntoWorld(
+        getInstance(payload.instanceId),
+        payload.worldFolder,
+        checkedAdvancements(payload.pack)
+      )
+
+      toast(
+        'success',
+        'Advancements installed',
+        `Written into ${result.world}. Re-enter the world to see them.`
+      )
+      return result
+    }
+  )
+
+  handle(
+    'banners:exportAdvancements',
+    async (payload: { path: string; pack: unknown; minecraftVersion: string }) =>
+      await exportAdvancementPack(
+        payload.path,
+        checkedAdvancements(payload.pack),
+        payload.minecraftVersion
+      )
+  )
+
+  /* ------------------------------------------------------- resource packs */
+
+  handle(
+    'resourcepack:build',
+    async (payload: { draft: ResourcePackDraft; minecraftVersion: string; path: string }) =>
+      await writeResourcePack(payload.draft, payload.minecraftVersion, payload.path)
+  )
+
+  handle(
+    'resourcepack:install',
+    async (payload: { instanceId: string; draft: ResourcePackDraft }) => {
+      const built = await installResourcePack(getInstance(payload.instanceId), payload.draft)
+
+      toast(
+        'success',
+        'Resource pack installed',
+        'Turn it on under Options, Resource Packs the next time you play.'
+      )
+
+      return built
+    }
+  )
+
+  /**
+   * Builds the pack, starts the listener, and points the server at it.
+   *
+   * One handler rather than three, because the three are useless apart: a pack
+   * with no listener is a url that 404s, and a listener with no server entry is
+   * a file nobody is ever told about.
+   */
+  handle(
+    'resourcepack:serve',
+    async (payload: {
+      serverId: string
+      draft: ResourcePackDraft
+      port: number
+      required: boolean
+      address?: string
+    }) => {
+      const server = getHostedServer(payload.serverId)
+      const dir = hostedServerDir(server.id)
+
+      const built = await writeResourcePack(
+        payload.draft,
+        server.minecraftVersion,
+        join(dir, 'nexus-resource-pack.zip')
+      )
+
+      await servePack({ file: built.path, sha1: built.sha1 })
+      await startPackHost(payload.port)
+
+      /*
+       * The address players actually reach, which is not this machine's idea of
+       * itself. A url of 127.0.0.1 works for exactly one player.
+       */
+      let address = payload.address?.trim() || ''
+
+      if (!address) {
+        const gateway = await discoverGateway()
+        address = (gateway ? await externalAddress(gateway) : null) ?? localNetworkAddress() ?? ''
+      }
+
+      if (!address) {
+        throw new LauncherError('NOT_FOUND', 'no reachable address', {
+          title: 'Could not work out your address',
+          message:
+            'The pack is built and being served, but there is no address to hand out. ' +
+            'Type the one players use to connect and try again.',
+          actions: ['Enter the address by hand']
+        })
+      }
+
+      const url = packUrl(address, payload.port)
+      if (!url) throw new LauncherError('NOT_FOUND', 'nothing being served')
+
+      await pointServerAtPack(dir, { url, sha1: built.sha1, required: payload.required })
+
+      /*
+       * Does that url actually answer from here?
+       *
+       * Very often it does not, and for a reason nothing reports: most home
+       * routers will not route a machine back to its own public address, so a
+       * url built from the address the outside world sees is unreachable from
+       * inside the house. Everything is configured correctly and the person
+       * testing it gets "failed to download" with no idea why.
+       *
+       * A failure is not proof the url is wrong for everybody - only that it
+       * is wrong for whoever is sitting here, which is who is about to try it.
+       */
+      const lan = localNetworkAddress()
+      const reachable = await canFetch(url)
+      const alternative =
+        !reachable && lan && !url.includes(lan) ? packUrl(lan, payload.port) : null
+
+      const usable = alternative !== null && (await canFetch(alternative))
+
+      toast(
+        'success',
+        'Pack is being served',
+        'Restart the server and players will be offered it when they join.'
+      )
+
+      return {
+        ...built,
+        url,
+        port: payload.port,
+        address,
+        reachable,
+        // Offered rather than swapped in, because which one is right depends
+        // on who is meant to be joining - and only the operator knows that.
+        alternative: usable ? alternative : null
+      }
+    }
+  )
+
+  /**
+   * The pack port, forwarded the same way the server port is.
+   *
+   * A separate port from the game's, because the game speaks its own protocol
+   * and this speaks http - they cannot share one. So a server that friends can
+   * reach still hands out a pack url nobody outside the house can fetch, and
+   * the symptom is a download that hangs at nought per cent with no message.
+   */
+  handle('resourcepack:openPort', async (payload: { port: number }) => {
+    const gateway = await discoverGateway()
+
+    if (!gateway) {
+      throw new LauncherError('NETWORK_ERROR', 'no UPnP gateway on this network', {
+        title: 'No router offered to forward the port',
+        message:
+          'Nothing on this network answered a UPnP search. Routers often ship with it off.',
+        actions: [
+          'Turn on UPnP in the router settings and try again',
+          `Or forward TCP port ${payload.port} to this machine by hand`
+        ]
+      })
+    }
+
+    const host = localNetworkAddress()
+
+    if (!host) {
+      throw new LauncherError('NETWORK_ERROR', 'no local address to forward to', {
+        title: 'Could not find this machine on the network',
+        message: 'There is no local network address to point the router at.'
+      })
+    }
+
+    const label = 'NexusCraft — resource pack'
+    await openPort(gateway, payload.port, host, label)
+    keepPortOpen(payload.port, host, label)
+
+    log.info(`opened pack port ${payload.port} via ${gateway.description}`)
+    toast('success', `Port ${payload.port} is open`, 'Players outside your network can fetch the pack.')
+
+    return await forwardingStatus(payload.port, host)
+  })
+
+  handle('resourcepack:closePort', async (payload: { port: number }) => {
+    stopKeepingPortOpen(payload.port)
+
+    const gateway = await discoverGateway()
+    if (gateway) await closePort(gateway, payload.port)
+
+    log.info(`closed pack port ${payload.port}`)
+    return { available: gateway !== null, open: false, externalAddress: null, router: null, reason: null }
+  })
+
+  handle('resourcepack:portStatus', async (payload: { port: number }) => {
+    const host = localNetworkAddress()
+    if (!host) {
+      return {
+        available: false,
+        open: false,
+        externalAddress: null,
+        router: null,
+        reason: 'this machine has no local network address'
+      }
+    }
+
+    return await forwardingStatus(payload.port, host)
+  })
+
+  /* --------------------------------------------------------- server site */
+
+  handle('site:config', async (payload: { serverId: string }) => {
+    const server = getHostedServer(payload.serverId)
+    return getSiteConfig(server.id, server.name)
+  })
+
+  handle('site:save', async (payload: { config: SiteConfig }) => saveSiteConfig(payload.config))
+
+  /**
+   * Starts serving the page, on the same listener the pack uses.
+   *
+   * One port for both rather than two, because they are the same kind of
+   * thing: files this machine hands to people over http. A second listener
+   * would be a second port to forward and a second thing to explain.
+   */
+  handle('site:start', async (payload: { serverId: string; port: number }) => {
+    const server = getHostedServer(payload.serverId)
+    const dir = hostedServerDir(server.id)
+
+    serveSite(async () => {
+      const state = getHostedServerState(server.id)
+
+      return await renderSite(dir, getSiteConfig(server.id, server.name), {
+        online: state.players,
+        running: state.status === 'running',
+        motd: server.motd,
+        version: server.minecraftVersion
+      })
+    })
+
+    await startPackHost(payload.port)
+
+    const host = localNetworkAddress()
+    toast('success', 'Website is up', `Open http://${host ?? 'localhost'}:${payload.port}`)
+
+    return {
+      running: true,
+      port: payload.port,
+      url: `http://${host ?? 'localhost'}:${payload.port}/`
+    }
+  })
+
+  handle('site:stop', async () => {
+    serveSite(null)
+    return { running: false, port: null, url: null }
+  })
+
+  handle('site:status', async () => {
+    const status = packHostStatus()
+    const host = localNetworkAddress()
+
+    return {
+      running: status.running,
+      port: status.port,
+      url: status.running ? `http://${host ?? 'localhost'}:${status.port}/` : null
+    }
+  })
+
+  /**
+   * The Votifier port, which is neither the game port nor the pack port.
+   *
+   * Vote sites connect in to it. Unforwarded, they send the vote, nothing
+   * arrives, and the player is told on the site that their vote counted - so
+   * the failure lands on somebody who cannot see any of it.
+   */
+  handle('site:votifierPort', async (payload: { serverId: string; open: boolean }) => {
+    const server = getHostedServer(payload.serverId)
+    const port = votifierPortOf(hostedServerDir(server.id))
+    const host = localNetworkAddress()
+
+    if (!host) {
+      throw new LauncherError('NETWORK_ERROR', 'no local address', {
+        title: 'Could not find this machine on the network',
+        message: 'There is no local network address to point the router at.'
+      })
+    }
+
+    if (!payload.open) {
+      stopKeepingPortOpen(port)
+      const gateway = await discoverGateway()
+      if (gateway) await closePort(gateway, port)
+
+      return { port, available: gateway !== null, open: false, externalAddress: null, router: null, reason: null }
+    }
+
+    const gateway = await discoverGateway()
+
+    if (!gateway) {
+      throw new LauncherError('NETWORK_ERROR', 'no UPnP gateway', {
+        title: 'No router offered to forward the port',
+        message: 'Nothing on this network answered a UPnP search.',
+        actions: [`Forward TCP port ${port} to this machine by hand`]
+      })
+    }
+
+    const label = 'NexusCraft — votes'
+    await openPort(gateway, port, host, label)
+    keepPortOpen(port, host, label)
+
+    log.info(`opened votifier port ${port} via ${gateway.description}`)
+    toast('success', `Vote port ${port} is open`, 'Vote sites can reach the server now.')
+
+    return { port, ...(await forwardingStatus(port, host)) }
+  })
+
+  handle('site:votifierInfo', async (payload: { serverId: string }) => {
+    const dir = hostedServerDir(getHostedServer(payload.serverId).id)
+    return await votifierInfo(dir)
+  })
+
+  handle('resourcepack:textures', async (payload: { minecraftVersion: string }) =>
+    vanillaTextures(payload.minecraftVersion)
+  )
+
+  handle(
+    'resourcepack:texture',
+    async (payload: { minecraftVersion: string; path: string }) =>
+      vanillaTexture(payload.minecraftVersion, payload.path)
+  )
+
+  handle('resourcepack:open', async (payload: { file: string }) =>
+    await readResourcePack(payload.file)
+  )
+
+  /*
+   * The working draft, kept without anybody pressing save.
+   *
+   * It lived only in the renderer's memory, so closing the launcher threw
+   * away however long somebody had spent on it - and the first sign of that
+   * was a Build button that did nothing, because an empty pack disables it.
+   * Saving deliberately still matters for keeping several; this is only so
+   * that shutting the lid does not cost you the one you are working on.
+   */
+  handle('resourcepack:remember', async (payload: { draft: unknown }) => {
+    db().kvSet('packDraft', JSON.stringify(payload.draft))
+    return { ok: true }
+  })
+
+  handle('resourcepack:recall', async () => {
+    const raw = db().kvGet('packDraft')
+    if (!raw) return null
+
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  })
+
+  handle(
+    'banners:designRecipe',
+    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
+      await designRecipe(payload)
+  )
+
+  handle('resourcepack:hostStatus', async () => packHostStatus())
+
+  handle('resourcepack:stopHost', async () => {
+    stopPackHost()
+    return packHostStatus()
+  })
+
+  handle(
+    'resourcepack:attach',
+    async (payload: { serverId: string; url: string; sha1: string; required: boolean }) => {
+      await pointServerAtPack(hostedServerDir(getHostedServer(payload.serverId).id), {
+        url: payload.url,
+        sha1: payload.sha1,
+        required: payload.required
+      })
+
+      toast('success', 'Server points at the pack', 'Restart it for the change to take.')
+      return { ok: true }
+    }
+  )
+
+  handle('resourcepack:detach', async (payload: { serverId: string }) => {
+    await pointServerAtPack(hostedServerDir(getHostedServer(payload.serverId).id), null)
+    toast('success', 'Resource pack removed', 'Restart the server for the change to take.')
+    return { ok: true }
+  })
+
+  handle(
+    'mapart:writeServer',
+    async (payload: { serverId: string; tiles: number[][]; across: number; down: number }) => {
+      const server = getHostedServer(payload.serverId)
+      const dir = hostedServerDir(server.id)
+
+      const result = await writeMapArtToServer(
+        dir,
+        worldFolderOf(dir),
+        server.minecraftVersion,
+        payload.tiles,
+        payload.across,
+        payload.down
+      )
+
+      toast(
+        'success',
+        result.ids.length === 1 ? 'Map written' : `${result.ids.length} maps written`,
+        'Restart the server, then run the give commands in game.'
+      )
+
+      return result
+    }
+  )
+
+  handle(
+    'mapart:write',
+    async (payload: {
+      instanceId: string
+      worldFolder: string
+      tiles: number[][]
+      across: number
+      down: number
+    }) => {
+      const result = await writeMapArt(
+        getInstance(payload.instanceId),
+        payload.worldFolder,
+        payload.tiles,
+        payload.across,
+        payload.down
+      )
+
+      toast(
+        'success',
+        result.ids.length === 1 ? 'Map written' : `${result.ids.length} maps written`,
+        `Into ${result.world}. Run the give commands in game to hold them.`
+      )
+
+      return result
+    }
+  )
+
+  handle('banners:installLoot', async (payload: { serverId: string; pack: unknown }) => {
+    const checked = readLoot(payload.pack)
+    if (!checked) {
+      throw new LauncherError('INVALID_INPUT', 'no usable loot rules', {
+        title: 'Nothing in that pack would work',
+        message: 'Every rule in it names something the game does not have.'
+      })
+    }
+
+    const result = await installLootPack(payload.serverId, checked.pack)
+    lootToast(result)
+    return result
+  })
+
+  handle(
+    'banners:installLootWorld',
+    async (payload: { instanceId: string; worldFolder: string; pack: unknown }) => {
+      const checked = readLoot(payload.pack)
+      if (!checked) {
+        throw new LauncherError('INVALID_INPUT', 'no usable loot rules', {
+          title: 'Nothing in that pack would work',
+          message: 'Every rule in it names something the game does not have.'
+        })
+      }
+
+      const result = await installLootPackIntoWorld(
+        getInstance(payload.instanceId),
+        payload.worldFolder,
+        checked.pack
+      )
+      lootToast(result)
+      return result
+    }
+  )
+
+  handle(
+    'banners:exportLoot',
+    async (payload: { path: string; pack: unknown; minecraftVersion: string }) => {
+      const checked = readLoot(payload.pack)
+      if (!checked) {
+        throw new LauncherError('INVALID_INPUT', 'no usable loot rules', {
+          title: 'Nothing in that pack would work',
+          message: 'Every rule in it names something the game does not have.'
+        })
+      }
+      return await exportLootPack(payload.path, checked.pack, payload.minecraftVersion)
+    }
+  )
+
+  handle(
+    'banners:installRecipesWorld',
+    async (payload: { instanceId: string; worldFolder: string; pack: unknown }) => {
+      // Checked here for the same reason the server one is: what arrives is
+      // whatever the window sent, and this writes files into a world.
+      const checked = readRecipes(payload.pack)
+      if (!checked) {
+        throw new LauncherError('INVALID_INPUT', 'no usable recipes', {
+          title: 'Nothing in that pack would work',
+          message: 'Every recipe in it names something the game does not have.'
+        })
+      }
+
+      const result = await installRecipePackIntoWorld(
+        getInstance(payload.instanceId),
+        payload.worldFolder,
+        checked.pack
+      )
+
+      toast(
+        'success',
+        'Recipes installed',
+        `${result.fileCount - 1} recipes written into ${result.world}. Re-enter the world to use them.`
+      )
+
+      return result
+    }
+  )
+
+  handle('banners:installRecipes', async (payload: { serverId: string; pack: unknown }) => {
+    /*
+     * Read again here rather than trusted from the renderer.
+     *
+     * What arrives is whatever the window sent, and these files are written
+     * into a world - so the recipes are validated a second time and anything
+     * that would not load is dropped before anything touches the disk.
+     */
+    const checked = readRecipes(payload.pack)
+    if (!checked) {
+      throw new LauncherError('INVALID_INPUT', 'no usable recipes', {
+        title: 'Nothing in that pack would work',
+        message: 'Every recipe in it names something the game does not have.'
+      })
+    }
+
+    const result = await installRecipePack(payload.serverId, checked.pack)
+    toast(
+      'success',
+      'Recipes installed',
+      result.reloadNeeded
+        ? `${result.fileCount - 1} recipes written and the server reloaded.`
+        : `${result.fileCount - 1} recipes written into ${result.world}.`
+    )
+    return result
+  })
+
+  handle(
+    'banners:exportRecipes',
+    async (payload: { path: string; pack: unknown; minecraftVersion: string }) => {
+      const checked = readRecipes(payload.pack)
+      if (!checked) {
+        throw new LauncherError('INVALID_INPUT', 'no usable recipes', {
+          title: 'Nothing in that pack would work',
+          message: 'Every recipe in it names something the game does not have.'
+        })
+      }
+      const result = await exportRecipePack(payload.path, checked.pack, payload.minecraftVersion)
+      toast('success', 'Pack saved', result.path)
+      return result
+    }
+  )
+
+  /* ------------------------------------------------------------- library */
+
+  handle('creations:list', (payload: { kind?: CreationKind }) => listCreations(payload.kind))
+
+  handle(
+    'creations:save',
+    (payload: {
+      id?: string | null
+      kind: CreationKind
+      name: string
+      data: unknown
+      thumbnail?: string | null
+    }) => {
+      const saved = saveCreation(payload)
+      toast('success', 'Saved', `"${saved.name}" is in your library.`)
+      return saved
+    }
+  )
+
+  handle('creations:delete', (payload: { id: string }) => deleteCreation(payload.id))
+
+  handle('creations:rename', (payload: { id: string; name: string }) =>
+    renameCreation(payload.id, payload.name)
+  )
+
+  handle('banners:giveDesigned', async (payload: { serverId: string; command: string }) => {
+    const result = await giveDesigned(payload.serverId, payload.command)
+
+    if (result.sent) {
+      toast('success', 'Sent', 'Handed over in game.')
+      return result
+    }
+
+    /*
+     * A refusal and a stopped server are different failures.
+     *
+     * They used to share one message - "the server is not running" - which was
+     * simply untrue when the server was running and had rejected the command,
+     * and sent people looking in the wrong place.
+     */
+    if (result.refused) {
+      toast('error', 'The server would not run that', result.refused)
+      return result
+    }
+
+    toast(
+      'info',
+      'The server is not running',
+      'Start it and try again, or copy the command and run it yourself.'
+    )
+
+    return result
+  })
+
+  handle('banners:icon', async (payload: { serverId: string; png: string }) => {
+    const result = await applyServerIcon(payload.serverId, payload.png)
+    toast(
+      'success',
+      'Server icon set',
+      result.restartNeeded
+        ? 'It will show in the server list once the server restarts.'
+        : 'It will show in the server list next time the server starts.'
+    )
+    return result
+  })
+
+  handle('banners:save', async (payload: { path: string; png: string }) => {
+    const saved = await saveBannerImage(payload.path, payload.png)
+    toast('success', 'Image saved', saved)
+    return { path: saved }
+  })
+
+  handle(
+    'banners:give',
+    async (payload: { serverId: string; target: string; design: BannerDesign }) => {
+      const result = await giveBanner(payload.serverId, payload.target, payload.design)
+
+      if (result.sent) toast('success', 'Banner sent', `Handed to ${payload.target} in game.`)
+      else if (result.refused) toast('error', 'The server would not run that', result.refused)
+      else
+        toast(
+          'info',
+          'The server is not running',
+          'Start it and try again, or copy the command and run it yourself.'
+        )
+      return result
+    }
+  )
 
   /* -------------------------------------------------------------- skins */
 

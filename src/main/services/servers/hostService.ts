@@ -262,7 +262,14 @@ export function saveHostedServer(input: SaveHostedServerInput): HostedServer {
     onlineMode: input.onlineMode,
     reachability: input.reachability,
     memoryMb: clampMemory(input.memoryMb),
-    motd: input.motd.slice(0, 59),
+    /*
+     * Long enough for two lines with colour codes in them.
+     *
+     * Fifty-nine was the old single-line limit, and it silently ate the second
+     * line of any message that used one - the codes alone can be a third of the
+     * budget before a word is typed.
+     */
+    motd: input.motd.slice(0, 250),
     difficulty: input.difficulty,
     gameMode: input.gameMode,
     maxPlayers: Math.max(1, Math.min(100, Math.round(input.maxPlayers))),
@@ -406,6 +413,22 @@ function clampWhole(value: number, low: number, high: number): number {
   return Math.max(low, Math.min(high, Math.round(value)))
 }
 
+/**
+ * A value as a .properties file can hold it.
+ *
+ * The file is one key per line, so a newline inside a value ends the value -
+ * everything after it is read as a line with no equals sign in it and thrown
+ * away. That is what made a two line MOTD lose its second line. Java reads the
+ * two character escape back as a newline, which is how every server with a two
+ * line message has always done it.
+ */
+function escapeProperty(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '\\n')
+}
+
 async function writeServerProperties(server: HostedServer): Promise<void> {
   const file = join(hostedServerDir(server.id), 'server.properties')
 
@@ -422,7 +445,7 @@ async function writeServerProperties(server: HostedServer): Promise<void> {
   const managed: Record<string, string> = {
     'server-port': String(server.port),
     'online-mode': String(server.onlineMode),
-    motd: server.motd,
+    motd: escapeProperty(server.motd),
     difficulty: server.difficulty,
     gamemode: server.gameMode,
     'max-players': String(server.maxPlayers),
@@ -678,7 +701,18 @@ function interpret(id: string, text: string): void {
     return
   }
 
-  const joined = /\]: ([A-Za-z0-9_]{3,16}) joined the game/.exec(text)
+  /*
+   * Two ways of noticing, because the obvious one is not reliable.
+   *
+   * "Dave joined the game" is a chat message, and any plugin may replace it -
+   * the Nexus plugin does, with "+ Dave" - after which this saw nobody join
+   * and every list of online players stayed empty. "logged in with entity id"
+   * is the server's own line about its own business, which no plugin rewrites.
+   */
+  const joined =
+    /\]: ([A-Za-z0-9_]{3,16}) joined the game/.exec(text) ??
+    /\]: ([A-Za-z0-9_]{3,16})\[\/[^\]]*\] logged in with entity id/.exec(text)
+
   if (joined) {
     const players = [...new Set([...entry.state.players, joined[1]])]
     setState(id, { players })
@@ -686,7 +720,10 @@ function interpret(id: string, text: string): void {
     return
   }
 
-  const left = /\]: ([A-Za-z0-9_]{3,16}) left the game/.exec(text)
+  const left =
+    /\]: ([A-Za-z0-9_]{3,16}) left the game/.exec(text) ??
+    /\]: ([A-Za-z0-9_]{3,16}) lost connection/.exec(text)
+
   if (left) {
     setState(id, { players: entry.state.players.filter((p) => p !== left[1]) })
     notifyLifecycle('player-left', id, left[1])

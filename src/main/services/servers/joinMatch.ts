@@ -1,4 +1,7 @@
 import type { Instance, LoaderId, ServerStatus } from '@shared/types'
+import { createLogger } from '../../core/logger'
+
+const log = createLogger('joinmatch')
 
 /**
  * Choosing which instance to launch when joining someone else's server.
@@ -18,6 +21,49 @@ interface ProtocolEntry {
 }
 
 /**
+ * Every Java release the data package knows, newest first, or null.
+ *
+ * Loaded once and remembered, and — the part that matters — it says so loudly
+ * when it cannot be loaded at all.
+ *
+ * This used to be two functions that each did `try { require(...) } catch {
+ * return [] }`. When the packaged build shipped without four small files
+ * minecraft-data requires at import time, the require threw, both functions
+ * returned empty, and the Discover screen told the user that all fifty servers
+ * "did not say which version" they run — a confident, specific, wrong claim
+ * about somebody else's server, when the truth was that the launcher could not
+ * read its own table. It looked like fifty broken servers rather than one
+ * broken build, and nothing was logged.
+ *
+ * So: one load, one log, and a null that callers have to look at.
+ */
+let table: ProtocolEntry[] | null | undefined
+
+function versionTable(): ProtocolEntry[] | null {
+  if (table !== undefined) return table
+
+  try {
+    const mcData = require('minecraft-data') as { versions: { pc: ProtocolEntry[] } }
+    table = mcData.versions.pc.filter((entry) => entry.releaseType !== 'snapshot')
+    log.info(`version table loaded — ${table.length} Java releases`)
+  } catch (err) {
+    table = null
+    log.error(
+      'could not load minecraft-data, so no server version can be matched — ' +
+        'joining will fall back to whichever instance is chosen by hand',
+      err
+    )
+  }
+
+  return table
+}
+
+/** Whether the version table is available at all, as opposed to unhelpful. */
+export function versionTableReady(): boolean {
+  return versionTable() !== null
+}
+
+/**
  * Minecraft versions that speak a given protocol number, newest first.
  *
  * The protocol is exact where it is available: 767 means 1.21.1/1.21 and
@@ -27,28 +73,16 @@ interface ProtocolEntry {
  */
 export function versionsForProtocol(protocol: number | null): string[] {
   if (protocol === null || !Number.isFinite(protocol) || protocol < 0) return []
-  try {
-    const mcData = require('minecraft-data') as { versions: { pc: ProtocolEntry[] } }
-    return mcData.versions.pc
-      .filter((entry) => entry.version === protocol && entry.releaseType !== 'snapshot')
-      .map((entry) => entry.minecraftVersion)
-  } catch {
-    // Without the data table there is nothing to match on; the caller then
-    // falls back to trusting the user's explicit choice.
-    return []
-  }
+
+  const releases = versionTable()
+  if (!releases) return []
+
+  return releases.filter((entry) => entry.version === protocol).map((entry) => entry.minecraftVersion)
 }
 
 /** Every release, newest first — the ordering used to compare versions. */
 function releaseOrder(): string[] {
-  try {
-    const mcData = require('minecraft-data') as { versions: { pc: ProtocolEntry[] } }
-    return mcData.versions.pc
-      .filter((entry) => entry.releaseType !== 'snapshot')
-      .map((entry) => entry.minecraftVersion)
-  } catch {
-    return []
-  }
+  return versionTable()?.map((entry) => entry.minecraftVersion) ?? []
 }
 
 /**

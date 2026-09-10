@@ -101,6 +101,7 @@ export function DataPacksTab({ instance }: { instance: Instance }): JSX.Element 
     if (!world) return setInstalled([])
     try {
       setInstalled(await api.datapacks.installed(instance.id, world))
+
     } catch {
       setInstalled([])
     }

@@ -1,17 +1,19 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { writeFile, mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import AdmZip from 'adm-zip'
 import type { LoaderId, LoaderVersion } from '@shared/types'
 import { getJson, getText, getBuffer } from '../../core/http'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
-import { dataRoot, versionsRoot, ensureDir } from '../../core/paths'
+import { dataRoot, librariesRoot, versionsRoot, ensureDir } from '../../core/paths'
 import { installVersion, listInstalledVersionIds, versionDir } from '../minecraft/versionService'
+import { mavenToPath } from '../minecraft/rules'
 import { componentForMajor, installManagedRuntime, managedRuntimeInstalled } from '../java/javaService'
 import type { DownloadTask } from '../downloads/downloadManager'
-import type { VersionJson } from '../minecraft/versionTypes'
+import type { Library, VersionJson } from '../minecraft/versionTypes'
 
 const log = createLogger('loaders')
 
@@ -126,6 +128,111 @@ async function installFabricLike(
   return profile.id
 }
 
+/* -------------------------------------------------------- legacy Forge */
+
+/**
+ * The pre-1.13 `install_profile.json`: an `install` block naming the one file
+ * to lift out of the jar, and `versionInfo` — the version profile itself.
+ */
+interface LegacyInstallProfile {
+  install: { path: string; filePath: string }
+  versionInfo: VersionJson
+}
+
+/** Forge libraries of that era carry side flags the modern format dropped. */
+type LegacyLibrary = Library & { clientreq?: boolean; serverreq?: boolean }
+
+/**
+ * Reads the legacy install profile out of an installer jar, or returns null
+ * when the jar is a modern installer that has to be executed instead.
+ */
+function readLegacyProfile(jarBytes: Buffer): LegacyInstallProfile | null {
+  try {
+    const entry = new AdmZip(jarBytes).getEntry('install_profile.json')
+    if (!entry) return null
+    const profile = JSON.parse(entry.getData().toString('utf8')) as Partial<LegacyInstallProfile>
+    // A modern profile describes `processors` and `data` instead, and has no
+    // `versionInfo` — it cannot be installed by copying, so leave it alone.
+    if (!profile.versionInfo?.id || !profile.install?.path || !profile.install?.filePath) return null
+    return profile as LegacyInstallProfile
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Points an old library entry at a host that still answers.
+ *
+ * Builds of this era name `files.minecraftforge.net/maven`, which stopped
+ * serving artifacts, and address everything over plain http.
+ */
+function modernizeMavenUrl(url: string): string {
+  return url
+    .replace(/^https?:\/\/files\.minecraftforge\.net\/maven\/?/i, 'https://maven.minecraftforge.net/')
+    .replace(/^http:\/\//i, 'https://')
+}
+
+/**
+ * Installs a pre-1.13 Forge build straight out of its installer jar.
+ *
+ * Those installers have no `--installClient` option — installing a client was
+ * a GUI-only affair — so running one headless dies on an unrecognised option
+ * before it does any work:
+ *
+ *   Exception in thread "main" joptsimple.UnrecognizedOptionException:
+ *   'installClient' is not a recognized option
+ *
+ * It does not need to run. Everything it would do to a client is declared in
+ * the `install_profile.json` it carries: `versionInfo` is the version profile
+ * verbatim, and the universal jar it would copy into the libraries folder is
+ * sitting in the zip beside it. Both are lifted out here.
+ */
+async function installLegacyForge(
+  profile: LegacyInstallProfile,
+  jarBytes: Buffer,
+  label: string,
+  minecraftVersion: string
+): Promise<string> {
+  const info = profile.versionInfo
+
+  /*
+   * The universal jar is the one artifact never published to a maven
+   * repository — only `-universal.jar` is, under a name the profile does not
+   * ask for — so copying it out is the whole job. It lands where the library
+   * entry points, and the downloader then leaves that file alone.
+   */
+  const universal = new AdmZip(jarBytes).getEntry(profile.install.filePath)
+  if (!universal) {
+    throw new LauncherError(
+      'LOADER_INSTALL_FAILED',
+      `${label} installer does not contain ${profile.install.filePath}`,
+      {
+        title: `The ${label} download is incomplete`,
+        message: `The ${label} installer for Minecraft ${minecraftVersion} arrived without the loader jar inside it. The download was most likely truncated or altered on the way.`,
+        actions: ['Try again — a fresh download usually arrives intact', `Or pick a different ${label} build`]
+      }
+    )
+  }
+
+  const target = join(librariesRoot(), ...mavenToPath(profile.install.path).split('/'))
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, universal.getData())
+
+  /*
+   * `clientreq: false` marks a library only the dedicated server needs. Left
+   * in, they are downloaded and put on the client's classpath for nothing.
+   */
+  const libraries = ((info.libraries ?? []) as LegacyLibrary[])
+    .filter((library) => library.clientreq !== false)
+    .map((library) => (library.url ? { ...library, url: modernizeMavenUrl(library.url) } : library))
+
+  const dir = ensureDir(versionDir(info.id))
+  await writeFile(join(dir, `${info.id}.json`), JSON.stringify({ ...info, libraries }, null, 2), 'utf8')
+
+  log.info(`installed ${label} profile ${info.id} from the installer jar (legacy format)`)
+  return info.id
+}
+
 /**
  * The Forge and NeoForge installers run library patching steps that only their
  * own code knows how to perform, so the launcher runs the official installer in
@@ -137,6 +244,13 @@ async function runInstallerJar(
   task: DownloadTask,
   minecraftVersion: string
 ): Promise<string> {
+  task.setPhase('loader', `Downloading the ${label} installer`)
+  const jarBytes = await getBuffer(installerUrl, { timeoutMs: 120_000, retries: 2 })
+
+  // Old builds are unpacked here rather than run; see installLegacyForge.
+  const legacy = readLegacyProfile(jarBytes)
+  if (legacy) return await installLegacyForge(legacy, jarBytes, label, minecraftVersion)
+
   const before = new Set(await listInstalledVersionIds())
 
   /*
@@ -146,9 +260,6 @@ async function runInstallerJar(
    */
   task.setPhase('libraries', `Preparing Minecraft ${minecraftVersion} for ${label}`)
   const vanilla = await installVersion(minecraftVersion, { task, skipAssets: true })
-
-  task.setPhase('loader', `Downloading the ${label} installer`)
-  const jarBytes = await getBuffer(installerUrl, { timeoutMs: 120_000, retries: 2 })
 
   const workDir = join(tmpdir(), `nexuscraft-${label.toLowerCase()}-${Date.now()}`)
   await mkdir(workDir, { recursive: true })

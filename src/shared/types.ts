@@ -1095,6 +1095,63 @@ export interface ServerInvite {
 }
 
 /** Everything needed to advertise a hosted server somewhere. */
+/**
+ * The result of asking a machine outside the network to try the server.
+ *
+ * Distinct from `ServerShareDetails.reachable`, which is the same question
+ * asked from inside the house and therefore cannot answer it.
+ */
+export interface OutsideCheck {
+  reachable: boolean
+  address: string | null
+  note: string
+  motd: string | null
+  players: string | null
+  version: string | null
+}
+
+/** Which generator made a saved design. */
+/**
+ * Every kind of thing a generator can make.
+ *
+ * An array rather than a union, because the runtime schema needs the same list
+ * and a second copy of it is a copy that falls behind. Adding loot to the union
+ * alone left the schema rejecting every attempt to save one, which reached the
+ * screen as "nothing saved yet" rather than as an error naming the problem.
+ */
+export const CREATION_KINDS = [
+  'banner',
+  'icon',
+  'motd',
+  'logo',
+  'firework',
+  'item',
+  'datapack',
+  'loot',
+  'advancement',
+  'mapart',
+  'resourcepack'
+] as const
+
+export type CreationKind = (typeof CREATION_KINDS)[number]
+
+/**
+ * Something designed in the launcher and kept.
+ *
+ * `data` is opaque on purpose. A banner and a firework share nothing but being
+ * JSON, and a library that understood each shape would need editing every time
+ * a generator changed - so the screen that saved it is the one that reads it.
+ */
+export interface SavedCreation {
+  id: string
+  kind: CreationKind
+  name: string
+  data: unknown
+  /** A small PNG preview, where the generator can make one cheaply. */
+  thumbnail: string | null
+  savedAt: number
+}
+
 export interface ServerShareDetails {
   /** What people outside the network type in, once the port is forwarded. */
   publicAddress: string | null

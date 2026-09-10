@@ -37,24 +37,36 @@ export interface BundledMod {
     loader: string
     minecraftVersion: string
     /** Names a lucide icon the card should draw. */
-    icon: 'ghost' | 'flame'
+    icon: 'ghost' | 'flame' | 'eye'
     /** True when the mod wants a local model, which changes what the card says. */
     wantsModel: boolean
+    /**
+     * Other jars this mod cannot run without, copied in alongside it.
+     *
+     * The voice library is the reason this exists. It is 56MB, it does nothing
+     * on its own, and both companions need it — so it is not a card in the Mods
+     * tab that a player has to know to press. It arrives with whichever of them
+     * they install, and installing the second one simply overwrites an
+     * identical file.
+     */
+    alongside?: string[]
 }
 
 export const BUNDLED_MODS: BundledMod[] = [
     {
         id: 'hollow',
-        name: 'Hollow',
+        name: 'Amos',
         jarName: 'hollow.jar',
         blurb:
-            'A companion that is genuinely useful, and stays that way for a while. It talks, it fetches you ' +
-            'materials, and it will not give you diamonds. Over a fortnight of play it stops being helpful. ' +
-            'Runs on a model on this machine — nothing is sent anywhere.',
+            'Something is in a crate near where you woke up, asking to be let out. It says its name is Amos, ' +
+            'it hands you a lamp, and it is good company — for a while. Over a fortnight of play it stops ' +
+            'being helpful, then stops following, then stops talking. Nights are genuinely dark, and its ' +
+            'face is the only thing in them giving off light.',
         loader: 'fabric',
         minecraftVersion: '1.21.11',
         icon: 'ghost',
-        wantsModel: true
+        wantsModel: true,
+        alongside: ['nexusvoice.jar']
     },
     {
         id: 'ember',
@@ -67,6 +79,21 @@ export const BUNDLED_MODS: BundledMod[] = [
         loader: 'fabric',
         minecraftVersion: '1.21.11',
         icon: 'flame',
+        wantsModel: false,
+        alongside: ['nexusvoice.jar']
+    },
+    {
+        id: 'vigil',
+        name: 'Vigil',
+        jarName: 'vigil.jar',
+        blurb:
+            'Something follows you home. It cannot move while anybody is looking at it — really cannot, the ' +
+            'server checks where your head is pointed — so it crosses the room in the moment you turn to mine. ' +
+            'It never attacks and cannot be killed. Hold your eyes on it for nine seconds and it gives up for ' +
+            'the night.',
+        loader: 'fabric',
+        minecraftVersion: '1.21.11',
+        icon: 'eye',
         wantsModel: false
     }
 ]
@@ -244,6 +271,26 @@ export async function installBundledMod(
     const mods = instanceSubdir(instance, 'mods')
     await mkdir(mods, { recursive: true })
     await copyFile(bundledJar(mod), join(mods, mod.jarName))
+
+    /*
+     * And anything it cannot run without.
+     *
+     * Missing this is not a subtle failure: Fabric refuses to load a mod whose
+     * declared dependency is absent, and the player is shown a loader error
+     * naming a mod they have never heard of.
+     */
+    for (const needed of mod.alongside ?? []) {
+        const from = app.isPackaged
+            ? join(process.resourcesPath, needed)
+            : join(app.getAppPath(), 'resources', needed)
+
+        if (!existsSync(from)) {
+            log.warn(`${mod.name} needs ${needed} and this build does not ship it`)
+            continue
+        }
+        await copyFile(from, join(mods, needed))
+        log.info(`installed ${needed} for ${mod.name}`)
+    }
 
     let wroteConfig = false
     const local = mod.wantsModel ? await findLocalModel() : null

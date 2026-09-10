@@ -9,6 +9,7 @@
  * this map, and refuses to run one whose payload fails validation.
  */
 import { z } from 'zod'
+import { CREATION_KINDS } from './types'
 import { IPC_CHANNELS, EVENT_CHANNELS, type IpcChannel, type EventChannel } from './channels'
 
 export { IPC_CHANNELS, EVENT_CHANNELS }
@@ -40,6 +41,107 @@ export const safeSegment = z
   })
 
 const loaderId = z.enum(['vanilla', 'fabric', 'forge', 'neoforge', 'quilt'])
+
+/*
+ * A rendered PNG on its way to disk.
+ *
+ * Generous, because a listing image is a real picture rather than a 20x40
+ * banner - but bounded, since this crosses a process boundary and arrives as a
+ * string. The prefix is checked here so the main process is never handed a
+ * data URL claiming to be something else.
+ */
+const pngDataUrl = z
+  .string()
+  .max(12 * 1024 * 1024)
+  .refine((v) => v.startsWith('data:image/png;base64,'), {
+    message: 'must be a PNG data URL'
+  })
+
+/** A dye or pattern name, which the shared banner module then checks properly. */
+const bannerWord = z
+  .string()
+  .min(1)
+  .max(48)
+  .regex(/^[a-z_]+$/, 'must be a lowercase identifier')
+
+const bannerDesign = z.object({
+  name: z.string().max(48),
+  base: bannerWord,
+  layers: z
+    .array(z.object({ pattern: bannerWord, colour: bannerWord }))
+    .max(6)
+})
+
+/**
+ * Every kind of thing a generator can make.
+ *
+ * Taken from the same array the TypeScript type is built from, so the two
+ * cannot disagree. They did: this was written out separately for `variations`,
+ * `creations:list` and `creations:save`, so adding loot updated the type and
+ * two of the three schemas - and the third rejected every attempt to save one,
+ * which reached the screen as "nothing saved yet".
+ */
+const creationKind = z.enum(CREATION_KINDS)
+
+/**
+ * A resource pack draft, checked in full before any of it is written.
+ *
+ * What comes through here ends up inside a zip that is then handed out over
+ * http to whoever joins the server, so every field is bounded: the counts, the
+ * lengths, and the images by the existing png rule.
+ */
+const resourcePackDraft = z.object({
+  name: z.string().min(1).max(64),
+  description: z.string().max(256),
+  items: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(64),
+        base: z.string().min(1).max(64),
+        image: pngDataUrl,
+        replaces: z.boolean()
+      })
+    )
+    .max(64),
+  sounds: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(64),
+        event: z.string().min(1).max(96),
+        file: path,
+        stream: z.boolean()
+      })
+    )
+    .max(32),
+  textures: z
+    .array(
+      z.object({
+        // Checked again in the builder, because this one decides where a file
+        // lands inside a zip that is then handed to strangers.
+        /*
+         * Must start with a name, not a separator.
+         *
+         * Allowing a leading slash let "/etc/passwd" through: every character
+         * in it is legal, so the shape has to say a path begins with a segment.
+         * It could not have escaped the assets folder - the builder strips the
+         * slash - but it would have quietly created textures/etc/passwd.png,
+         * and a rule that only half holds is one nobody can reason about.
+         */
+        path: z
+          .string()
+          .min(1)
+          .max(200)
+          .regex(/^[a-z0-9][a-z0-9_\-]*(\/[a-z0-9][a-z0-9_\-]*)*$/)
+          .refine((v) => !v.includes('..'), { message: 'no traversal' }),
+        image: pngDataUrl
+      })
+    )
+    .max(512),
+  panorama: z.array(pngDataUrl).length(6).nullable(),
+  logo: pngDataUrl.nullable()
+})
 
 export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   /* ---------------------------------------------------------------- system */
@@ -363,7 +465,7 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     onlineMode: z.boolean(),
     reachability: z.enum(['local', 'network', 'anyone']),
     memoryMb: z.number().int().min(512).max(16384),
-    motd: z.string().max(59),
+    motd: z.string().max(250),
     difficulty: z.enum(['peaceful', 'easy', 'normal', 'hard']),
     gameMode: z.enum(['survival', 'creative', 'adventure']),
     maxPlayers: z.number().int().min(1).max(100),
@@ -543,6 +645,256 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   'servers:ping': z.object({ id }),
   'servers:pingAll': z.void(),
   'servers:import': z.object({ instanceId: id }),
+
+  'host:checkOutside': z.object({ id }),
+
+  /* --------------------------------------------------------------- banners */
+
+  'banners:brains': z.void(),
+  'banners:design': z.object({
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    current: z.unknown().optional()
+  }),
+  'banners:designIcon': z.object({
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    current: z.unknown().optional()
+  }),
+  'banners:designMotd': z.object({
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    current: z.unknown().optional()
+  }),
+  'banners:designLogo': z.object({
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    current: z.unknown().optional()
+  }),
+  'banners:designFirework': z.object({
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    current: z.unknown().optional()
+  }),
+  'banners:designItem': z.object({
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    current: z.unknown().optional()
+  }),
+  'banners:applyMotd': z.object({
+    serverId: id,
+    design: z.object({ line1: z.string().max(200), line2: z.string().max(200) })
+  }),
+  /*
+   * The command is built in the renderer from a design it already validated,
+   * so what crosses here is checked for shape rather than rebuilt: it must be
+   * a give and nothing else, and it may not carry a newline that would turn
+   * one console line into two.
+   */
+  'banners:designRecipes': z.object({
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    current: z.unknown().optional()
+  }),
+  /*
+   * A wall of maps, as the colour bytes for each one.
+   *
+   * Bounded at sixteen maps because every one of them is 16384 numbers going
+   * across the IPC boundary - a four by four wall is already a quarter of a
+   * million, and nobody hangs more than that on a wall.
+   */
+  'banners:designAdvancements': z.object({
+    prompt: z.string().min(1).max(2000),
+    companionId: id.optional(),
+    current: z.unknown().optional()
+  }),
+  'banners:installAdvancements': z.object({ serverId: id, pack: z.unknown() }),
+  'banners:installAdvancementsWorld': z.object({
+    instanceId: id,
+    worldFolder: z.string().min(1).max(255),
+    pack: z.unknown()
+  }),
+  'banners:exportAdvancements': z.object({
+    path,
+    pack: z.unknown(),
+    minecraftVersion: z.string().min(1).max(32)
+  }),
+
+  'mapart:writeServer': z.object({
+    serverId: id,
+    tiles: z.array(z.array(z.number().int().min(0).max(255)).length(16384)).min(1).max(16),
+    across: z.number().int().min(1).max(4),
+    down: z.number().int().min(1).max(4)
+  }),
+
+  'mapart:write': z.object({
+    instanceId: id,
+    worldFolder: z.string().min(1).max(255),
+    tiles: z.array(z.array(z.number().int().min(0).max(255)).length(16384)).min(1).max(16),
+    across: z.number().int().min(1).max(4),
+    down: z.number().int().min(1).max(4)
+  }),
+
+  /* ------------------------------------------------------- resource packs */
+
+  'resourcepack:build': z.object({
+    draft: resourcePackDraft,
+    minecraftVersion: z.string().min(1).max(32),
+    path
+  }),
+  'resourcepack:install': z.object({ instanceId: id, draft: resourcePackDraft }),
+  'resourcepack:serve': z.object({
+    serverId: id,
+    draft: resourcePackDraft,
+    port: z.number().int().min(1024).max(65535),
+    required: z.boolean(),
+    address: z.string().max(255).optional()
+  }),
+  'resourcepack:hostStatus': z.void(),
+  'resourcepack:stopHost': z.void(),
+  'resourcepack:attach': z.object({
+    serverId: id,
+    url: z.string().max(2048).startsWith('http'),
+    sha1: z.string().regex(/^[0-9a-f]{40}$/),
+    required: z.boolean()
+  }),
+  'resourcepack:detach': z.object({ serverId: id }),
+  'resourcepack:openPort': z.object({ port: z.number().int().min(1024).max(65535) }),
+  'resourcepack:closePort': z.object({ port: z.number().int().min(1024).max(65535) }),
+  'resourcepack:portStatus': z.object({ port: z.number().int().min(1024).max(65535) }),
+  'resourcepack:textures': z.object({ minecraftVersion: z.string().min(1).max(32) }),
+  'resourcepack:texture': z.object({
+    minecraftVersion: z.string().min(1).max(32),
+    path: z.string().min(1).max(200).regex(/^[a-z0-9][a-z0-9_\-]*(\/[a-z0-9][a-z0-9_\-]*)*$/)
+  }),
+  'resourcepack:open': z.object({ file: path }),
+  'resourcepack:remember': z.object({ draft: resourcePackDraft }),
+  'resourcepack:recall': z.void(),
+  'banners:designRecipe': z.object({
+    prompt: z.string().min(1).max(2000),
+    companionId: id.optional(),
+    current: z.unknown().optional()
+  }),
+
+  /* --------------------------------------------------------- server site */
+
+  'site:config': z.object({ serverId: id }),
+  'site:save': z.object({
+    config: z.object({
+      serverId: id,
+      /*
+       * Half-typed is a normal state, not a rejected one.
+       *
+       * These fields save when you click away from them, so demanding a
+       * non-empty name meant adding a vote row and then touching anything
+       * else was refused outright - the launcher reported "that request was
+       * not valid" at somebody who had done nothing wrong. Incomplete rows
+       * are accepted here and left off the page when it renders.
+       */
+      title: z.string().max(64),
+      blurb: z.string().max(280),
+      joinAddress: z.string().max(255),
+      votes: z
+        .array(
+          z.object({
+            name: z.string().max(48),
+            /*
+             * Empty, or http(s) and nothing else.
+             *
+             * The page renders these straight into an anchor, so a
+             * `javascript:` url would be a script running for whoever opened
+             * it. Checked as a real scheme rather than a "starts with http"
+             * prefix, which `httpevil:` would have satisfied.
+             */
+            url: z
+              .string()
+              .max(2048)
+              .refine((v) => v === '' || /^https?:\/\//i.test(v), {
+                message: 'must be an http or https link'
+              })
+          })
+        )
+        .max(12),
+      accent: z.string().regex(/^#[0-9a-fA-F]{6}$/)
+    })
+  }),
+  'site:start': z.object({ serverId: id, port: z.number().int().min(1024).max(65535) }),
+  'site:stop': z.void(),
+  'site:status': z.void(),
+  'site:votifierPort': z.object({
+    serverId: id,
+    open: z.boolean()
+  }),
+  'site:votifierInfo': z.object({ serverId: id }),
+
+  'banners:designLoot': z.object({
+    prompt: z.string().min(1).max(2000),
+    companionId: id.optional(),
+    current: z.unknown().optional()
+  }),
+  'banners:installLoot': z.object({ serverId: id, pack: z.unknown() }),
+  'banners:installLootWorld': z.object({
+    instanceId: id,
+    worldFolder: z.string().min(1).max(255),
+    pack: z.unknown()
+  }),
+  'banners:exportLoot': z.object({
+    path,
+    pack: z.unknown(),
+    minecraftVersion: z.string().min(1).max(32)
+  }),
+  'banners:installRecipes': z.object({ serverId: id, pack: z.unknown() }),
+  'banners:installRecipesWorld': z.object({
+    instanceId: id,
+    worldFolder: z.string().min(1).max(255),
+    pack: z.unknown()
+  }),
+  'banners:exportRecipes': z.object({
+    path,
+    pack: z.unknown(),
+    minecraftVersion: z.string().min(1).max(32)
+  }),
+
+  'banners:variations': z.object({
+    kind: creationKind,
+    prompt: z.string().min(1).max(500),
+    companionId: id,
+    count: z.number().int().min(2).max(6)
+  }),
+
+  /* ------------------------------------------------------------- library */
+
+  'creations:list': z.object({
+    kind: creationKind.optional()
+  }),
+  'creations:save': z.object({
+    id: id.nullable().optional(),
+    kind: creationKind,
+    name: z.string().min(1).max(60),
+    data: z.unknown(),
+    thumbnail: pngDataUrl.nullable().optional()
+  }),
+  'creations:delete': z.object({ id }),
+  'creations:rename': z.object({ id, name: z.string().min(1).max(60) }),
+
+  'banners:giveDesigned': z.object({
+    serverId: id,
+    command: z
+      .string()
+      .min(1)
+      .max(8000)
+      .refine((v) => /^give /.test(v) && !/[\r\n]/.test(v), {
+        message: 'must be a single give command'
+      })
+  }),
+  'banners:icon': z.object({ serverId: id, png: pngDataUrl }),
+  'banners:save': z.object({ path, png: pngDataUrl }),
+  'banners:give': z.object({
+    serverId: id,
+    /* A selector or a name, both of which the server itself validates. */
+    target: z.string().min(1).max(64),
+    design: bannerDesign
+  }),
 
   /* ---------------------------------------------------------------- skins */
   'skins:list': z.void(),

@@ -34,8 +34,18 @@ import { DropZone } from '../components/DropZone'
 import { formatBytes, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
 import { BrowseTab } from './Browse'
 import { DataPacksTab } from './DataPacks'
+import { MapArtTab } from './MapArt'
+import { PackMakerTab } from './PackMaker'
 
-type Tab = 'browse' | 'mods' | 'datapacks' | 'resourcepacks' | 'shaderpacks' | 'screenshots'
+type Tab =
+  | 'browse'
+  | 'mods'
+  | 'datapacks'
+  | 'resourcepacks'
+  | 'shaderpacks'
+  | 'mapart'
+  | 'packmaker'
+  | 'screenshots'
 
 export function ModsScreen(): JSX.Element {
   const instance = useStore(focusedInstance)
@@ -101,6 +111,12 @@ export function ModsScreen(): JSX.Element {
         <button className={`tab ${tab === 'shaderpacks' ? 'active' : ''}`} onClick={() => setTab('shaderpacks')}>
           Shaders
         </button>
+        <button className={`tab ${tab === 'mapart' ? 'active' : ''}`} onClick={() => setTab('mapart')}>
+          Map art
+        </button>
+        <button className={`tab ${tab === 'packmaker' ? 'active' : ''}`} onClick={() => setTab('packmaker')}>
+          Make a pack
+        </button>
         <button className={`tab ${tab === 'screenshots' ? 'active' : ''}`} onClick={() => setTab('screenshots')}>
           Screenshots
         </button>
@@ -124,6 +140,8 @@ export function ModsScreen(): JSX.Element {
       {tab === 'datapacks' && <DataPacksTab instance={instance} />}
       {tab === 'resourcepacks' && <ContentTab instance={instance} kind="resourcepacks" />}
       {tab === 'shaderpacks' && <ContentTab instance={instance} kind="shaderpacks" />}
+      {tab === 'mapart' && <MapArtTab instance={instance} />}
+      {tab === 'packmaker' && <PackMakerTab instance={instance} />}
       {tab === 'screenshots' && <ScreenshotsTab instance={instance} />}
     </>
   )
@@ -144,15 +162,33 @@ const ISSUE_LABELS: Record<string, string> = {
 
 function ModsTab({ instance }: { instance: Instance }): JSX.Element {
   const pushToast = useStore((s) => s.pushToast)
+
+  /*
+   * The update check lives in the store, not here.
+   *
+   * This component is unmounted the moment you switch tabs, and it used to hold
+   * the check's state - so a check that was running lost its spinner, and the
+   * result that arrived afterwards was written into a component that no longer
+   * existed and silently discarded. From the outside that looked exactly like
+   * the checker stopping halfway through.
+   */
+  const check = useStore((s) => s.modChecks[instance.id])
+  const startCheck = useStore((s) => s.checkModUpdates)
+  const startSweep = useStore((s) => s.checkAllModUpdates)
+  const dropUpdate = useStore((s) => s.removeModUpdate)
+  const dismissCheckError = useStore((s) => s.dismissModCheckError)
+  const checkingAll = useStore((s) => s.sweeping)
+  const sweepResult = useStore((s) => s.sweepResult)
+  const dismissSweep = useStore((s) => s.dismissSweepResult)
+
+  const updates = check?.updates ?? null
+  const checking = check?.checking ?? false
+
   const [mods, setMods] = useState<ModInfo[] | null>(null)
   const [search, setSearch] = useState('')
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [deleting, setDeleting] = useState<ModInfo | null>(null)
   const [busy, setBusy] = useState(false)
-  const [updates, setUpdates] = useState<ModUpdate[] | null>(null)
-  const [checkingAll, setCheckingAll] = useState(false)
-  const [sweepResult, setSweepResult] = useState<string | null>(null)
-  const [checking, setChecking] = useState(false)
   const [fixing, setFixing] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
   const [rollbacks, setRollbacks] = useState<ModRollback[]>([])
@@ -269,47 +305,18 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
    * there; it was simply nowhere near the mods.
    */
   async function checkEveryInstance(): Promise<void> {
-    setCheckingAll(true)
-    setError(null)
-    try {
-      const sweep = await api.mods.checkAllNow()
-      const skipped = sweep.skipped > 0 ? `, ${sweep.skipped} skipped while running` : ''
-      setSweepResult(
-        sweep.found === 0
-          ? `Everything is up to date across ${sweep.checked} instance${sweep.checked === 1 ? '' : 's'}${skipped}.`
-          : `${sweep.found} update${sweep.found === 1 ? '' : 's'} found across ${sweep.checked} instances` +
-            (sweep.installed > 0 ? `, ${sweep.installed} installed` : '') +
-            (sweep.heldBack > 0 ? `, ${sweep.heldBack} held for review` : '') +
-            `${skipped}.`
-      )
-      // This instance may have been one of them.
-      await checkUpdates()
-    } catch (err) {
-      setError(toPayload(err))
-    } finally {
-      setCheckingAll(false)
-    }
+    await startSweep()
   }
 
   async function checkUpdates(): Promise<void> {
-    setChecking(true)
-    setError(null)
-    try {
-      const found = await api.mods.checkUpdates(instance.id)
-      setUpdates(found)
-      if (found.length === 0) pushToast({ kind: 'success', title: 'Everything is up to date' })
-    } catch (err) {
-      setError(toPayload(err))
-    } finally {
-      setChecking(false)
-    }
+    await startCheck(instance.id)
   }
 
   async function applyUpdate(update: ModUpdate): Promise<void> {
     setUpdating(update.fileName)
     try {
       await api.mods.applyUpdate(instance.id, update)
-      setUpdates((current) => (current ?? []).filter((u) => u.fileName !== update.fileName))
+      dropUpdate(instance.id, update.fileName)
       await load()
       await loadRollbacks()
     } catch (err) {
@@ -427,7 +434,7 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       {sweepResult && (
         <div className="panel panel-pad mb-16 row between items-center">
           <span className="small">{sweepResult}</span>
-          <button className="btn btn-ghost btn-sm" onClick={() => setSweepResult(null)}>
+          <button className="btn btn-ghost btn-sm" onClick={() => dismissSweep()}>
             Dismiss
           </button>
         </div>
@@ -436,6 +443,12 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       {error && (
         <div className="mb-16">
           <ErrorView error={error} onDismiss={() => setError(null)} />
+        </div>
+      )}
+
+      {check?.error && (
+        <div className="mb-16">
+          <ErrorView error={check.error} onDismiss={() => dismissCheckError(instance.id)} />
         </div>
       )}
 

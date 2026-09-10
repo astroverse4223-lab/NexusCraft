@@ -14,6 +14,15 @@ export interface LlmConfig {
   temperature?: number
   /** Milliseconds before a single completion is abandoned. */
   timeoutMs?: number
+  /**
+   * A ceiling on the answer, for callers that want a short one.
+   *
+   * Left unset for conversation, where the provider's own default is right. It
+   * matters for a one-shot structured answer from a reasoning model: uncapped,
+   * GLM keeps thinking well past the timeout and the request is abandoned with
+   * nothing to show; capped, it answers in seconds.
+   */
+  maxTokens?: number
 }
 
 export interface ToolSchema {
@@ -363,6 +372,7 @@ export async function chat(
     model: config.model,
     messages,
     temperature: config.temperature ?? 0.7,
+    ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
     /*
      * Only sent to models known to support it. An endpoint that has never heard
      * of the field would reject the whole request, and every hosted provider

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import AdmZip from 'adm-zip'
+import { packMcmeta } from '@shared/creations'
 import type { DataPackDefinition, DataPackOptionValues, Instance } from '@shared/types'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
@@ -35,18 +36,121 @@ const NAMESPACE = 'nexuscraft'
  * jar is not on disk to read it from. Deliberately generous: refusing a pack
  * that would have worked is worse than letting Minecraft reject it itself.
  */
-function guessPackFormat(versionId: string): number {
+/**
+ * Exported so a generated pack can use the same table.
+ *
+ * A wrong pack_format is the worst kind of wrong: the game loads the pack,
+ * ignores everything in it, and says so only in a log line nobody reads.
+ */
+/**
+ * The data pack format a version really uses, read from its own jar.
+ *
+ * Guessing from the version number was wrong for two of the versions actually
+ * installed here: 1.21.11 was guessed at 88 and is 94, and 26.2 was guessed at
+ * 94 and is 107. A pack written with the wrong number declares support for a
+ * version of the format the game is not running, and the game is entitled to
+ * refuse it - so the jar is asked first and the guess is only the fallback for
+ * a version that has not been downloaded.
+ */
+export function packFormatOf(versionId: string, kind: 'data' | 'resource' = 'data'): number {
+  /*
+   * Inside the try, because working out where the jar would be can itself
+   * throw - an unknown version, or a data root not yet set up. This function
+   * promises a number and falls back to a guess for exactly those cases, so
+   * letting one escape would take the whole pack build down instead.
+   */
+  try {
+    const jar = versionJarPath(versionId)
+
+    if (existsSync(jar)) {
+      const entry = new AdmZip(jar).getEntry('version.json')
+
+      if (entry) {
+        const meta = JSON.parse(entry.getData().toString('utf8')) as {
+          pack_version?: number | Record<string, number>
+        }
+
+        const version = meta.pack_version
+
+        /*
+         * The two are not the same number and never have been.
+         *
+         * 26.2 is resource 88 and data 107; 1.21.1 is resource 34 and data 48.
+         * Older jars state one number for both, newer ones split it into
+         * `<kind>_major` - so all three shapes are read rather than assumed.
+         */
+        const found =
+          typeof version === 'number'
+            ? version
+            : (version?.[`${kind}_major`] ?? version?.[kind])
+
+        if (typeof found === 'number' && found > 0) return found
+      }
+    }
+  } catch (err) {
+    log.warn(`could not read pack_version from ${versionId}.jar: ${(err as Error).message}`)
+  }
+
+  return kind === 'resource' ? guessResourceFormat(versionId) : guessPackFormat(versionId)
+}
+
+/**
+ * A rough resource pack format, for a version whose jar is not on disk.
+ *
+ * Every number below was read out of a real `version.json` rather than
+ * remembered: 1.20.1 is 15, 1.21.1 is 34, 1.21.11 is 75, 26.1.2 is 84 and
+ * 26.2 is 88.
+ */
+export function guessResourceFormat(versionId: string): number {
   const parts = versionId.split('.').map((n) => parseInt(n, 10))
 
-  // Year-based versions (26.1, 26.2) are all newer than anything in the table.
-  if (parts[0] >= 26) return 94
+  if (parts[0] >= 26) {
+    if (parts[0] > 26) return 88
+    return (parts[1] ?? 0) >= 2 ? 88 : 84
+  }
+
+  if (parts[0] === 1) {
+    const minor = parts[1] ?? 0
+    const patch = parts[2] ?? 0
+
+    if (minor >= 22) return 75
+    if (minor === 21) {
+      if (patch >= 9) return 75
+      if (patch >= 4) return 46
+      if (patch >= 2) return 42
+      return 34
+    }
+    if (minor === 20) {
+      if (patch >= 5) return 32
+      if (patch >= 2) return 18
+      return 15
+    }
+    if (minor === 19) return 9
+    if (minor === 18) return 8
+  }
+
+  return 15
+}
+
+export function guessPackFormat(versionId: string): number {
+  const parts = versionId.split('.').map((n) => parseInt(n, 10))
+
+  /*
+   * Year-based versions. Measured, not assumed: 26.1.2 is 101 and 26.2 is 107,
+   * so anything newer is at least that and the number climbs quickly.
+   */
+  if (parts[0] >= 26) {
+    if (parts[0] > 26) return 107
+    return (parts[1] ?? 0) >= 2 ? 107 : 101
+  }
 
   if (parts[0] === 1) {
     const minor = parts[1] ?? 0
     const patch = parts[2] ?? 0
     if (minor >= 22) return 94
     if (minor === 21) {
-      if (patch >= 9) return 88
+      // 1.21.11's own jar says 94, where this used to say 88.
+      if (patch >= 9) return 94
       if (patch >= 5) return 71
       if (patch >= 2) return 57
       return 48
@@ -77,20 +181,7 @@ function guessPackFormat(versionId: string): number {
  * `pack_format` is still written for older versions that only understand that.
  */
 function packMetadata(format: number, name: string): Record<string, unknown> {
-  const description = `${name} — generated by NexusCraft Launcher`
-
-  if (format <= 81) {
-    return { pack: { pack_format: format, description } }
-  }
-
-  return {
-    pack: {
-      pack_format: format,
-      min_format: format,
-      max_format: format,
-      description
-    }
-  }
+  return packMcmeta(format, `${name} — generated by NexusCraft Launcher`)
 }
 
 export async function readPackFormat(instance: Instance): Promise<{ format: number; source: string }> {

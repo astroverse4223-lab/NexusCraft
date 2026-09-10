@@ -1,4 +1,6 @@
+import { type ResourcePackDraft, emptyDraft } from '@shared/resourcePacks'
 import { create } from 'zustand'
+import type { AdvancementPack } from '@shared/advancements'
 import type {
   Account,
   AppSettings,
@@ -9,8 +11,18 @@ import type {
   Instance,
   LauncherErrorPayload,
   LaunchState,
+  ModUpdate,
   ServerStatus
 } from '@shared/types'
+import type { BannerDesign } from '@shared/banners'
+import type {
+  FireworkDesign,
+  ItemDesign,
+  LogoDesign,
+  MotdDesign,
+  RecipePack,
+  LootPack
+} from '@shared/creations'
 import { api, subscribe, toPayload, type AppInfo } from '../api'
 
 export type Route =
@@ -28,6 +40,24 @@ export type Route =
   | 'settings'
   | 'account'
   | 'companion'
+  | 'banners'
+  | 'icon'
+  | 'generators'
+
+/**
+ * A mod update check, held outside the view that started it.
+ *
+ * Kept per instance because that is how the check is scoped, and because
+ * somebody who starts one, switches instance to start another, and comes back
+ * should find both of them where they left them.
+ */
+export interface ModUpdateCheck {
+  checking: boolean
+  updates: ModUpdate[] | null
+  error: LauncherErrorPayload | null
+  /** When the last finished check completed, for "checked 2m ago". */
+  at: number | null
+}
 
 export interface ToastItem {
   id: number
@@ -59,6 +89,67 @@ interface State {
   downloads: Record<string, DownloadProgress>
   launches: Record<string, LaunchState>
   serverStatuses: Record<string, ServerStatus>
+  modChecks: Record<string, ModUpdateCheck>
+  sweeping: boolean
+  sweepResult: string | null
+
+  /*
+   * What is on the drawing boards, kept out here rather than in the screens.
+   *
+   * Both are unmounted the moment another tab is opened, so anything held in a
+   * component is gone by the time the user comes back - which is exactly what
+   * happened: a banner someone had spent a while getting right vanished on a
+   * trip to the Servers tab and came back as a plain white flag.
+   */
+  bannerDesign: BannerDesign | null
+  bannerTitle: string
+  bannerTagline: string
+  /** The icon being edited, as raw RGBA. 64x64x4, or null before anything is drawn. */
+  iconPixels: Uint8ClampedArray | null
+  iconName: string
+
+  /*
+   * The Generators tab's five designs, and which one is open.
+   *
+   * Out here for the same reason as the banner: the screen is unmounted the
+   * moment another tab is opened, so a design held in the component is gone by
+   * the time anybody comes back to it. Null means "not designed yet", which the
+   * screen turns into its own starting point.
+   */
+  genSection: string
+  genPrompt: string
+  genMotd: MotdDesign | null
+  genLogo: LogoDesign | null
+  genFirework: FireworkDesign | null
+  genItem: ItemDesign | null
+  genRecipes: RecipePack | null
+  genLoot: LootPack | null
+  genAdvancements: AdvancementPack | null
+
+  /*
+   * Map art, kept out here rather than in the tab.
+   *
+   * The tab unmounts the moment you look at anything else, and a converted
+   * picture is a minute of somebody's work - losing it on a stray click is
+   * the same complaint the generators had.
+   */
+  /*
+   * The resource pack being put together.
+   *
+   * Out here for the same reason the map art is: the tab unmounts the moment
+   * you look at anything else, and a pack with six panorama faces and a dozen
+   * textures in it is a long evening's work to lose to a stray click.
+   */
+  resourcePack: ResourcePackDraft
+
+  mapArt: {
+    image: string | null
+    across: number
+    down: number
+    dither: boolean
+    commands: string[]
+  }
+
   logs: GameLogLine[]
   toasts: ToastItem[]
 
@@ -78,6 +169,27 @@ interface State {
   showError: (err: unknown) => void
   dismissError: () => void
   setSigningIn: (value: boolean) => void
+
+  checkModUpdates: (instanceId: string) => Promise<void>
+  checkAllModUpdates: () => Promise<void>
+  removeModUpdate: (instanceId: string, fileName: string) => void
+  dismissModCheckError: (instanceId: string) => void
+  dismissSweepResult: () => void
+  setBannerDesign: (design: BannerDesign | null) => void
+  setBannerText: (patch: { title?: string; tagline?: string }) => void
+  setIconPixels: (pixels: Uint8ClampedArray | null) => void
+  setIconName: (name: string) => void
+  setGenSection: (section: string) => void
+  setGenPrompt: (prompt: string) => void
+  setGenMotd: (design: MotdDesign) => void
+  setGenLogo: (design: LogoDesign) => void
+  setGenFirework: (design: FireworkDesign) => void
+  setGenItem: (design: ItemDesign) => void
+  setGenRecipes: (pack: RecipePack) => void
+  setGenLoot: (pack: LootPack) => void
+  setGenAdvancements: (pack: AdvancementPack) => void
+  setMapArt: (next: Partial<State['mapArt']>) => void
+  setResourcePack: (next: Partial<ResourcePackDraft>) => void
 }
 
 let toastCounter = 0
@@ -100,6 +212,25 @@ export const useStore = create<State>((set, get) => ({
   downloads: {},
   launches: {},
   serverStatuses: {},
+  modChecks: {},
+  sweeping: false,
+  sweepResult: null,
+  bannerDesign: null,
+  bannerTitle: '',
+  bannerTagline: '',
+  iconPixels: null,
+  iconName: '',
+  genSection: 'motd',
+  genPrompt: '',
+  genMotd: null,
+  genLogo: null,
+  genFirework: null,
+  genItem: null,
+  genRecipes: null,
+  genLoot: null,
+  genAdvancements: null,
+  mapArt: { image: null, across: 1, down: 1, dither: true, commands: [] },
+  resourcePack: emptyDraft(),
   logs: [],
   toasts: [],
 
@@ -203,6 +334,200 @@ export const useStore = create<State>((set, get) => ({
 
   dismissError() {
     set({ errorModal: null })
+  },
+
+  /**
+   * Starts a check and leaves the answer in the store.
+   *
+   * Nothing in here touches component state, which is the entire point: the
+   * view that started it can unmount and remount freely, and the result lands
+   * in the same place either way.
+   */
+  async checkModUpdates(instanceId: string) {
+    const already = get().modChecks[instanceId]
+
+    // Already running for this instance. Starting a second would double the
+    // work and race the first one's result.
+    if (already?.checking) return
+
+    set((state) => ({
+      modChecks: {
+        ...state.modChecks,
+        [instanceId]: {
+          checking: true,
+          updates: already?.updates ?? null,
+          error: null,
+          at: already?.at ?? null
+        }
+      }
+    }))
+
+    try {
+      const updates = await api.mods.checkUpdates(instanceId)
+
+      set((state) => ({
+        modChecks: {
+          ...state.modChecks,
+          [instanceId]: { checking: false, updates, error: null, at: Date.now() }
+        }
+      }))
+
+      /*
+       * Said out loud, because the person who started this may be looking at
+       * a different screen by now - which is exactly the case that was broken.
+       */
+      if (updates.length === 0) {
+        get().pushToast({ kind: 'success', title: 'Everything is up to date' })
+      } else {
+        get().pushToast({
+          kind: 'info',
+          title: `${updates.length} update${updates.length === 1 ? '' : 's'} available`,
+          message: 'Mods & packs, on the Installed tab.'
+        })
+      }
+    } catch (err) {
+      set((state) => ({
+        modChecks: {
+          ...state.modChecks,
+          [instanceId]: {
+            checking: false,
+            updates: already?.updates ?? null,
+            error: toPayload(err),
+            at: null
+          }
+        }
+      }))
+    }
+  },
+
+  /** The same, for the sweep across every instance. */
+  async checkAllModUpdates() {
+    if (get().sweeping) return
+    set({ sweeping: true, sweepResult: null })
+
+    try {
+      const sweep = await api.mods.checkAllNow()
+      const skipped = sweep.skipped > 0 ? `, ${sweep.skipped} skipped while running` : ''
+
+      set({
+        sweepResult:
+          sweep.found === 0
+            ? `Everything is up to date across ${sweep.checked} instance${sweep.checked === 1 ? '' : 's'}${skipped}.`
+            : `${sweep.found} update${sweep.found === 1 ? '' : 's'} found across ${sweep.checked} instances` +
+              (sweep.installed > 0 ? `, ${sweep.installed} installed` : '') +
+              (sweep.heldBack > 0 ? `, ${sweep.heldBack} held for review` : '') +
+              `${skipped}.`
+      })
+
+      // This instance may well have been one of them.
+      const focused = get().focusedInstanceId
+      if (focused) await get().checkModUpdates(focused)
+    } catch (err) {
+      get().showError(err)
+    } finally {
+      set({ sweeping: false })
+    }
+  },
+
+  /**
+    * Drops one update from the list once it has been applied.
+    *
+    * Filtered in here rather than in the component, because updates are applied
+    * one after another in a loop and every iteration of that loop would
+    * otherwise be filtering the same list captured when the component rendered.
+    */
+  removeModUpdate(instanceId: string, fileName: string) {
+    set((state) => {
+      const current = state.modChecks[instanceId]
+      if (!current?.updates) return {}
+
+      return {
+        modChecks: {
+          ...state.modChecks,
+          [instanceId]: {
+            ...current,
+            updates: current.updates.filter((u) => u.fileName !== fileName)
+          }
+        }
+      }
+    })
+  },
+
+  setBannerDesign(design) {
+    set({ bannerDesign: design })
+  },
+
+  setBannerText(patch) {
+    set((state) => ({
+      bannerTitle: patch.title ?? state.bannerTitle,
+      bannerTagline: patch.tagline ?? state.bannerTagline
+    }))
+  },
+
+  setIconPixels(pixels) {
+    set({ iconPixels: pixels })
+  },
+
+  setIconName(name) {
+    set({ iconName: name })
+  },
+
+  setGenSection(section) {
+    set({ genSection: section })
+  },
+
+  setGenPrompt(prompt) {
+    set({ genPrompt: prompt })
+  },
+
+  setGenMotd(design) {
+    set({ genMotd: design })
+  },
+
+  setGenLogo(design) {
+    set({ genLogo: design })
+  },
+
+  setGenFirework(design) {
+    set({ genFirework: design })
+  },
+
+  setGenItem(design) {
+    set({ genItem: design })
+  },
+
+  setGenRecipes(pack) {
+    set({ genRecipes: pack })
+  },
+
+  setGenLoot(pack) {
+    set({ genLoot: pack })
+  },
+
+  setGenAdvancements(pack) {
+    set({ genAdvancements: pack })
+  },
+
+  setMapArt(next) {
+    set((state) => ({ mapArt: { ...state.mapArt, ...next } }))
+  },
+
+  setResourcePack(next) {
+    set((state) => ({ resourcePack: { ...state.resourcePack, ...next } }))
+  },
+
+  dismissSweepResult() {
+    set({ sweepResult: null })
+  },
+
+  dismissModCheckError(instanceId: string) {
+    set((state) => {
+      const current = state.modChecks[instanceId]
+      if (!current) return {}
+      return {
+        modChecks: { ...state.modChecks, [instanceId]: { ...current, error: null } }
+      }
+    })
   },
 
   setSigningIn(value) {

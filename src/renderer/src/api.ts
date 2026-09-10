@@ -1,4 +1,20 @@
+import type { AdvancementPack } from '@shared/advancements'
 import type { IpcChannel, EventChannel } from '@shared/ipc'
+import type { BannerBrain, BannerDesign } from '@shared/banners'
+import type { IconArt } from '@shared/icons'
+import type { BuiltPack, PackHostStatus, ResourcePackDraft } from '@shared/resourcePacks'
+import type { PackForwarding } from '@shared/resourcePacks'
+import type { TextureRecipe } from '@shared/textureRecipe'
+import type { SiteConfig, SiteStatus } from '@shared/serverSite'
+import type {
+  FireworkDesign,
+  ItemDesign,
+  LogoDesign,
+  MotdDesign,
+  RecipePack,
+  LootPack
+} from '@shared/creations'
+import type { OutsideCheck } from '@shared/types'
 import type {
   Account,
   AppSettings,
@@ -36,6 +52,8 @@ import type {
   DataPackInstallResult,
   ForeignInstanceInfo,
   InstalledDataPack,
+  CreationKind,
+  SavedCreation,
   Result,
   SavedServer,
   SavedSkin,
@@ -199,7 +217,7 @@ export interface BundledModStatus {
   id: string
   name: string
   blurb: string
-  icon: 'ghost' | 'flame'
+  icon: 'ghost' | 'flame' | 'eye'
   wantsModel: boolean
   /** What it needs, already phrased for the pill — "Fabric 1.21.11". */
   requires: string
@@ -504,6 +522,7 @@ export const api = {
     installCurseForge: (id: string, projectId: string, fileId: string, kind: string) =>
       call<ModrinthInstallResult>('host:installCurseForge', { id, projectId, fileId, kind }),
     share: (id: string) => call<ServerShareDetails>('host:share', { id }),
+    checkOutside: (id: string) => call<OutsideCheck>('host:checkOutside', { id }),
     forwardStatus: (id: string) =>
       call<{
         available: boolean
@@ -511,6 +530,12 @@ export const api = {
         externalAddress: string | null
         router: string | null
         reason: string | null
+        firewall?: {
+          allowed: boolean
+          alreadyThere: boolean
+          reason: string | null
+          manualCommand: string | null
+        }
       }>('host:forwardStatus', { id }),
     openPort: (id: string, acceptUnverified?: boolean) =>
       call<{
@@ -519,6 +544,12 @@ export const api = {
         externalAddress: string | null
         router: string | null
         reason: string | null
+        firewall?: {
+          allowed: boolean
+          alreadyThere: boolean
+          reason: string | null
+          manualCommand: string | null
+        }
       }>('host:openPort', { id, acceptUnverified }),
     closePort: (id: string) => call<{ closed: boolean }>('host:closePort', { id }),
     list: () => call<HostedServer[]>('host:list'),
@@ -673,6 +704,232 @@ export const api = {
     ping: (id: string) => call<ServerStatus>('servers:ping', { id }),
     pingAll: () => call<ServerStatus[]>('servers:pingAll'),
     import: (instanceId: string) => call<{ imported: number }>('servers:import', { instanceId })
+  },
+
+  mapArt: {
+    writeServer: (serverId: string, tiles: number[][], across: number, down: number) =>
+      call<{ world: string; ids: number[]; across: number; down: number; commands: string[] }>(
+        'mapart:writeServer',
+        { serverId, tiles, across, down }
+      ),
+    write: (instanceId: string, worldFolder: string, tiles: number[][], across: number, down: number) =>
+      call<{ world: string; ids: number[]; across: number; down: number; commands: string[] }>(
+        'mapart:write',
+        { instanceId, worldFolder, tiles, across, down }
+      )
+  },
+
+  resourcePack: {
+    build: (draft: ResourcePackDraft, minecraftVersion: string, path: string) =>
+      call<BuiltPack>('resourcepack:build', { draft, minecraftVersion, path }),
+    install: (instanceId: string, draft: ResourcePackDraft) =>
+      call<BuiltPack>('resourcepack:install', { instanceId, draft }),
+    serve: (
+      serverId: string,
+      draft: ResourcePackDraft,
+      port: number,
+      required: boolean,
+      address?: string
+    ) =>
+      call<
+        BuiltPack & {
+          url: string
+          port: number
+          address: string
+          /** Whether that url answered when the launcher tried it. */
+          reachable: boolean
+          /** A local url that did answer, when the published one did not. */
+          alternative: string | null
+        }
+      >('resourcepack:serve', {
+        serverId,
+        draft,
+        port,
+        required,
+        address
+      }),
+    hostStatus: () => call<PackHostStatus>('resourcepack:hostStatus'),
+    stopHost: () => call<PackHostStatus>('resourcepack:stopHost'),
+    attach: (serverId: string, url: string, sha1: string, required: boolean) =>
+      call<{ ok: boolean }>('resourcepack:attach', { serverId, url, sha1, required }),
+    detach: (serverId: string) => call<{ ok: boolean }>('resourcepack:detach', { serverId }),
+    openPort: (port: number) => call<PackForwarding>('resourcepack:openPort', { port }),
+    closePort: (port: number) => call<PackForwarding>('resourcepack:closePort', { port }),
+    portStatus: (port: number) => call<PackForwarding>('resourcepack:portStatus', { port }),
+    textures: (minecraftVersion: string) =>
+      call<string[]>('resourcepack:textures', { minecraftVersion }),
+    texture: (minecraftVersion: string, path: string) =>
+      call<string | null>('resourcepack:texture', { minecraftVersion, path }),
+    open: (file: string) =>
+      call<{
+        name: string
+        description: string
+        textures: { path: string; image: string }[]
+        panorama: string[] | null
+        logo: string | null
+        ignored: number
+      }>('resourcepack:open', { file }),
+    remember: (draft: ResourcePackDraft) =>
+      call<{ ok: boolean }>('resourcepack:remember', { draft }),
+    recall: () => call<ResourcePackDraft | null>('resourcepack:recall')
+  },
+
+  site: {
+    config: (serverId: string) => call<SiteConfig>('site:config', { serverId }),
+    save: (config: SiteConfig) => call<SiteConfig>('site:save', { config }),
+    start: (serverId: string, port: number) => call<SiteStatus>('site:start', { serverId, port }),
+    stop: () => call<SiteStatus>('site:stop'),
+    status: () => call<SiteStatus>('site:status'),
+    votifierPort: (serverId: string, open: boolean) =>
+      call<PackForwarding & { port: number }>('site:votifierPort', { serverId, open }),
+    votifierInfo: (serverId: string) =>
+      call<{ port: number; token: string; publicKey: string; enabled: boolean }>(
+        'site:votifierInfo',
+        { serverId }
+      )
+  },
+
+  banners: {
+    brains: () => call<BannerBrain[]>('banners:brains'),
+    design: (prompt: string, companionId: string, current?: unknown) =>
+      call<{ design: BannerDesign; dropped: string[]; model: string }>('banners:design', {
+        prompt,
+        companionId,
+        current
+      }),
+    designRecipe: (prompt: string, companionId: string) =>
+      call<{ recipe: TextureRecipe; model: string }>('banners:designRecipe', {
+        prompt,
+        companionId
+      }),
+    designIcon: (prompt: string, companionId: string, current?: unknown) =>
+      call<{ art: IconArt; dropped: number; model: string }>('banners:designIcon', {
+        prompt,
+        companionId,
+        current
+      }),
+    designMotd: (prompt: string, companionId: string, current?: unknown) =>
+      call<{ design: MotdDesign; model: string }>('banners:designMotd', { prompt, companionId, current }),
+    designLogo: (prompt: string, companionId: string, current?: unknown) =>
+      call<{ design: LogoDesign; model: string }>('banners:designLogo', { prompt, companionId, current }),
+    designFirework: (prompt: string, companionId: string, current?: unknown) =>
+      call<{ design: FireworkDesign; dropped: number; model: string }>('banners:designFirework', {
+        prompt,
+        companionId,
+        current
+      }),
+    designItem: (prompt: string, companionId: string, current?: unknown) =>
+      call<{ design: ItemDesign; dropped: string[]; model: string }>('banners:designItem', {
+        prompt,
+        companionId,
+        current
+      }),
+    applyMotd: (serverId: string, design: MotdDesign) =>
+      call<{ motd: string }>('banners:applyMotd', { serverId, design }),
+    designRecipes: (prompt: string, companionId: string, current?: unknown) =>
+      call<{ pack: RecipePack; dropped: string[]; model: string }>('banners:designRecipes', {
+        prompt,
+        companionId,
+        current
+      }),
+    installRecipes: (serverId: string, pack: RecipePack) =>
+      call<{
+        path: string
+        fileCount: number
+        packFormat: number
+        world: string
+        reloadNeeded: boolean
+      }>('banners:installRecipes', { serverId, pack }),
+    designAdvancements: (prompt: string, companionId?: string, current?: AdvancementPack) =>
+      call<{ pack: AdvancementPack; dropped: string[]; model: string }>(
+        'banners:designAdvancements',
+        { prompt, companionId, current }
+      ),
+    installAdvancements: (serverId: string, pack: AdvancementPack) =>
+      call<{ world: string; fileCount: number }>('banners:installAdvancements', {
+        serverId,
+        pack
+      }),
+    installAdvancementsWorld: (instanceId: string, worldFolder: string, pack: AdvancementPack) =>
+      call<{ world: string; fileCount: number }>('banners:installAdvancementsWorld', {
+        instanceId,
+        worldFolder,
+        pack
+      }),
+    exportAdvancements: (path: string, pack: AdvancementPack, minecraftVersion: string) =>
+      call<{ path: string; packFormat: number }>('banners:exportAdvancements', {
+        path,
+        pack,
+        minecraftVersion
+      }),
+    designLoot: (prompt: string, companionId?: string, current?: LootPack) =>
+      call<{ pack: LootPack; dropped: string[]; model: string }>('banners:designLoot', {
+        prompt,
+        companionId,
+        current
+      }),
+    installLoot: (serverId: string, pack: LootPack) =>
+      call<{ world: string; fileCount: number; skipped: string[] }>('banners:installLoot', {
+        serverId,
+        pack
+      }),
+    installLootWorld: (instanceId: string, worldFolder: string, pack: LootPack) =>
+      call<{ world: string; fileCount: number; skipped: string[] }>('banners:installLootWorld', {
+        instanceId,
+        worldFolder,
+        pack
+      }),
+    exportLoot: (path: string, pack: LootPack, minecraftVersion: string) =>
+      call<{ path: string; packFormat: number; skipped: string[] }>('banners:exportLoot', {
+        path,
+        pack,
+        minecraftVersion
+      }),
+    installRecipesWorld: (instanceId: string, worldFolder: string, pack: RecipePack) =>
+      call<{
+        path: string
+        fileCount: number
+        packFormat: number
+        world: string
+        reloadNeeded: boolean
+      }>('banners:installRecipesWorld', { instanceId, worldFolder, pack }),
+    exportRecipes: (path: string, pack: RecipePack, minecraftVersion: string) =>
+      call<{ path: string; packFormat: number }>('banners:exportRecipes', {
+        path,
+        pack,
+        minecraftVersion
+      }),
+    variations: (
+      kind: CreationKind,
+      prompt: string,
+      companionId: string,
+      count: number
+    ) => call<{ results: unknown[]; asked: number }>('banners:variations', {
+      kind,
+      prompt,
+      companionId,
+      count
+    }),
+    giveDesigned: (serverId: string, command: string) =>
+      call<{ command: string; sent: boolean }>('banners:giveDesigned', { serverId, command }),
+    icon: (serverId: string, png: string) =>
+      call<{ path: string; restartNeeded: boolean }>('banners:icon', { serverId, png }),
+    save: (path: string, png: string) => call<{ path: string }>('banners:save', { path, png }),
+    give: (serverId: string, target: string, design: BannerDesign) =>
+      call<{ command: string; sent: boolean }>('banners:give', { serverId, target, design })
+  },
+
+  creations: {
+    list: (kind?: CreationKind) => call<SavedCreation[]>('creations:list', { kind }),
+    save: (input: {
+      id?: string | null
+      kind: CreationKind
+      name: string
+      data: unknown
+      thumbnail?: string | null
+    }) => call<SavedCreation>('creations:save', input),
+    remove: (id: string) => call<boolean>('creations:delete', { id }),
+    rename: (id: string, name: string) => call<SavedCreation>('creations:rename', { id, name })
   },
 
   links: {

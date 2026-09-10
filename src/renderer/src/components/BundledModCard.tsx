@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Flame, Ghost } from 'lucide-react'
+import { Eye, Flame, Ghost } from 'lucide-react'
 import type { Instance, LauncherErrorPayload } from '@shared/types'
 import { api, toPayload, type BundledModStatus } from '../api'
 import { ErrorView, Spinner } from './ui'
@@ -8,16 +8,20 @@ import { ErrorView, Spinner } from './ui'
  * The mods this launcher ships, and installing one into an instance.
  *
  * This was written for Hollow alone and grew a second mod, which is why it
- * takes a status rather than a name: everything on the card — the icon, the
- * blurb, whether a model is worth mentioning — comes from the descriptor the
- * main process sends, so a third mod needs no change here at all.
+ * takes a status rather than a name: everything on the card — the blurb, the
+ * pill, whether a model is worth mentioning — comes from the descriptor the
+ * main process sends.
+ *
+ * The claim used to be that a third mod needed no change here at all, and the
+ * third mod proved it wrong by one line: the icon is a component and cannot
+ * travel over the wire, so the name arrives and the drawing of it lives here.
+ * A table rather than a ternary now, so the fourth one really is free.
  */
+const ICONS = { flame: Flame, ghost: Ghost, eye: Eye } as const
+
 function iconFor(icon: BundledModStatus['icon'], size: number): JSX.Element {
-  return icon === 'flame' ? (
-    <Flame size={size} className="dim" />
-  ) : (
-    <Ghost size={size} className="dim" />
-  )
+  const Drawn = ICONS[icon] ?? Ghost
+  return <Drawn size={size} className="dim" />
 }
 
 export function BundledModCard({

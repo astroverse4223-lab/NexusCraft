@@ -1,3 +1,4 @@
+import { ServerSitePanel } from './ServerSite'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
@@ -34,6 +35,7 @@ import type {
   VersionSummary
 } from '@shared/types'
 import type { Companion } from '@shared/companion'
+import type { OutsideCheck } from '@shared/types'
 import { api, subscribe, toPayload } from '../api'
 import { BrowseTab } from './Browse'
 import { ServerBackups } from '../components/ServerBackups'
@@ -155,15 +157,52 @@ export function HostServerScreen(): JSX.Element {
   /** Open when building a whole new server from a modpack. */
   const [packBrowsing, setPackBrowsing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<HostedServer | null>(null)
+  /*
+   * The router's answer, and this machine's.
+   *
+   * Both, because a port that the router forwards and Windows then blocks is
+   * indistinguishable from one that was never forwarded - and reporting only
+   * the router is what let a blocked server show a green badge.
+   */
   const [forwarding, setForwarding] = useState<{
     available: boolean
     open: boolean
     externalAddress: string | null
     router: string | null
     reason: string | null
+    firewall?: {
+      allowed: boolean
+      alreadyThere: boolean
+      reason: string | null
+      manualCommand: string | null
+    }
   } | null>(null)
   const [checkingRouter, setCheckingRouter] = useState(false)
   const [share, setShare] = useState<ServerShareDetails | null>(null)
+  /*
+   * What a machine outside the network found, or 'checking' while it looks.
+   *
+   * Separate from `share.reachable` on purpose: that one is this PC trying its
+   * own public address, which most routers refuse to allow, so it cannot answer
+   * the question it appears to answer.
+   */
+  const [outside, setOutside] = useState<OutsideCheck | 'checking' | null>(null)
+
+  const checkOutside = useCallback(async (id: string) => {
+    setOutside('checking')
+    try {
+      setOutside(await api.host.checkOutside(id))
+    } catch (err) {
+      setOutside({
+        reachable: false,
+        address: null,
+        motd: null,
+        players: null,
+        version: null,
+        note: toPayload(err).message ?? 'The check could not be run.'
+      })
+    }
+  }, [])
   const [gathering, setGathering] = useState(false)
   const [browsing, setBrowsing] = useState(false)
   const [confirmExpose, setConfirmExpose] = useState(false)
@@ -328,6 +367,7 @@ export function HostServerScreen(): JSX.Element {
     if (!selected) return
     setGathering(true)
     try {
+      setOutside(null)
       setShare(await api.host.share(selected.id))
     } catch (err) {
       setError(toPayload(err))
@@ -887,7 +927,17 @@ export function HostServerScreen(): JSX.Element {
                                 <span className="dot online" /> answering
                               </span>
                             )}
-                            {share.reachable === false && <span className="pill warning tiny">no answer</span>}
+                            {share.reachable === false && (
+                              <span className="pill tiny dim">no answer from in here</span>
+                            )}
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              disabled={outside === 'checking'}
+                              onClick={() => void checkOutside(selected.id)}
+                            >
+                              {outside === 'checking' ? <Spinner /> : <Globe size={13} />} Check from
+                              outside
+                            </button>
                           </>
                         ) : (
                           <span className="tiny dim">not available yet</span>
@@ -898,6 +948,16 @@ export function HostServerScreen(): JSX.Element {
                     {share.note && (
                       <p className="tiny dim" style={{ margin: 0 }}>
                         {share.note}
+                      </p>
+                    )}
+
+                    {outside && outside !== 'checking' && (
+                      <p
+                        className="tiny"
+                        style={{ margin: 0, color: outside.reachable ? 'var(--good, #6ee7a0)' : undefined }}
+                      >
+                        {outside.note}
+                        {outside.reachable && outside.motd ? ` It replied: "${outside.motd}".` : ''}
                       </p>
                     )}
 
@@ -1000,6 +1060,61 @@ export function HostServerScreen(): JSX.Element {
                             </span>
                           </div>
                         )}
+                        {/*
+                          * The router being open is only half of it.
+                          *
+                          * A forwarded port carries a connection as far as this
+                          * machine and no further; Windows Firewall then drops
+                          * it silently unless something allows it. Reporting
+                          * only the router is what made a blocked server look
+                          * like a working one.
+                          */}
+                        {forwarding.firewall && !forwarding.firewall.allowed && (
+                          <div className="col gap-8" style={{
+                            borderLeft: '2px solid var(--warning, #d9a441)',
+                            paddingLeft: 12
+                          }}>
+                            <strong className="small">
+                              Windows is still blocking it on this PC
+                            </strong>
+                            <p className="tiny dim" style={{ margin: 0 }}>
+                              The router is forwarding port {selected.port} correctly, but Windows Firewall
+                              drops the connection when it arrives, so friends see a server that never
+                              answers. {forwarding.firewall.reason === 'the launcher is not running as an administrator'
+                                ? 'Adding the rule needs administrator rights, which the launcher does not ask for.'
+                                : forwarding.firewall.reason}
+                            </p>
+                            {forwarding.firewall.manualCommand && (
+                              <>
+                                <p className="tiny dim" style={{ margin: 0 }}>
+                                  Paste this into PowerShell, run as administrator:
+                                </p>
+                                <div className="row gap-8" style={{ alignItems: 'center' }}>
+                                  <code className="host-address" style={{ fontSize: 11, overflowX: 'auto' }}>
+                                    {forwarding.firewall.manualCommand}
+                                  </code>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() =>
+                                      void navigator.clipboard
+                                        .writeText(forwarding.firewall!.manualCommand!)
+                                        .catch(() => undefined)
+                                    }
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {forwarding.firewall?.allowed && (
+                          <span className="tiny dim">
+                            Windows is letting it through too.
+                          </span>
+                        )}
+
                         <p className="tiny dim" style={{ margin: 0 }}>
                           The router is asked to keep this for twelve hours, and it is closed again when you stop
                           the server.
@@ -1046,6 +1161,9 @@ export function HostServerScreen(): JSX.Element {
                   </p>
                 )}
               </div>
+
+              {/* -------------------------------------------------- website */}
+              <ServerSitePanel serverId={selected.id} />
 
               {/* ----------------------------------------------------- mods */}
               <div className="panel col">

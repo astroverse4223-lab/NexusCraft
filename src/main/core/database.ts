@@ -208,7 +208,8 @@ export const Collections = {
   servers: 'servers',
   hostedServers: 'hosted_servers',
   skins: 'skins',
-  javaRuntimes: 'java_runtimes'
+  javaRuntimes: 'java_runtimes',
+  creations: 'creations'
 } as const
 
 /**

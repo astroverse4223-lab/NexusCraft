@@ -13,7 +13,10 @@ import {
   UserCircle2,
   Layers,
   Bot,
-  HardDrive
+  HardDrive,
+  Flag,
+  Image as ImageIcon,
+  Sparkles
 } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../api'
@@ -101,7 +104,10 @@ const LIBRARY: NavEntry[] = [
   { route: 'worlds', label: 'Worlds', icon: Globe2 },
   { route: 'servers', label: 'Servers', icon: Server },
   { route: 'discover', label: 'Discover', icon: Compass },
-  { route: 'host', label: 'Host a Server', icon: HardDrive }
+  { route: 'host', label: 'Host a Server', icon: HardDrive },
+  { route: 'banners', label: 'Banners', icon: Flag },
+  { route: 'icon', label: 'Server Icon', icon: ImageIcon },
+  { route: 'generators', label: 'Generators', icon: Sparkles }
 ]
 
 const ACCOUNT: NavEntry[] = [
