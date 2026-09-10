@@ -26,6 +26,7 @@ import {
   type ResourcePackDraft,
   emptyDraft,
   isEmpty,
+  packSummary,
   safeId
 } from '@shared/resourcePacks'
 import type { BuiltPack, PackForwarding, PackHostStatus } from '@shared/resourcePacks'
@@ -2043,10 +2044,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               <div className="section-title">Built</div>
 
               <p className="small muted">
-                {built.contents.items} texture{built.contents.items === 1 ? '' : 's'}, {built.contents.sounds} sound
-                {built.contents.sounds === 1 ? '' : 's'}
-                {built.contents.panorama ? ', a menu background' : ''}
-                {built.contents.logo ? ', a logo' : ''} — {(built.bytes / 1024).toFixed(0)}KB.
+                {packSummary(built.contents)} &mdash; {(built.bytes / 1024).toFixed(0)}KB.
               </p>
 
               {url && (

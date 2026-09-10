@@ -214,6 +214,33 @@ export function giveFor(item: PackItem, namespace: string): string {
 }
 
 /** What a build produced, as both sides need to talk about it. */
+/**
+ * What went into a pack, in words.
+ *
+ * Written down here because the screen used to assemble it inline and got it
+ * wrong in the worst possible way: it printed `contents.items` and labelled it
+ * "texture", so a pack holding 3,416 restyled textures and one hat announced
+ * itself as "1 texture" and looked like a build that had silently dropped
+ * everything. The zip was right the whole time.
+ *
+ * Empty categories are left out rather than printed as zero - "0 sounds" on
+ * every pack that has no sounds is noise that makes the real numbers harder
+ * to find.
+ */
+export function packSummary(contents: BuiltPack['contents']): string {
+  const many = (n: number, word: string): string => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
+
+  const parts = [
+    contents.textures > 0 ? many(contents.textures, 'texture') : '',
+    contents.items > 0 ? many(contents.items, 'item') : '',
+    contents.sounds > 0 ? many(contents.sounds, 'sound') : '',
+    contents.panorama ? 'a menu background' : '',
+    contents.logo ? 'a logo' : ''
+  ].filter(Boolean)
+
+  return parts.length > 0 ? parts.join(', ') : 'nothing'
+}
+
 export interface BuiltPack {
   /** Where the zip was written. */
   path: string
