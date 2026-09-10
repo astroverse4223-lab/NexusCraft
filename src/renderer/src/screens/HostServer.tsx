@@ -831,7 +831,7 @@ export function HostServerScreen(): JSX.Element {
                * player and somebody here to install a plugin want different
                * screens, so they get different screens.
                */}
-              <div className="host-tabs">
+              <div className="tab-strip">
                 {HOST_TABS.map((entry) => (
                   <button
                     key={entry.id}
@@ -841,7 +841,7 @@ export function HostServerScreen(): JSX.Element {
                     <entry.icon size={14} />
                     {entry.id === 'mods' && softwareInfo?.plugins ? 'Plugins' : entry.label}
                     {entry.id === 'players' && state.players.length > 0 && (
-                      <span className="host-tab-count">{state.players.length}</span>
+                      <span className="tab-count">{state.players.length}</span>
                     )}
                   </button>
                 ))}

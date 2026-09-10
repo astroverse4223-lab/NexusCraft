@@ -1065,6 +1065,25 @@ textarea {
   }
 }
 
+/*
+ * The same turn, for an icon that is already round.
+ *
+ * `.spinner` draws its own ring; the lucide loaders want only the animation,
+ * and were asking for it with a class nobody had written - so the voice model
+ * download and the region-file read both sat on a motionless spinner, which
+ * reads as frozen rather than as working.
+ */
+.spin {
+  animation: spin 0.7s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
 /* ------------------------------------------------------------ utilities */
 
 .row {
@@ -1134,6 +1153,23 @@ textarea {
 .items-start {
   align-items: flex-start;
 }
+
+/*
+ * `.row` centres its children already, so most of these read as belt and
+ * braces - except on a `.col`, where cross-axis means horizontal and the
+ * missing rule meant no centring at all.
+ */
+.items-center {
+  align-items: center;
+}
+
+.items-end {
+  align-items: flex-end;
+}
+
+.end {
+  justify-content: flex-end;
+}
 .muted {
   color: var(--text-muted);
 }
@@ -1164,6 +1200,9 @@ textarea {
 .mt-8 {
   margin-top: 8px;
 }
+.mt-12 {
+  margin-top: 12px;
+}
 .mt-16 {
   margin-top: 16px;
 }
@@ -1172,6 +1211,9 @@ textarea {
 }
 .mb-8 {
   margin-bottom: 8px;
+}
+.mb-12 {
+  margin-bottom: 12px;
 }
 .mb-16 {
   margin-bottom: 16px;
@@ -1387,14 +1429,14 @@ textarea {
 }
 
 /*
- * The jobs a server needs doing, across the top of its panel.
+ * A screen's worth of jobs, across the top of it.
  *
  * Full width and scrolling sideways rather than `width: fit-content` like the
- * plain `.tabs`: there are seven of these and they carry icons, so in a narrow
+ * plain `.tabs`: these carry icons and there are seven of them, so in a narrow
  * window they would wrap onto a second row - and a tab strip that reflows as
  * the window moves puts a different tab under the cursor than the one aimed at.
  */
-.host-tabs {
+.tab-strip {
   display: flex;
   gap: 4px;
   padding: 4px;
@@ -1407,11 +1449,11 @@ textarea {
   scrollbar-width: none;
 }
 
-.host-tabs::-webkit-scrollbar {
+.tab-strip::-webkit-scrollbar {
   display: none;
 }
 
-.host-tabs .tab {
+.tab-strip .tab {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1422,7 +1464,7 @@ textarea {
 }
 
 /* How many people are on, carried on the Players tab itself. */
-.host-tab-count {
+.tab-count {
   min-width: 18px;
   padding: 0 5px;
   border-radius: 9px;

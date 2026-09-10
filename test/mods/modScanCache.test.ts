@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, utimes } from 'node:fs/promises'
+import { mkdtemp, readdir, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -60,22 +60,62 @@ describe('scanning a mod folder twice', () => {
     expect(second.map((m) => m.name)).toEqual(first.map((m) => m.name))
   })
 
-  it('is markedly faster the second time', { timeout: 120_000 }, async () => {
-    const dir = await makePack(60)
+  /*
+   * This used to assert `warm < cold / 2` off a stopwatch, and failed roughly
+   * one run in fifteen - once at 106ms against a 98ms bar. A ratio of two wall
+   * clocks measures the machine, not the cache: when the operating system's
+   * own file cache is already warm from the run before, the cold scan is fast,
+   * the ratio narrows, and a busy moment tips it over.
+   *
+   * What the cache actually claims is that it does not open a jar twice, and
+   * that can be proved rather than timed. Every jar is replaced with the same
+   * number of bytes of nonsense and its timestamp put back: the cache is keyed
+   * on path, size and modification time, so it should not notice, while
+   * anything that does open a jar now finds a file that is not a zip at all.
+   */
+  it('does not open a jar it has already read', { timeout: 120_000 }, async () => {
+    const dir = await makePack(20)
 
-    const coldStart = Date.now()
-    await analyseModsIn(target(dir))
-    const cold = Date.now() - coldStart
+    /*
+     * Stamped before the first scan as well as after the second.
+     *
+     * Reading a timestamp and writing it back does not round-trip: NTFS keeps
+     * hundred-nanosecond ticks and utimes takes whole milliseconds, so putting
+     * back what stat reported still moved the file by a fraction and the cache
+     * correctly missed. Setting the same whole millisecond both times is the
+     * only way to hold the key still.
+     */
+    const stamp = new Date(1_700_000_000_000)
+    for (const entry of await readdir(dir)) await utimes(join(dir, entry), stamp, stamp)
 
-    const warmStart = Date.now()
-    await analyseModsIn(target(dir))
-    const warm = Date.now() - warmStart
+    const cold = await analyseModsIn(target(dir))
+    expect(cold.length).toBe(20)
 
-    console.log(`cold ${cold} ms, warm ${warm} ms`)
+    for (const entry of await readdir(dir)) {
+      const path = join(dir, entry)
+      await writeFile(path, Buffer.alloc((await stat(path)).size, 0))
+      await utimes(path, stamp, stamp)
+    }
 
-    // Generous: the point is that a re-scan no longer re-reads every jar, not
-    // that a particular machine hits a particular number.
-    expect(warm).toBeLessThan(Math.max(cold / 2, 30))
+    const warm = await analyseModsIn(target(dir))
+
+    expect(warm.map((m) => m.name)).toEqual(cold.map((m) => m.name))
+    expect(warm.map((m) => m.version)).toEqual(cold.map((m) => m.version))
+  })
+
+  it('really would fail if the jars were re-read', { timeout: 120_000 }, async () => {
+    // Guards the test above: same wrecking, but the timestamp is left moved on,
+    // so the cache misses and the ruined jars are what comes back.
+    const dir = await makePack(3)
+    const cold = await analyseModsIn(target(dir))
+
+    for (const entry of await readdir(dir)) {
+      await writeFile(join(dir, entry), Buffer.alloc((await stat(join(dir, entry))).size, 0))
+    }
+
+    const warm = await analyseModsIn(target(dir))
+
+    expect(warm.map((m) => m.name)).not.toEqual(cold.map((m) => m.name))
   })
 
   it('notices a jar that has actually changed', { timeout: 120_000 }, async () => {

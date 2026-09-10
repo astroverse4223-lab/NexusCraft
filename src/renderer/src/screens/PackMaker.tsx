@@ -1,4 +1,18 @@
-import { Globe, Image as ImageIcon, Music, Plus, Server, Trash2, Upload } from 'lucide-react'
+import {
+  Boxes,
+  Globe,
+  Hammer,
+  HardHat,
+  Image as ImageIcon,
+  Monitor,
+  Music,
+  Plus,
+  Save,
+  Server,
+  Trash2,
+  Upload
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { type JSX, useEffect, useRef, useState } from 'react'
 import {
   BASE_ITEMS,
@@ -31,6 +45,50 @@ import { useStore } from '../store/useStore'
  * launcher could not previously produce. Everything here writes plain files
  * into a zip - nothing is compiled and nothing is a mod.
  */
+
+/** The parts of a resource pack, each its own screen. */
+type PackTab = 'textures' | 'items' | 'hats' | 'sounds' | 'menu' | 'saved' | 'build'
+
+/*
+ * In the order the job is done, with the thing that produces a file last.
+ */
+const PACK_TABS: { id: PackTab; label: string; icon: LucideIcon }[] = [
+  { id: 'textures', label: 'Textures', icon: ImageIcon },
+  { id: 'items', label: 'Items', icon: Boxes },
+  { id: 'hats', label: 'Hats', icon: HardHat },
+  { id: 'sounds', label: 'Sounds', icon: Music },
+  { id: 'menu', label: 'Menu', icon: Monitor },
+  { id: 'saved', label: 'Saved', icon: Save },
+  { id: 'build', label: 'Build', icon: Hammer }
+]
+
+/** The eight ids the Hats tab owns. */
+const HAT_IDS: ReadonlySet<string> = new Set(COSMETIC_HATS.map((hat) => hat.id))
+
+/**
+ * How much is in the pack, per tab.
+ *
+ * Carried on the tab itself because the whole point of splitting the screen up
+ * is that you can no longer see the other six - and a pack you thought was
+ * empty having four textures in it is exactly the surprise this is meant to
+ * stop.
+ */
+function countFor(tab: PackTab, draft: ResourcePackDraft): number {
+  if (tab === 'textures') return draft.textures.length
+  if (tab === 'sounds') return draft.sounds.length
+  if (tab === 'menu') return (draft.panorama ? 1 : 0) + (draft.logo ? 1 : 0)
+
+  /*
+   * A hat is an item. The Hats tab is a shortcut for drawing eight particular
+   * ones, and they land in draft.items like anything else - so the Items tab
+   * lists them too, and each count is right for the tab it sits on rather
+   * than for a share of some total.
+   */
+  if (tab === 'hats') return draft.items.filter((item) => HAT_IDS.has(item.id)).length
+  if (tab === 'items') return draft.items.length
+
+  return 0
+}
 
 /** A png the game can use, read from a file the user picked. */
 async function readPng(file: File): Promise<string> {
@@ -166,6 +224,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [outcome, setOutcome] = useState<string | null>(null)
 
+  const [tab, setTab] = useState<PackTab>('textures')
   const [brains, setBrains] = useState<{ id: string; label: string }[]>([])
   const [brain, setBrain] = useState('')
   const [wish, setWish] = useState('')
@@ -955,1037 +1014,1073 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         </div>
       </div>
 
-      {/* ------------------------------------------------------------ items */}
+      {/*
+       * The jobs, not the panels.
+       *
+       * Nine sections in one column meant scrolling past the hats every time
+       * to reach the button that builds the thing. The pack's name stays put
+       * above, because it belongs to all of them; the counts ride on the tabs
+       * so that what is in the six you cannot see is still visible.
+       */}
+      <div className="tab-strip">
+        {PACK_TABS.map((entry) => {
+          const count = countFor(entry.id, draft)
 
-      <div className="panel panel-pad col gap-12">
-        <div className="row gap-8" style={{ alignItems: 'center' }}>
-          <div className="section-title" style={{ flex: 1 }}>
-            Item textures
+          return (
+            <button
+              key={entry.id}
+              className={`tab ${tab === entry.id ? 'active' : ''}`}
+              onClick={() => setTab(entry.id)}
+            >
+              <entry.icon size={14} />
+              {entry.label}
+              {count > 0 && <span className="tab-count">{count}</span>}
+            </button>
+          )
+        })}
+      </div>
+
+      {tab === 'textures' && (
+        <div className="panel panel-pad col gap-12">
+          <div className="row gap-8" style={{ alignItems: 'center' }}>
+            <div className="section-title" style={{ flex: 1 }}>
+              Replace any texture
+            </div>
+            <button className="btn btn-sm" onClick={() => folderPick.current?.click()}>
+              <Upload size={14} /> Import a folder
+            </button>
+            <button className="btn btn-sm" onClick={() => bulkPick.current?.click()}>
+              Pick files
+            </button>
+            <button className="btn btn-sm" disabled={working !== null} onClick={() => void openZip()}>
+              {working === 'opening' && <Spinner />} Open a .zip
+            </button>
           </div>
-          <button className="btn btn-sm" onClick={() => itemPick.current?.click()}>
-            <Plus size={14} /> Add a picture
-          </button>
-          <input
-            ref={itemPick}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={(e) => {
-              for (const file of Array.from(e.target.files ?? [])) void addItem(file)
-              e.target.value = ''
-            }}
-          />
-        </div>
 
-        {draft.items.length === 0 ? (
           <p className="small muted">
-            Drop in any picture and it becomes a 16 by 16 item texture. By default it is a new look the item points at,
-            so ordinary sticks are left alone — which is what pairs with the custom items you already make in
-            Generators.
+            Everything the game draws &mdash; {vanilla.length.toLocaleString()} textures in {instance.minecraftVersion}:
+            blocks, items, mobs, particles, paintings, menus. Search for what you want to change, or import a folder and
+            everything in it is filed by where it sits. Your Desktop has the whole lot already, in
+            <code> minecraft-textures</code> &mdash; edit those in place and import the folder back.
           </p>
-        ) : (
-          <div className="col gap-8">
-            {draft.items.map((item, at) => (
-              <div key={at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-                <img
-                  src={item.image}
-                  alt={item.label}
-                  width={36}
-                  height={36}
-                  style={{ imageRendering: 'pixelated', borderRadius: 4 }}
-                />
 
+          <input
+            className="input"
+            value={hunt}
+            placeholder="search, eg creeper, stone, diamond_sword, wither"
+            onChange={(e) => setHunt(e.target.value)}
+          />
+
+          {hunt.trim().length >= 2 && (
+            <div className="col gap-4" style={{ maxHeight: 240, overflowY: 'auto' }}>
+              {vanilla
+                .filter((path) => path.includes(hunt.trim().toLowerCase()))
+                .slice(0, 60)
+                .map((path) => {
+                  const done = draft.textures.find((t) => t.path === path)
+
+                  return (
+                    <div key={path} className="row gap-8" style={{ alignItems: 'center' }}>
+                      {done && (
+                        <img
+                          src={done.image}
+                          alt=""
+                          width={20}
+                          height={20}
+                          style={{ imageRendering: 'pixelated', borderRadius: 3 }}
+                        />
+                      )}
+                      <code className="tiny" style={{ flex: 1, wordBreak: 'break-all' }}>
+                        {path}
+                      </code>
+                      {style && (
+                        <button
+                          className="btn btn-sm"
+                          disabled={working !== null}
+                          onClick={() => void restyleOne(path)}
+                          title={`Apply ${style.name} to this one`}
+                        >
+                          {style.name}
+                        </button>
+                      )}
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setAiming(path)
+                          texPick.current?.click()
+                        }}
+                      >
+                        {done ? 'Change' : 'Replace'}
+                      </button>
+                    </div>
+                  )
+                })}
+            </div>
+          )}
+
+          {/* ------------------------------------------------------- restyling */}
+
+          <div className="col gap-8">
+            <div className="section-title">Restyle them</div>
+
+            <p className="small muted">
+              Keeps every detail Mojang drew and moves only the colour, so a whole folder restyled the same way still
+              looks like Minecraft. Pick a look, or describe one.
+            </p>
+
+            <div className="row gap-6 wrap">
+              {RECIPE_PRESETS.map((preset) => (
+                <button
+                  key={preset.name}
+                  className={`btn btn-sm${style?.name === preset.name ? ' btn-primary' : ''}`}
+                  onClick={() => {
+                    setStyle(preset)
+                    void show(preset)
+                  }}
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+
+            {brains.length > 0 && (
+              <div className="row gap-8 wrap">
                 <input
                   className="input"
-                  style={{ flex: '1 1 150px' }}
-                  value={item.label}
-                  onChange={(e) => changeItem(at, { label: e.target.value, id: safeId(e.target.value) })}
+                  style={{ flex: '1 1 220px' }}
+                  value={look}
+                  placeholder="or describe one, eg drowned and waterlogged, volcanic, candy"
+                  onChange={(e) => setLook(e.target.value.slice(0, 200))}
                 />
+                <button
+                  className="btn btn-sm"
+                  disabled={working !== null || !look.trim()}
+                  onClick={() => void dreamStyle()}
+                >
+                  {working === 'thinking' && <Spinner />} Ask {brains.find((b) => b.id === brain)?.label ?? 'the AI'}
+                </button>
+              </div>
+            )}
+
+            {progress && (
+              <div className="col gap-4">
+                <div
+                  style={{
+                    height: 6,
+                    borderRadius: 3,
+                    background: 'var(--line, #2a2a33)',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${Math.round((progress.done / Math.max(1, progress.total)) * 100)}%`,
+                      background: 'var(--accent, #5ad1c0)',
+                      transition: 'width .2s linear'
+                    }}
+                  />
+                </div>
+                <span className="tiny dim">
+                  {progress.done.toLocaleString()} of {progress.total.toLocaleString()} &mdash; this runs in the app, so
+                  leave the tab open
+                </span>
+              </div>
+            )}
+
+            {outcome && !progress && (
+              <p className="small" style={{ color: 'var(--success, #55d18b)' }}>
+                {outcome}
+              </p>
+            )}
+
+            {preview.length > 0 && (
+              <div className="row gap-10 wrap">
+                {preview.map((sample) => (
+                  <div key={sample.path} className="col gap-4" style={{ width: 76 }}>
+                    <div className="row gap-2" style={{ alignItems: 'center' }}>
+                      <img
+                        src={sample.before}
+                        alt="before"
+                        style={{
+                          width: 34,
+                          height: 34,
+                          imageRendering: 'pixelated',
+                          borderRadius: 3,
+                          opacity: 0.55
+                        }}
+                      />
+                      <img
+                        src={sample.after}
+                        alt="after"
+                        style={{
+                          width: 34,
+                          height: 34,
+                          imageRendering: 'pixelated',
+                          borderRadius: 3
+                        }}
+                      />
+                    </div>
+                    <span className="tiny dim truncate">{sample.path.slice(sample.path.lastIndexOf('/') + 1)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {style && (
+              <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                <span className="small">
+                  <strong>{style.name}</strong>
+                </span>
 
                 <select
                   className="select"
-                  style={{ flex: '1 1 150px' }}
-                  value={item.base}
-                  onChange={(e) => changeItem(at, { base: e.target.value })}
+                  style={{ width: 130 }}
+                  value={folder}
+                  onChange={(e) => setFolder(e.target.value)}
                 >
-                  {BASE_ITEMS.map((id) => (
-                    <option key={id} value={id}>
-                      {id.replace('minecraft:', '').replace(/_/g, ' ')}
+                  {['block', 'item', 'entity', 'particle', 'painting', 'gui'].map((f) => (
+                    <option key={f} value={f}>
+                      {f} ({vanilla.filter((p) => p.startsWith(f + '/')).length})
                     </option>
                   ))}
                 </select>
 
-                <label className="row gap-4 tiny" style={{ alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={item.replaces}
-                    onChange={(e) => changeItem(at, { replaces: e.target.checked })}
-                  />
-                  Replace every one
-                </label>
-
                 <button
-                  className="btn btn-sm"
-                  title="Take it out"
-                  onClick={() => setDraft({ items: draft.items.filter((_, i) => i !== at) })}
+                  className="btn btn-primary btn-sm"
+                  disabled={working !== null}
+                  onClick={() => void restyleFolder()}
                 >
-                  <Trash2 size={13} />
+                  {working === 'painting' && <Spinner />} Restyle every {folder}
+                </button>
+
+                <button className="btn btn-primary btn-sm" disabled={working !== null} onClick={() => void wholePack()}>
+                  {working === 'everything' && <Spinner />} Restyle everything
+                </button>
+
+                <button className="btn btn-sm" onClick={() => setStyle(null)}>
+                  Clear
                 </button>
               </div>
-            ))}
+            )}
 
-            <p className="tiny dim">
-              &quot;Replace every one&quot; takes over the vanilla texture, so every stick in the world changes. Left
-              off, only items given with the command below look different.
-            </p>
+            {style && (
+              <p className="tiny dim">
+                &quot;Restyle everything&quot; does blocks, items and entities in one go &mdash;{' '}
+                {
+                  vanilla.filter((p) => p.startsWith('block/') || p.startsWith('item/') || p.startsWith('entity/'))
+                    .length
+                }{' '}
+                textures, which takes a minute. Every one is read from the game&apos;s own jar first, so restyling twice
+                does not stack &mdash; you always start from the original. A whole folder takes a moment;{' '}
+                {vanilla.filter((p) => p.startsWith(folder + '/')).length} textures is a lot of pixels.
+              </p>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* --------------------------------------------------------- textures */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="row gap-8" style={{ alignItems: 'center' }}>
-          <div className="section-title" style={{ flex: 1 }}>
-            Replace any texture
-          </div>
-          <button className="btn btn-sm" onClick={() => folderPick.current?.click()}>
-            <Upload size={14} /> Import a folder
-          </button>
-          <button className="btn btn-sm" onClick={() => bulkPick.current?.click()}>
-            Pick files
-          </button>
-          <button className="btn btn-sm" disabled={working !== null} onClick={() => void openZip()}>
-            {working === 'opening' && <Spinner />} Open a .zip
-          </button>
-        </div>
-
-        <p className="small muted">
-          Everything the game draws &mdash; {vanilla.length.toLocaleString()} textures in {instance.minecraftVersion}:
-          blocks, items, mobs, particles, paintings, menus. Search for what you want to change, or import a folder and
-          everything in it is filed by where it sits. Your Desktop has the whole lot already, in
-          <code> minecraft-textures</code> &mdash; edit those in place and import the folder back.
-        </p>
-
-        <input
-          className="input"
-          value={hunt}
-          placeholder="search, eg creeper, stone, diamond_sword, wither"
-          onChange={(e) => setHunt(e.target.value)}
-        />
-
-        {hunt.trim().length >= 2 && (
-          <div className="col gap-4" style={{ maxHeight: 240, overflowY: 'auto' }}>
-            {vanilla
-              .filter((path) => path.includes(hunt.trim().toLowerCase()))
-              .slice(0, 60)
-              .map((path) => {
-                const done = draft.textures.find((t) => t.path === path)
-
-                return (
-                  <div key={path} className="row gap-8" style={{ alignItems: 'center' }}>
-                    {done && (
-                      <img
-                        src={done.image}
-                        alt=""
-                        width={20}
-                        height={20}
-                        style={{ imageRendering: 'pixelated', borderRadius: 3 }}
-                      />
-                    )}
-                    <code className="tiny" style={{ flex: 1, wordBreak: 'break-all' }}>
-                      {path}
-                    </code>
-                    {style && (
-                      <button
-                        className="btn btn-sm"
-                        disabled={working !== null}
-                        onClick={() => void restyleOne(path)}
-                        title={`Apply ${style.name} to this one`}
-                      >
-                        {style.name}
-                      </button>
-                    )}
+          {draft.textures.length > 0 && (
+            <>
+              <div className="section-title">Replaced &middot; {draft.textures.length}</div>
+              <div className="row gap-8 wrap">
+                {draft.textures.map((texture) => (
+                  <div key={texture.path} className="row gap-6" style={{ alignItems: 'center' }} title={texture.path}>
+                    <img
+                      src={texture.image}
+                      alt=""
+                      width={22}
+                      height={22}
+                      style={{ imageRendering: 'pixelated', borderRadius: 3 }}
+                    />
+                    <span className="tiny dim">{texture.path.slice(texture.path.lastIndexOf('/') + 1)}</span>
                     <button
                       className="btn btn-sm"
-                      onClick={() => {
-                        setAiming(path)
-                        texPick.current?.click()
-                      }}
+                      onClick={() =>
+                        setDraft({
+                          textures: draft.textures.filter((t) => t.path !== texture.path)
+                        })
+                      }
                     >
-                      {done ? 'Change' : 'Replace'}
+                      <Trash2 size={12} />
                     </button>
                   </div>
-                )
-              })}
-          </div>
-        )}
-
-        {/* ------------------------------------------------------- restyling */}
-
-        <div className="col gap-8">
-          <div className="section-title">Restyle them</div>
-
-          <p className="small muted">
-            Keeps every detail Mojang drew and moves only the colour, so a whole folder restyled the same way still
-            looks like Minecraft. Pick a look, or describe one.
-          </p>
-
-          <div className="row gap-6 wrap">
-            {RECIPE_PRESETS.map((preset) => (
-              <button
-                key={preset.name}
-                className={`btn btn-sm${style?.name === preset.name ? ' btn-primary' : ''}`}
-                onClick={() => {
-                  setStyle(preset)
-                  void show(preset)
-                }}
-              >
-                {preset.name}
-              </button>
-            ))}
-          </div>
-
-          {brains.length > 0 && (
-            <div className="row gap-8 wrap">
-              <input
-                className="input"
-                style={{ flex: '1 1 220px' }}
-                value={look}
-                placeholder="or describe one, eg drowned and waterlogged, volcanic, candy"
-                onChange={(e) => setLook(e.target.value.slice(0, 200))}
-              />
-              <button
-                className="btn btn-sm"
-                disabled={working !== null || !look.trim()}
-                onClick={() => void dreamStyle()}
-              >
-                {working === 'thinking' && <Spinner />} Ask {brains.find((b) => b.id === brain)?.label ?? 'the AI'}
-              </button>
-            </div>
-          )}
-
-          {progress && (
-            <div className="col gap-4">
-              <div
-                style={{
-                  height: 6,
-                  borderRadius: 3,
-                  background: 'var(--line, #2a2a33)',
-                  overflow: 'hidden'
-                }}
-              >
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${Math.round((progress.done / Math.max(1, progress.total)) * 100)}%`,
-                    background: 'var(--accent, #5ad1c0)',
-                    transition: 'width .2s linear'
-                  }}
-                />
-              </div>
-              <span className="tiny dim">
-                {progress.done.toLocaleString()} of {progress.total.toLocaleString()} &mdash; this runs in the app, so
-                leave the tab open
-              </span>
-            </div>
-          )}
-
-          {outcome && !progress && (
-            <p className="small" style={{ color: 'var(--success, #55d18b)' }}>
-              {outcome}
-            </p>
-          )}
-
-          {preview.length > 0 && (
-            <div className="row gap-10 wrap">
-              {preview.map((sample) => (
-                <div key={sample.path} className="col gap-4" style={{ width: 76 }}>
-                  <div className="row gap-2" style={{ alignItems: 'center' }}>
-                    <img
-                      src={sample.before}
-                      alt="before"
-                      style={{
-                        width: 34,
-                        height: 34,
-                        imageRendering: 'pixelated',
-                        borderRadius: 3,
-                        opacity: 0.55
-                      }}
-                    />
-                    <img
-                      src={sample.after}
-                      alt="after"
-                      style={{
-                        width: 34,
-                        height: 34,
-                        imageRendering: 'pixelated',
-                        borderRadius: 3
-                      }}
-                    />
-                  </div>
-                  <span className="tiny dim truncate">{sample.path.slice(sample.path.lastIndexOf('/') + 1)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {style && (
-            <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-              <span className="small">
-                <strong>{style.name}</strong>
-              </span>
-
-              <select
-                className="select"
-                style={{ width: 130 }}
-                value={folder}
-                onChange={(e) => setFolder(e.target.value)}
-              >
-                {['block', 'item', 'entity', 'particle', 'painting', 'gui'].map((f) => (
-                  <option key={f} value={f}>
-                    {f} ({vanilla.filter((p) => p.startsWith(f + '/')).length})
-                  </option>
                 ))}
-              </select>
-
-              <button
-                className="btn btn-primary btn-sm"
-                disabled={working !== null}
-                onClick={() => void restyleFolder()}
-              >
-                {working === 'painting' && <Spinner />} Restyle every {folder}
-              </button>
-
-              <button className="btn btn-primary btn-sm" disabled={working !== null} onClick={() => void wholePack()}>
-                {working === 'everything' && <Spinner />} Restyle everything
-              </button>
-
-              <button className="btn btn-sm" onClick={() => setStyle(null)}>
-                Clear
-              </button>
-            </div>
-          )}
-
-          {style && (
-            <p className="tiny dim">
-              &quot;Restyle everything&quot; does blocks, items and entities in one go &mdash;{' '}
-              {vanilla.filter((p) => p.startsWith('block/') || p.startsWith('item/') || p.startsWith('entity/')).length}{' '}
-              textures, which takes a minute. Every one is read from the game&apos;s own jar first, so restyling twice
-              does not stack &mdash; you always start from the original. A whole folder takes a moment;{' '}
-              {vanilla.filter((p) => p.startsWith(folder + '/')).length} textures is a lot of pixels.
-            </p>
-          )}
-        </div>
-
-        {draft.textures.length > 0 && (
-          <>
-            <div className="section-title">Replaced &middot; {draft.textures.length}</div>
-            <div className="row gap-8 wrap">
-              {draft.textures.map((texture) => (
-                <div key={texture.path} className="row gap-6" style={{ alignItems: 'center' }} title={texture.path}>
-                  <img
-                    src={texture.image}
-                    alt=""
-                    width={22}
-                    height={22}
-                    style={{ imageRendering: 'pixelated', borderRadius: 3 }}
-                  />
-                  <span className="tiny dim">{texture.path.slice(texture.path.lastIndexOf('/') + 1)}</span>
-                  <button
-                    className="btn btn-sm"
-                    onClick={() =>
-                      setDraft({
-                        textures: draft.textures.filter((t) => t.path !== texture.path)
-                      })
-                    }
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {filed && (
-          <p className="tiny dim">
-            Filed {filed.took} of {filed.took + filed.missed.length}.
-            {filed.missed.length > 0 && (
-              <>
-                {' '}
-                Could not place: {filed.missed.slice(0, 6).join(', ')}
-                {filed.missed.length > 6 ? ` and ${filed.missed.length - 6} more` : ''}. Name a file after the texture
-                it replaces &mdash; search above to find the name.
-              </>
-            )}
-          </p>
-        )}
-
-        <input
-          ref={texPick}
-          type="file"
-          accept="image/png"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file && aiming) void swap(aiming, file)
-            e.target.value = ''
-          }}
-        />
-
-        {/*
-         * A directory picker, which is not standard HTML but is what makes
-         * the folder shape available - and the folder shape is what tells a
-         * "saddle" from the eleven other saddles.
-         */}
-        <input
-          ref={folderPick}
-          type="file"
-          accept="image/png"
-          multiple
-          hidden
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-expect-error - webkitdirectory is not in the React typings
-          webkitdirectory=""
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []).filter((f) => f.name.toLowerCase().endsWith('.png'))
-            if (files.length > 0) void fileThem(files)
-            e.target.value = ''
-          }}
-        />
-
-        <input
-          ref={bulkPick}
-          type="file"
-          accept="image/png"
-          multiple
-          hidden
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? [])
-            if (files.length > 0) void fileThem(files)
-            e.target.value = ''
-          }}
-        />
-      </div>
-
-      {/* ------------------------------------------------------------- hats */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="section-title">Cosmetic hats</div>
-
-        <p className="small muted">
-          The eight hats the server sells. Drop a picture on each and it becomes that hat&apos;s real look instead of a
-          block balanced on somebody&apos;s head. The names are filled in for you &mdash; the plugin looks for these
-          exact ones.
-        </p>
-
-        <div className="row gap-8 wrap">
-          {COSMETIC_HATS.map((spec, at) => {
-            const done = draft.items.find((i) => i.id === spec.id)
-
-            return (
-              <button
-                key={spec.id}
-                className="btn btn-ghost col gap-4"
-                style={{ padding: 5, height: 'auto', width: 84 }}
-                title={`Picture for the ${spec.label} hat`}
-                onClick={() => {
-                  if (brains.length > 0 && wish.trim()) {
-                    void dream(at, wish)
-                    return
-                  }
-
-                  setHat(at)
-                  hatPick.current?.click()
-                }}
-              >
-                {done ? (
-                  <img
-                    src={done.image}
-                    alt={spec.label}
-                    style={{
-                      width: '100%',
-                      borderRadius: 4,
-                      display: 'block',
-                      imageRendering: 'pixelated'
-                    }}
-                  />
-                ) : (
-                  <div className="row" style={{ height: 48, alignItems: 'center', justifyContent: 'center' }}>
-                    <Plus size={16} className="dim" />
-                  </div>
-                )}
-                <span className="tiny dim">{spec.label}</span>
-              </button>
-            )
-          })}
-        </div>
-
-        <input
-          ref={hatPick}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file) void setHatImage(hat, file)
-            e.target.value = ''
-          }}
-        />
-
-        {brains.length > 0 && (
-          <div className="col gap-8">
-            <div className="section-title">Or describe them</div>
-
-            <div className="row gap-8 wrap">
-              <select
-                className="select"
-                style={{ width: 150 }}
-                value={brain}
-                onChange={(e) => setBrain(e.target.value)}
-              >
-                {brains.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.label}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                className="input"
-                style={{ flex: '1 1 220px' }}
-                value={wish}
-                placeholder="a style for all of them, eg neon, medieval, cursed"
-                onChange={(e) => setWish(e.target.value.slice(0, 200))}
-              />
-
-              <button className="btn btn-primary btn-sm" disabled={thinking !== null} onClick={() => void dreamAll()}>
-                {thinking !== null && <Spinner />} Draw all eight
-              </button>
-            </div>
-
-            <div className="row gap-6 wrap">
-              {HAT_STYLES.map((idea) => (
-                <button key={idea} className="btn btn-sm" style={{ fontSize: 12 }} onClick={() => setWish(idea)}>
-                  {idea}
-                </button>
-              ))}
-            </div>
-
-            <p className="tiny dim">
-              The model describes shapes and the app draws them &mdash; it cannot paint pixels directly, so bold simple
-              hats come out well and fiddly ones do not. <strong>Click any hat again to re-roll just that one</strong>{' '}
-              &mdash; each try asks for something different. If a hat will not come out right, draw it yourself and drop
-              the file on it instead.
-            </p>
-          </div>
-        )}
-
-        <p className="tiny dim">
-          Once the pack is on the server, set <code>cosmetics.customModels: true</code> in the plugin config and
-          restart. It is off by default because a pack with some hats and not others shows the missing texture for the
-          rest.
-        </p>
-      </div>
-
-      {/* ----------------------------------------------------------- sounds */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="row gap-8" style={{ alignItems: 'center' }}>
-          <div className="section-title" style={{ flex: 1 }}>
-            Sounds and music discs
-          </div>
-          <button className="btn btn-sm" onClick={() => void addSound()}>
-            <Music size={14} /> Add an .ogg
-          </button>
-        </div>
-
-        {draft.sounds.length === 0 ? (
-          <p className="small muted">
-            Pick a sound the game already plays and put your own audio under it. Minecraft only plays{' '}
-            <strong>.ogg</strong> — mp3 and wav are ignored, so convert first.
-          </p>
-        ) : (
-          <div className="col gap-8">
-            {draft.sounds.map((sound, at) => (
-              <div key={at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-                <input
-                  className="input"
-                  style={{ flex: '1 1 140px' }}
-                  value={sound.label}
-                  onChange={(e) => changeSound(at, { label: e.target.value, id: safeId(e.target.value) })}
-                />
-
-                <select
-                  className="select"
-                  style={{ flex: '1 1 200px' }}
-                  value={sound.event}
-                  onChange={(e) => {
-                    const known = SOUND_EVENTS.find((s) => s.event === e.target.value)
-                    changeSound(at, {
-                      event: e.target.value,
-                      stream: known ? known.stream : true
-                    })
-                  }}
-                >
-                  <optgroup label="Music discs">
-                    {MUSIC_DISCS.map((disc) => (
-                      <option key={disc.event} value={disc.event}>
-                        {disc.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Everything else">
-                    {SOUND_EVENTS.map((entry) => (
-                      <option key={entry.event} value={entry.event}>
-                        {entry.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
-
-                <span className="tiny dim truncate" style={{ flex: '1 1 120px' }}>
-                  {sound.file.split(/[\\/]/).pop()}
-                </span>
-
-                <button
-                  className="btn btn-sm"
-                  title="Take it out"
-                  onClick={() => setDraft({ sounds: draft.sounds.filter((_, i) => i !== at) })}
-                >
-                  <Trash2 size={13} />
-                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ------------------------------------------------------------- menu */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="section-title">Main menu</div>
-
-        <p className="small muted">
-          The title screen background is a cube of six pictures the camera sits inside. Set one and the rest are filled
-          with it, so a single image works — set them face by face for a real panorama.
-        </p>
-
-        {/*
-         * The one thing here that cannot be worked out by trying it.
-         *
-         * A server's pack is applied on connecting and dropped on leaving, and
-         * the title screen is neither - so somebody sets a panorama, serves
-         * it, joins, and never sees it, with nothing anywhere to say why.
-         */}
-        {target?.kind === 'server' && (draft.panorama || draft.logo) && (
-          <p className="small" style={{ color: 'var(--warning)' }}>
-            These will not show while the pack comes from a server. Minecraft applies a server&apos;s pack when you
-            connect and drops it when you leave, and the title screen is neither — so a menu background can only come
-            from a pack installed on your own machine. Build it again with &quot;(just me)&quot; and turn it on under
-            Options, Resource Packs.
-          </p>
-        )}
-
-        <div className="row gap-8 wrap">
-          {PANORAMA_FACES.map((name, at) => (
-            <button
-              key={name}
-              className="btn btn-ghost col gap-4"
-              style={{ padding: 4, height: 'auto', width: 92 }}
-              title={`Set the ${name.toLowerCase()} face`}
-              onClick={() => {
-                setFace(at)
-                facePick.current?.click()
-              }}
-            >
-              {draft.panorama?.[at] ? (
-                <img src={draft.panorama[at]} alt={name} style={{ width: '100%', borderRadius: 4, display: 'block' }} />
-              ) : (
-                <div className="row" style={{ height: 52, alignItems: 'center', justifyContent: 'center' }}>
-                  <ImageIcon size={18} className="dim" />
-                </div>
-              )}
-              <span className="tiny dim">{name}</span>
-            </button>
-          ))}
-        </div>
-
-        <input
-          ref={facePick}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file) void setFaceImage(face, file)
-            e.target.value = ''
-          }}
-        />
-
-        <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-          <button className="btn btn-sm" onClick={() => logoPick.current?.click()}>
-            <Upload size={14} /> {draft.logo ? 'Change the logo' : 'Custom title logo'}
-          </button>
-
-          {draft.logo && (
-            <>
-              <img src={draft.logo} alt="logo" style={{ height: 30, borderRadius: 4, imageRendering: 'pixelated' }} />
-              <button className="btn btn-sm" onClick={() => setDraft({ logo: null })}>
-                <Trash2 size={13} />
-              </button>
             </>
           )}
 
-          {draft.panorama && (
-            <button className="btn btn-sm" onClick={() => setDraft({ panorama: null })}>
-              Clear the background
-            </button>
+          {filed && (
+            <p className="tiny dim">
+              Filed {filed.took} of {filed.took + filed.missed.length}.
+              {filed.missed.length > 0 && (
+                <>
+                  {' '}
+                  Could not place: {filed.missed.slice(0, 6).join(', ')}
+                  {filed.missed.length > 6 ? ` and ${filed.missed.length - 6} more` : ''}. Name a file after the texture
+                  it replaces &mdash; search above to find the name.
+                </>
+              )}
+            </p>
           )}
 
           <input
-            ref={logoPick}
+            ref={texPick}
             type="file"
-            accept="image/*"
+            accept="image/png"
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0]
-              if (file) void readPng(file).then((logo) => setDraft({ logo }))
+              if (file && aiming) void swap(aiming, file)
+              e.target.value = ''
+            }}
+          />
+
+          {/*
+           * A directory picker, which is not standard HTML but is what makes
+           * the folder shape available - and the folder shape is what tells a
+           * "saddle" from the eleven other saddles.
+           */}
+          <input
+            ref={folderPick}
+            type="file"
+            accept="image/png"
+            multiple
+            hidden
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error - webkitdirectory is not in the React typings
+            webkitdirectory=""
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []).filter((f) => f.name.toLowerCase().endsWith('.png'))
+              if (files.length > 0) void fileThem(files)
+              e.target.value = ''
+            }}
+          />
+
+          <input
+            ref={bulkPick}
+            type="file"
+            accept="image/png"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? [])
+              if (files.length > 0) void fileThem(files)
               e.target.value = ''
             }}
           />
         </div>
-      </div>
+      )}
 
-      {/* ---------------------------------------------------------- keeping */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="row gap-8" style={{ alignItems: 'center' }}>
-          <div className="section-title" style={{ flex: 1 }}>
-            Keep it
+      {tab === 'items' && (
+        <div className="panel panel-pad col gap-12">
+          <div className="row gap-8" style={{ alignItems: 'center' }}>
+            <div className="section-title" style={{ flex: 1 }}>
+              Item textures
+            </div>
+            <button className="btn btn-sm" onClick={() => itemPick.current?.click()}>
+              <Plus size={14} /> Add a picture
+            </button>
+            <input
+              ref={itemPick}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                for (const file of Array.from(e.target.files ?? [])) void addItem(file)
+                e.target.value = ''
+              }}
+            />
           </div>
-          <button className="btn btn-primary btn-sm" disabled={isEmpty(draft)} onClick={() => void keep()}>
-            Save this pack
-          </button>
+
+          {draft.items.length === 0 ? (
+            <p className="small muted">
+              Drop in any picture and it becomes a 16 by 16 item texture. By default it is a new look the item points
+              at, so ordinary sticks are left alone — which is what pairs with the custom items you already make in
+              Generators.
+            </p>
+          ) : (
+            <div className="col gap-8">
+              {draft.items.map((item, at) => (
+                <div key={at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                  <img
+                    src={item.image}
+                    alt={item.label}
+                    width={36}
+                    height={36}
+                    style={{ imageRendering: 'pixelated', borderRadius: 4 }}
+                  />
+
+                  <input
+                    className="input"
+                    style={{ flex: '1 1 150px' }}
+                    value={item.label}
+                    onChange={(e) => changeItem(at, { label: e.target.value, id: safeId(e.target.value) })}
+                  />
+
+                  <select
+                    className="select"
+                    style={{ flex: '1 1 150px' }}
+                    value={item.base}
+                    onChange={(e) => changeItem(at, { base: e.target.value })}
+                  >
+                    {BASE_ITEMS.map((id) => (
+                      <option key={id} value={id}>
+                        {id.replace('minecraft:', '').replace(/_/g, ' ')}
+                      </option>
+                    ))}
+                  </select>
+
+                  <label className="row gap-4 tiny" style={{ alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={item.replaces}
+                      onChange={(e) => changeItem(at, { replaces: e.target.checked })}
+                    />
+                    Replace every one
+                  </label>
+
+                  <button
+                    className="btn btn-sm"
+                    title="Take it out"
+                    onClick={() => setDraft({ items: draft.items.filter((_, i) => i !== at) })}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+
+              <p className="tiny dim">
+                &quot;Replace every one&quot; takes over the vanilla texture, so every stick in the world changes. Left
+                off, only items given with the command below look different.
+              </p>
+            </div>
+          )}
         </div>
+      )}
 
-        <p className="small muted">
-          Saved as it is, textures and all, so you can come back to it or build a variant without starting again. Until
-          you save, a pack only lives while the launcher is open.
-        </p>
+      {tab === 'hats' && (
+        <div className="panel panel-pad col gap-12">
+          <div className="section-title">Cosmetic hats</div>
 
-        {saved.length > 0 && (
-          <div className="row gap-10 wrap">
-            {saved.map((entry) => (
-              <div key={entry.id} className="col gap-6" style={{ width: 128 }}>
+          <p className="small muted">
+            The eight hats the server sells. Drop a picture on each and it becomes that hat&apos;s real look instead of
+            a block balanced on somebody&apos;s head. The names are filled in for you &mdash; the plugin looks for these
+            exact ones.
+          </p>
+
+          <div className="row gap-8 wrap">
+            {COSMETIC_HATS.map((spec, at) => {
+              const done = draft.items.find((i) => i.id === spec.id)
+
+              return (
                 <button
-                  className="btn btn-ghost"
-                  style={{ padding: 4, height: 'auto' }}
-                  title="Open this one"
-                  onClick={() => reopen(entry)}
+                  key={spec.id}
+                  className="btn btn-ghost col gap-4"
+                  style={{ padding: 5, height: 'auto', width: 84 }}
+                  title={`Picture for the ${spec.label} hat`}
+                  onClick={() => {
+                    if (brains.length > 0 && wish.trim()) {
+                      void dream(at, wish)
+                      return
+                    }
+
+                    setHat(at)
+                    hatPick.current?.click()
+                  }}
                 >
-                  {entry.thumbnail ? (
+                  {done ? (
                     <img
-                      src={entry.thumbnail}
-                      alt={entry.name}
+                      src={done.image}
+                      alt={spec.label}
                       style={{
                         width: '100%',
-                        borderRadius: 5,
+                        borderRadius: 4,
                         display: 'block',
                         imageRendering: 'pixelated'
                       }}
                     />
                   ) : (
-                    <span className="tiny">{entry.name}</span>
+                    <div className="row" style={{ height: 48, alignItems: 'center', justifyContent: 'center' }}>
+                      <Plus size={16} className="dim" />
+                    </div>
                   )}
+                  <span className="tiny dim">{spec.label}</span>
                 </button>
-
-                <div className="row gap-6" style={{ alignItems: 'center' }}>
-                  <span className="tiny dim truncate" style={{ flex: 1 }}>
-                    {entry.name}
-                  </span>
-                  <button
-                    className="btn btn-sm"
-                    title="Forget it"
-                    onClick={() => {
-                      void (async () => {
-                        await api.creations.remove(entry.id)
-                        setSaved(await api.creations.list('resourcepack'))
-                      })()
-                    }}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ------------------------------------------------------------ build */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="section-title">Put it somewhere</div>
-
-        <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
-          <div className="field" style={{ flex: '1 1 220px' }}>
-            <label className="field-label">Where it goes</label>
-            <select className="select" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
-              {targets.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
+              )
+            })}
           </div>
 
-          {target?.kind === 'server' && (
-            <>
-              <div className="field" style={{ width: 110 }}>
-                <label className="field-label">Pack port</label>
-                <input
-                  className="input"
-                  type="number"
-                  value={port}
-                  onChange={(e) => setPort(Number(e.target.value) || 25567)}
-                />
-              </div>
+          <input
+            ref={hatPick}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void setHatImage(hat, file)
+              e.target.value = ''
+            }}
+          />
 
-              <div className="field" style={{ flex: '1 1 200px' }}>
-                <label className="field-label">Who has to reach it</label>
+          {brains.length > 0 && (
+            <div className="col gap-8">
+              <div className="section-title">Or describe them</div>
+
+              <div className="row gap-8 wrap">
                 <select
                   className="select"
-                  value={reachFor}
-                  onChange={(e) => setReachFor(e.target.value as typeof reachFor)}
+                  style={{ width: 150 }}
+                  value={brain}
+                  onChange={(e) => setBrain(e.target.value)}
                 >
-                  <option value="house">Me and my network{host?.localAddress ? ` (${host.localAddress})` : ''}</option>
-                  <option value="internet">Players over the internet</option>
-                  <option value="typed">An address I type</option>
+                  {brains.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  className="input"
+                  style={{ flex: '1 1 220px' }}
+                  value={wish}
+                  placeholder="a style for all of them, eg neon, medieval, cursed"
+                  onChange={(e) => setWish(e.target.value.slice(0, 200))}
+                />
+
+                <button className="btn btn-primary btn-sm" disabled={thinking !== null} onClick={() => void dreamAll()}>
+                  {thinking !== null && <Spinner />} Draw all eight
+                </button>
+              </div>
+
+              <div className="row gap-6 wrap">
+                {HAT_STYLES.map((idea) => (
+                  <button key={idea} className="btn btn-sm" style={{ fontSize: 12 }} onClick={() => setWish(idea)}>
+                    {idea}
+                  </button>
+                ))}
+              </div>
+
+              <p className="tiny dim">
+                The model describes shapes and the app draws them &mdash; it cannot paint pixels directly, so bold
+                simple hats come out well and fiddly ones do not.{' '}
+                <strong>Click any hat again to re-roll just that one</strong> &mdash; each try asks for something
+                different. If a hat will not come out right, draw it yourself and drop the file on it instead.
+              </p>
+            </div>
+          )}
+
+          <p className="tiny dim">
+            Once the pack is on the server, set <code>cosmetics.customModels: true</code> in the plugin config and
+            restart. It is off by default because a pack with some hats and not others shows the missing texture for the
+            rest.
+          </p>
+        </div>
+      )}
+
+      {tab === 'sounds' && (
+        <div className="panel panel-pad col gap-12">
+          <div className="row gap-8" style={{ alignItems: 'center' }}>
+            <div className="section-title" style={{ flex: 1 }}>
+              Sounds and music discs
+            </div>
+            <button className="btn btn-sm" onClick={() => void addSound()}>
+              <Music size={14} /> Add an .ogg
+            </button>
+          </div>
+
+          {draft.sounds.length === 0 ? (
+            <p className="small muted">
+              Pick a sound the game already plays and put your own audio under it. Minecraft only plays{' '}
+              <strong>.ogg</strong> — mp3 and wav are ignored, so convert first.
+            </p>
+          ) : (
+            <div className="col gap-8">
+              {draft.sounds.map((sound, at) => (
+                <div key={at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                  <input
+                    className="input"
+                    style={{ flex: '1 1 140px' }}
+                    value={sound.label}
+                    onChange={(e) => changeSound(at, { label: e.target.value, id: safeId(e.target.value) })}
+                  />
+
+                  <select
+                    className="select"
+                    style={{ flex: '1 1 200px' }}
+                    value={sound.event}
+                    onChange={(e) => {
+                      const known = SOUND_EVENTS.find((s) => s.event === e.target.value)
+                      changeSound(at, {
+                        event: e.target.value,
+                        stream: known ? known.stream : true
+                      })
+                    }}
+                  >
+                    <optgroup label="Music discs">
+                      {MUSIC_DISCS.map((disc) => (
+                        <option key={disc.event} value={disc.event}>
+                          {disc.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Everything else">
+                      {SOUND_EVENTS.map((entry) => (
+                        <option key={entry.event} value={entry.event}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+
+                  <span className="tiny dim truncate" style={{ flex: '1 1 120px' }}>
+                    {sound.file.split(/[\\/]/).pop()}
+                  </span>
+
+                  <button
+                    className="btn btn-sm"
+                    title="Take it out"
+                    onClick={() => setDraft({ sounds: draft.sounds.filter((_, i) => i !== at) })}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'menu' && (
+        <div className="panel panel-pad col gap-12">
+          <div className="section-title">Main menu</div>
+
+          <p className="small muted">
+            The title screen background is a cube of six pictures the camera sits inside. Set one and the rest are
+            filled with it, so a single image works — set them face by face for a real panorama.
+          </p>
+
+          {/*
+           * The one thing here that cannot be worked out by trying it.
+           *
+           * A server's pack is applied on connecting and dropped on leaving, and
+           * the title screen is neither - so somebody sets a panorama, serves
+           * it, joins, and never sees it, with nothing anywhere to say why.
+           */}
+          {target?.kind === 'server' && (draft.panorama || draft.logo) && (
+            <p className="small" style={{ color: 'var(--warning)' }}>
+              These will not show while the pack comes from a server. Minecraft applies a server&apos;s pack when you
+              connect and drops it when you leave, and the title screen is neither — so a menu background can only come
+              from a pack installed on your own machine. Build it again with &quot;(just me)&quot; and turn it on under
+              Options, Resource Packs.
+            </p>
+          )}
+
+          <div className="row gap-8 wrap">
+            {PANORAMA_FACES.map((name, at) => (
+              <button
+                key={name}
+                className="btn btn-ghost col gap-4"
+                style={{ padding: 4, height: 'auto', width: 92 }}
+                title={`Set the ${name.toLowerCase()} face`}
+                onClick={() => {
+                  setFace(at)
+                  facePick.current?.click()
+                }}
+              >
+                {draft.panorama?.[at] ? (
+                  <img
+                    src={draft.panorama[at]}
+                    alt={name}
+                    style={{ width: '100%', borderRadius: 4, display: 'block' }}
+                  />
+                ) : (
+                  <div className="row" style={{ height: 52, alignItems: 'center', justifyContent: 'center' }}>
+                    <ImageIcon size={18} className="dim" />
+                  </div>
+                )}
+                <span className="tiny dim">{name}</span>
+              </button>
+            ))}
+          </div>
+
+          <input
+            ref={facePick}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void setFaceImage(face, file)
+              e.target.value = ''
+            }}
+          />
+
+          <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+            <button className="btn btn-sm" onClick={() => logoPick.current?.click()}>
+              <Upload size={14} /> {draft.logo ? 'Change the logo' : 'Custom title logo'}
+            </button>
+
+            {draft.logo && (
+              <>
+                <img src={draft.logo} alt="logo" style={{ height: 30, borderRadius: 4, imageRendering: 'pixelated' }} />
+                <button className="btn btn-sm" onClick={() => setDraft({ logo: null })}>
+                  <Trash2 size={13} />
+                </button>
+              </>
+            )}
+
+            {draft.panorama && (
+              <button className="btn btn-sm" onClick={() => setDraft({ panorama: null })}>
+                Clear the background
+              </button>
+            )}
+
+            <input
+              ref={logoPick}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void readPng(file).then((logo) => setDraft({ logo }))
+                e.target.value = ''
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === 'saved' && (
+        <div className="panel panel-pad col gap-12">
+          <div className="row gap-8" style={{ alignItems: 'center' }}>
+            <div className="section-title" style={{ flex: 1 }}>
+              Keep it
+            </div>
+            <button className="btn btn-primary btn-sm" disabled={isEmpty(draft)} onClick={() => void keep()}>
+              Save this pack
+            </button>
+          </div>
+
+          <p className="small muted">
+            Saved as it is, textures and all, so you can come back to it or build a variant without starting again.
+            Until you save, a pack only lives while the launcher is open.
+          </p>
+
+          {saved.length > 0 && (
+            <div className="row gap-10 wrap">
+              {saved.map((entry) => (
+                <div key={entry.id} className="col gap-6" style={{ width: 128 }}>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ padding: 4, height: 'auto' }}
+                    title="Open this one"
+                    onClick={() => reopen(entry)}
+                  >
+                    {entry.thumbnail ? (
+                      <img
+                        src={entry.thumbnail}
+                        alt={entry.name}
+                        style={{
+                          width: '100%',
+                          borderRadius: 5,
+                          display: 'block',
+                          imageRendering: 'pixelated'
+                        }}
+                      />
+                    ) : (
+                      <span className="tiny">{entry.name}</span>
+                    )}
+                  </button>
+
+                  <div className="row gap-6" style={{ alignItems: 'center' }}>
+                    <span className="tiny dim truncate" style={{ flex: 1 }}>
+                      {entry.name}
+                    </span>
+                    <button
+                      className="btn btn-sm"
+                      title="Forget it"
+                      onClick={() => {
+                        void (async () => {
+                          await api.creations.remove(entry.id)
+                          setSaved(await api.creations.list('resourcepack'))
+                        })()
+                      }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'build' && (
+        <>
+          <div className="panel panel-pad col gap-12">
+            <div className="section-title">Put it somewhere</div>
+
+            <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
+              <div className="field" style={{ flex: '1 1 220px' }}>
+                <label className="field-label">Where it goes</label>
+                <select className="select" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+                  {targets.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
-              {reachFor === 'typed' && (
-                <div className="field" style={{ flex: '1 1 180px' }}>
-                  <label className="field-label">Address</label>
-                  <input
-                    className="input"
-                    value={address}
-                    placeholder="play.yourserver.net"
-                    onChange={(e) => setAddress(e.target.value)}
-                  />
-                </div>
-              )}
-            </>
-          )}
-
-          <button
-            className="btn"
-            disabled={busy || nothing}
-            title={nothing ? 'There is nothing in the pack yet' : 'Write it out as a .zip'}
-            onClick={() => void exportZip()}
-          >
-            {busy && <Spinner />} Save as a file
-          </button>
-
-          <button
-            className="btn btn-primary"
-            title={nothing ? 'There is nothing in the pack yet' : !target ? 'Pick where it goes first' : undefined}
-            disabled={busy || nothing || !target}
-            onClick={() => void install()}
-          >
-            {busy && <Spinner />}
-            {target?.kind === 'server' ? <Server size={14} /> : <Upload size={14} />}
-            {target?.kind === 'server' ? ' Build and serve it' : ' Build and install it'}
-          </button>
-        </div>
-
-        {target?.kind === 'server' ? (
-          <>
-            <p className="tiny dim">
-              The server hands out a link, not the file — so the launcher serves the pack over that port for as long as
-              it is open. Windows will ask before anything listens on it.
-            </p>
-
-            {/*
-             * server.properties holds exactly one url, and on a router that
-             * will not hairpin, no single address reaches both the machine
-             * that made the pack and the internet. Saying which one you have
-             * chosen beats picking silently and letting the other fail.
-             */}
-            <p className="tiny dim">
-              {reachFor === 'house'
-                ? 'Works for you and anyone in the house. Players joining over the internet will not be able to fetch it.'
-                : reachFor === 'internet'
-                  ? 'Works for players outside. Many home routers will not send you back to your own public address, so you may not be able to fetch it yourself — install it with "(just me)" to test.'
-                  : 'Whatever you type goes into server.properties as it is.'}
-            </p>
-
-            {/*
-             * The same button the server port gets, for the pack port.
-             *
-             * Having forwarded 25565 does nothing for this one: the game speaks its own
-             * protocol and this speaks http, so they cannot share a port. Somebody whose
-             * server friends can already join would otherwise hand out a pack link that
-             * only works inside their own house.
-             */}
-            <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-              {forwarding?.open ? (
+              {target?.kind === 'server' && (
                 <>
-                  <span className="small">
-                    Port {port} is open{forwarding.router ? ` via ${forwarding.router}` : ''}.
-                  </span>
-                  <button className="btn btn-sm" disabled={asking} onClick={() => void closeThePort()}>
-                    {asking && <Spinner />} Close it again
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button className="btn btn-sm" disabled={asking} onClick={() => void openThePort()}>
-                    {asking && <Spinner />} <Globe size={14} /> Open port {port} for friends
-                  </button>
-                  <button className="btn btn-sm" disabled={asking} onClick={() => void checkPort()}>
-                    Check it
-                  </button>
+                  <div className="field" style={{ width: 110 }}>
+                    <label className="field-label">Pack port</label>
+                    <input
+                      className="input"
+                      type="number"
+                      value={port}
+                      onChange={(e) => setPort(Number(e.target.value) || 25567)}
+                    />
+                  </div>
+
+                  <div className="field" style={{ flex: '1 1 200px' }}>
+                    <label className="field-label">Who has to reach it</label>
+                    <select
+                      className="select"
+                      value={reachFor}
+                      onChange={(e) => setReachFor(e.target.value as typeof reachFor)}
+                    >
+                      <option value="house">
+                        Me and my network{host?.localAddress ? ` (${host.localAddress})` : ''}
+                      </option>
+                      <option value="internet">Players over the internet</option>
+                      <option value="typed">An address I type</option>
+                    </select>
+                  </div>
+
+                  {reachFor === 'typed' && (
+                    <div className="field" style={{ flex: '1 1 180px' }}>
+                      <label className="field-label">Address</label>
+                      <input
+                        className="input"
+                        value={address}
+                        placeholder="play.yourserver.net"
+                        onChange={(e) => setAddress(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </>
               )}
 
-              {forwarding?.externalAddress && (
-                <span className="tiny dim">Your address: {forwarding.externalAddress}</span>
-              )}
+              <button
+                className="btn"
+                disabled={busy || nothing}
+                title={nothing ? 'There is nothing in the pack yet' : 'Write it out as a .zip'}
+                onClick={() => void exportZip()}
+              >
+                {busy && <Spinner />} Save as a file
+              </button>
+
+              <button
+                className="btn btn-primary"
+                title={nothing ? 'There is nothing in the pack yet' : !target ? 'Pick where it goes first' : undefined}
+                disabled={busy || nothing || !target}
+                onClick={() => void install()}
+              >
+                {busy && <Spinner />}
+                {target?.kind === 'server' ? <Server size={14} /> : <Upload size={14} />}
+                {target?.kind === 'server' ? ' Build and serve it' : ' Build and install it'}
+              </button>
             </div>
 
-            {forwarding && !forwarding.available && (
+            {target?.kind === 'server' ? (
+              <>
+                <p className="tiny dim">
+                  The server hands out a link, not the file — so the launcher serves the pack over that port for as long
+                  as it is open. Windows will ask before anything listens on it.
+                </p>
+
+                {/*
+                 * server.properties holds exactly one url, and on a router that
+                 * will not hairpin, no single address reaches both the machine
+                 * that made the pack and the internet. Saying which one you have
+                 * chosen beats picking silently and letting the other fail.
+                 */}
+                <p className="tiny dim">
+                  {reachFor === 'house'
+                    ? 'Works for you and anyone in the house. Players joining over the internet will not be able to fetch it.'
+                    : reachFor === 'internet'
+                      ? 'Works for players outside. Many home routers will not send you back to your own public address, so you may not be able to fetch it yourself — install it with "(just me)" to test.'
+                      : 'Whatever you type goes into server.properties as it is.'}
+                </p>
+
+                {/*
+                 * The same button the server port gets, for the pack port.
+                 *
+                 * Having forwarded 25565 does nothing for this one: the game speaks its own
+                 * protocol and this speaks http, so they cannot share a port. Somebody whose
+                 * server friends can already join would otherwise hand out a pack link that
+                 * only works inside their own house.
+                 */}
+                <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                  {forwarding?.open ? (
+                    <>
+                      <span className="small">
+                        Port {port} is open{forwarding.router ? ` via ${forwarding.router}` : ''}.
+                      </span>
+                      <button className="btn btn-sm" disabled={asking} onClick={() => void closeThePort()}>
+                        {asking && <Spinner />} Close it again
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="btn btn-sm" disabled={asking} onClick={() => void openThePort()}>
+                        {asking && <Spinner />} <Globe size={14} /> Open port {port} for friends
+                      </button>
+                      <button className="btn btn-sm" disabled={asking} onClick={() => void checkPort()}>
+                        Check it
+                      </button>
+                    </>
+                  )}
+
+                  {forwarding?.externalAddress && (
+                    <span className="tiny dim">Your address: {forwarding.externalAddress}</span>
+                  )}
+                </div>
+
+                {forwarding && !forwarding.available && (
+                  <p className="tiny dim">
+                    {forwarding.reason ??
+                      'No router on this network offered to forward a port. Forward TCP ' +
+                        port +
+                        ' to this machine by hand instead.'}
+                  </p>
+                )}
+
+                <p className="tiny dim">
+                  This is a different port from the one players connect on — the game speaks its own protocol and the
+                  pack is fetched over http, so having forwarded your server port does nothing for this one.
+                </p>
+              </>
+            ) : (
               <p className="tiny dim">
-                {forwarding.reason ??
-                  'No router on this network offered to forward a port. Forward TCP ' +
-                    port +
-                    ' to this machine by hand instead.'}
+                Written into this instance&apos;s resourcepacks folder. Turn it on in game under Options, then Resource
+                Packs.
               </p>
             )}
 
-            <p className="tiny dim">
-              This is a different port from the one players connect on — the game speaks its own protocol and the pack
-              is fetched over http, so having forwarded your server port does nothing for this one.
-            </p>
-          </>
-        ) : (
-          <p className="tiny dim">
-            Written into this instance&apos;s resourcepacks folder. Turn it on in game under Options, then Resource
-            Packs.
-          </p>
-        )}
-
-        {nothing && (
-          <p className="small" style={{ color: 'var(--warning)' }}>
-            Nothing in the pack yet, so there is nothing to build — add a texture, a hat, a sound or a menu background
-            and the button wakes up.
-          </p>
-        )}
-      </div>
-
-      {/* ----------------------------------------------------------- result */}
-
-      {built && (
-        <div className="panel panel-pad col gap-12">
-          <div className="section-title">Built</div>
-
-          <p className="small muted">
-            {built.contents.items} texture{built.contents.items === 1 ? '' : 's'}, {built.contents.sounds} sound
-            {built.contents.sounds === 1 ? '' : 's'}
-            {built.contents.panorama ? ', a menu background' : ''}
-            {built.contents.logo ? ', a logo' : ''} — {(built.bytes / 1024).toFixed(0)}KB.
-          </p>
-
-          {url && (
-            <>
-              <div className="row gap-8" style={{ alignItems: 'center' }}>
-                <code className="tiny selectable" style={{ flex: 1, wordBreak: 'break-all' }}>
-                  {url}
-                </code>
-                <button className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(url)}>
-                  Copy
-                </button>
-              </div>
-
-              <label className="row gap-4 small" style={{ alignItems: 'center' }}>
-                <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} />
-                Kick anyone who refuses it
-              </label>
-
-              {/*
-               * What the probe found, said plainly.
-               *
-               * The failure this catches is the worst kind to debug from the
-               * game: everything is configured correctly, and the download
-               * fails anyway because the router will not route this machine
-               * back to its own public address.
-               */}
-              {reach && !reach.ok && (
-                <div className="col gap-8">
-                  <p className="small" style={{ color: 'var(--warning)', margin: 0 }}>
-                    That link does not answer from this PC.
-                  </p>
-
-                  <p className="tiny dim" style={{ margin: 0 }}>
-                    Almost always because your router will not send you back to your own public address. It can still be
-                    the right link for friends joining from outside &mdash; but you will not be able to download it
-                    yourself, so test with someone else or install the pack for yourself with the &quot;(just me)&quot;
-                    target instead.
-                  </p>
-
-                  {reach.alternative && (
-                    <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-                      <button
-                        className="btn btn-sm"
-                        disabled={busy}
-                        onClick={() => {
-                          setAddress(reach.alternative!.split('//')[1]?.split(':')[0] ?? '')
-                          void install()
-                        }}
-                      >
-                        Use my local address instead
-                      </button>
-                      <span className="tiny dim">Works for you and anyone in the house, not over the internet.</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {reach?.ok && (
-                <p className="tiny" style={{ color: 'var(--success)' }}>
-                  Checked &mdash; that link answers.
-                </p>
-              )}
-
-              <p className="tiny dim">
-                Restart the server for it to start offering the pack. The link has the pack&apos;s own hash in it, so
-                rebuilding gives a new link and nobody is left on a stale copy.
+            {nothing && (
+              <p className="small" style={{ color: 'var(--warning)' }}>
+                Nothing in the pack yet, so there is nothing to build — add a texture, a hat, a sound or a menu
+                background and the button wakes up.
               </p>
-            </>
-          )}
+            )}
+          </div>
+          {built && (
+            <div className="panel panel-pad col gap-12">
+              <div className="section-title">Built</div>
 
-          {built.commands.length > 0 && (
-            <>
-              <div className="section-title">Getting the custom items</div>
+              <p className="small muted">
+                {built.contents.items} texture{built.contents.items === 1 ? '' : 's'}, {built.contents.sounds} sound
+                {built.contents.sounds === 1 ? '' : 's'}
+                {built.contents.panorama ? ', a menu background' : ''}
+                {built.contents.logo ? ', a logo' : ''} — {(built.bytes / 1024).toFixed(0)}KB.
+              </p>
 
-              <div className="col gap-4">
-                {built.commands.map((command) => (
-                  <div key={command} className="row gap-8" style={{ alignItems: 'center' }}>
+              {url && (
+                <>
+                  <div className="row gap-8" style={{ alignItems: 'center' }}>
                     <code className="tiny selectable" style={{ flex: 1, wordBreak: 'break-all' }}>
-                      {command}
+                      {url}
                     </code>
-                    <button className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(command)}>
+                    <button className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(url)}>
                       Copy
                     </button>
                   </div>
-                ))}
-              </div>
-            </>
+
+                  <label className="row gap-4 small" style={{ alignItems: 'center' }}>
+                    <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} />
+                    Kick anyone who refuses it
+                  </label>
+
+                  {/*
+                   * What the probe found, said plainly.
+                   *
+                   * The failure this catches is the worst kind to debug from the
+                   * game: everything is configured correctly, and the download
+                   * fails anyway because the router will not route this machine
+                   * back to its own public address.
+                   */}
+                  {reach && !reach.ok && (
+                    <div className="col gap-8">
+                      <p className="small" style={{ color: 'var(--warning)', margin: 0 }}>
+                        That link does not answer from this PC.
+                      </p>
+
+                      <p className="tiny dim" style={{ margin: 0 }}>
+                        Almost always because your router will not send you back to your own public address. It can
+                        still be the right link for friends joining from outside &mdash; but you will not be able to
+                        download it yourself, so test with someone else or install the pack for yourself with the
+                        &quot;(just me)&quot; target instead.
+                      </p>
+
+                      {reach.alternative && (
+                        <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                          <button
+                            className="btn btn-sm"
+                            disabled={busy}
+                            onClick={() => {
+                              setAddress(reach.alternative!.split('//')[1]?.split(':')[0] ?? '')
+                              void install()
+                            }}
+                          >
+                            Use my local address instead
+                          </button>
+                          <span className="tiny dim">
+                            Works for you and anyone in the house, not over the internet.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {reach?.ok && (
+                    <p className="tiny" style={{ color: 'var(--success)' }}>
+                      Checked &mdash; that link answers.
+                    </p>
+                  )}
+
+                  <p className="tiny dim">
+                    Restart the server for it to start offering the pack. The link has the pack&apos;s own hash in it,
+                    so rebuilding gives a new link and nobody is left on a stale copy.
+                  </p>
+                </>
+              )}
+
+              {built.commands.length > 0 && (
+                <>
+                  <div className="section-title">Getting the custom items</div>
+
+                  <div className="col gap-4">
+                    {built.commands.map((command) => (
+                      <div key={command} className="row gap-8" style={{ alignItems: 'center' }}>
+                        <code className="tiny selectable" style={{ flex: 1, wordBreak: 'break-all' }}>
+                          {command}
+                        </code>
+                        <button className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(command)}>
+                          Copy
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
 
       {host?.running && (
