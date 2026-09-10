@@ -241,9 +241,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
        * longest tail of that path which is a real texture is the answer, and
        * "block/stone" can no longer be confused with anything.
        */
-      const relative = (file.webkitRelativePath || file.name)
-        .replace(/\.png$/i, '')
-        .toLowerCase()
+      const relative = (file.webkitRelativePath || file.name).replace(/\.png$/i, '').toLowerCase()
 
       const parts = relative.split('/')
       let path: string | null = null
@@ -380,8 +378,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     if (!style) return
 
     const paths = vanilla.filter(
-      (path) =>
-        path.startsWith('block/') || path.startsWith('item/') || path.startsWith('entity/')
+      (path) => path.startsWith('block/') || path.startsWith('item/') || path.startsWith('entity/')
     )
 
     setWorking('everything')
@@ -408,8 +405,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
       })
 
       setOutcome(
-        `${done.length} textures restyled as ${style.name}. `
-          + 'Blocks, items and entities. Save it before you close the launcher.'
+        `${done.length} textures restyled as ${style.name}. ` +
+          'Blocks, items and entities. Save it before you close the launcher.'
       )
     } catch (err) {
       setError(toPayload(err))
@@ -624,12 +621,12 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
       setTries({ ...tries, [spec.id]: again })
 
       const result = await api.banners.designIcon(
-        'A hat, drawn flat as an item icon, seen from the side. '
-          + asked
-          + '. It must read as headwear: a rounded crown or dome, with a brim, '
-          + 'band or rim beneath it. Big simple shapes filling most of the square. '
-          + 'No head, no person, no background, no border, no letters.'
-          + (again > 1 ? ' Give a different design from before, attempt ' + again + '.' : ''),
+        'A hat, drawn flat as an item icon, seen from the side. ' +
+          asked +
+          '. It must read as headwear: a rounded crown or dome, with a brim, ' +
+          'band or rim beneath it. Big simple shapes filling most of the square. ' +
+          'No head, no person, no background, no border, no letters.' +
+          (again > 1 ? ' Give a different design from before, attempt ' + again + '.' : ''),
         brain
       )
 
@@ -751,7 +748,14 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
       }
 
       try {
-        const found = await api.banners.brains()
+        /*
+         * Only the ones that can answer.
+         *
+         * The other generators already filter this way. Here an unconfigured
+         * model stayed in the list and failed at the moment of asking, which
+         * looks like the feature is broken rather than unfinished.
+         */
+        const found = (await api.banners.brains()).filter((b) => b.ready)
         setBrains(found.map((b) => ({ id: b.id, label: b.label })))
         setBrain((was) => (found.some((b) => b.id === was) ? was : (found[0]?.id ?? '')))
       } catch {
@@ -797,7 +801,11 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
       })
 
       for (const file of picked) {
-        const label = file.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? 'sound'
+        const label =
+          file
+            .split(/[\\/]/)
+            .pop()
+            ?.replace(/\.[^.]+$/, '') ?? 'sound'
 
         const sound: PackSound = {
           id: safeId(label),
@@ -852,13 +860,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               ? (host?.localAddress ?? undefined)
               : undefined
 
-        const result = await api.resourcePack.serve(
-          target.serverId as string,
-          draft,
-          port,
-          required,
-          chosen
-        )
+        const result = await api.resourcePack.serve(target.serverId as string, draft, port, required, chosen)
 
         setBuilt(result)
         setUrl(result.url)
@@ -978,9 +980,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
         {draft.items.length === 0 ? (
           <p className="small muted">
-            Drop in any picture and it becomes a 16 by 16 item texture. By default it is a new
-            look the item points at, so ordinary sticks are left alone — which is what pairs
-            with the custom items you already make in Generators.
+            Drop in any picture and it becomes a 16 by 16 item texture. By default it is a new look the item points at,
+            so ordinary sticks are left alone — which is what pairs with the custom items you already make in
+            Generators.
           </p>
         ) : (
           <div className="col gap-8">
@@ -998,9 +1000,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                   className="input"
                   style={{ flex: '1 1 150px' }}
                   value={item.label}
-                  onChange={(e) =>
-                    changeItem(at, { label: e.target.value, id: safeId(e.target.value) })
-                  }
+                  onChange={(e) => changeItem(at, { label: e.target.value, id: safeId(e.target.value) })}
                 />
 
                 <select
@@ -1036,8 +1036,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             ))}
 
             <p className="tiny dim">
-              &quot;Replace every one&quot; takes over the vanilla texture, so every stick in the
-              world changes. Left off, only items given with the command below look different.
+              &quot;Replace every one&quot; takes over the vanilla texture, so every stick in the world changes. Left
+              off, only items given with the command below look different.
             </p>
           </div>
         )}
@@ -1056,22 +1056,16 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
           <button className="btn btn-sm" onClick={() => bulkPick.current?.click()}>
             Pick files
           </button>
-          <button
-            className="btn btn-sm"
-            disabled={working !== null}
-            onClick={() => void openZip()}
-          >
+          <button className="btn btn-sm" disabled={working !== null} onClick={() => void openZip()}>
             {working === 'opening' && <Spinner />} Open a .zip
           </button>
         </div>
 
         <p className="small muted">
-          Everything the game draws &mdash; {vanilla.length.toLocaleString()} textures in{' '}
-          {instance.minecraftVersion}: blocks, items, mobs, particles, paintings, menus.
-          Search for what you want to change, or import a folder and everything in it is
-          filed by where it sits. Your Desktop has the whole lot already, in
-          <code> minecraft-textures</code> &mdash; edit those in place and import the folder
-          back.
+          Everything the game draws &mdash; {vanilla.length.toLocaleString()} textures in {instance.minecraftVersion}:
+          blocks, items, mobs, particles, paintings, menus. Search for what you want to change, or import a folder and
+          everything in it is filed by where it sits. Your Desktop has the whole lot already, in
+          <code> minecraft-textures</code> &mdash; edit those in place and import the folder back.
         </p>
 
         <input
@@ -1134,8 +1128,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
           <div className="section-title">Restyle them</div>
 
           <p className="small muted">
-            Keeps every detail Mojang drew and moves only the colour, so a whole folder
-            restyled the same way still looks like Minecraft. Pick a look, or describe one.
+            Keeps every detail Mojang drew and moves only the colour, so a whole folder restyled the same way still
+            looks like Minecraft. Pick a look, or describe one.
           </p>
 
           <div className="row gap-6 wrap">
@@ -1167,7 +1161,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 disabled={working !== null || !look.trim()}
                 onClick={() => void dreamStyle()}
               >
-                {working === 'thinking' && <Spinner />} Ask {brain || 'the AI'}
+                {working === 'thinking' && <Spinner />} Ask {brains.find((b) => b.id === brain)?.label ?? 'the AI'}
               </button>
             </div>
           )}
@@ -1192,8 +1186,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 />
               </div>
               <span className="tiny dim">
-                {progress.done.toLocaleString()} of {progress.total.toLocaleString()} &mdash;
-                this runs in the app, so leave the tab open
+                {progress.done.toLocaleString()} of {progress.total.toLocaleString()} &mdash; this runs in the app, so
+                leave the tab open
               </span>
             </div>
           )}
@@ -1231,9 +1225,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                       }}
                     />
                   </div>
-                  <span className="tiny dim truncate">
-                    {sample.path.slice(sample.path.lastIndexOf('/') + 1)}
-                  </span>
+                  <span className="tiny dim truncate">{sample.path.slice(sample.path.lastIndexOf('/') + 1)}</span>
                 </div>
               ))}
             </div>
@@ -1266,11 +1258,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 {working === 'painting' && <Spinner />} Restyle every {folder}
               </button>
 
-              <button
-                className="btn btn-primary btn-sm"
-                disabled={working !== null}
-                onClick={() => void wholePack()}
-              >
+              <button className="btn btn-primary btn-sm" disabled={working !== null} onClick={() => void wholePack()}>
                 {working === 'everything' && <Spinner />} Restyle everything
               </button>
 
@@ -1283,32 +1271,20 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
           {style && (
             <p className="tiny dim">
               &quot;Restyle everything&quot; does blocks, items and entities in one go &mdash;{' '}
-              {vanilla.filter(
-                (p) =>
-                  p.startsWith('block/') || p.startsWith('item/') || p.startsWith('entity/')
-              ).length}{' '}
-              textures, which takes a minute. Every one is read from the game&apos;s own jar
-              first, so restyling twice does not stack &mdash; you always start from the
-              original. A whole folder takes a
-              moment; {vanilla.filter((p) => p.startsWith(folder + '/')).length} textures is a
-              lot of pixels.
+              {vanilla.filter((p) => p.startsWith('block/') || p.startsWith('item/') || p.startsWith('entity/')).length}{' '}
+              textures, which takes a minute. Every one is read from the game&apos;s own jar first, so restyling twice
+              does not stack &mdash; you always start from the original. A whole folder takes a moment;{' '}
+              {vanilla.filter((p) => p.startsWith(folder + '/')).length} textures is a lot of pixels.
             </p>
           )}
         </div>
 
         {draft.textures.length > 0 && (
           <>
-            <div className="section-title">
-              Replaced &middot; {draft.textures.length}
-            </div>
+            <div className="section-title">Replaced &middot; {draft.textures.length}</div>
             <div className="row gap-8 wrap">
               {draft.textures.map((texture) => (
-                <div
-                  key={texture.path}
-                  className="row gap-6"
-                  style={{ alignItems: 'center' }}
-                  title={texture.path}
-                >
+                <div key={texture.path} className="row gap-6" style={{ alignItems: 'center' }} title={texture.path}>
                   <img
                     src={texture.image}
                     alt=""
@@ -1316,9 +1292,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                     height={22}
                     style={{ imageRendering: 'pixelated', borderRadius: 3 }}
                   />
-                  <span className="tiny dim">
-                    {texture.path.slice(texture.path.lastIndexOf('/') + 1)}
-                  </span>
+                  <span className="tiny dim">{texture.path.slice(texture.path.lastIndexOf('/') + 1)}</span>
                   <button
                     className="btn btn-sm"
                     onClick={() =>
@@ -1342,8 +1316,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               <>
                 {' '}
                 Could not place: {filed.missed.slice(0, 6).join(', ')}
-                {filed.missed.length > 6 ? ` and ${filed.missed.length - 6} more` : ''}. Name
-                a file after the texture it replaces &mdash; search above to find the name.
+                {filed.missed.length > 6 ? ` and ${filed.missed.length - 6} more` : ''}. Name a file after the texture
+                it replaces &mdash; search above to find the name.
               </>
             )}
           </p>
@@ -1362,10 +1336,10 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         />
 
         {/*
-          * A directory picker, which is not standard HTML but is what makes
-          * the folder shape available - and the folder shape is what tells a
-          * "saddle" from the eleven other saddles.
-          */}
+         * A directory picker, which is not standard HTML but is what makes
+         * the folder shape available - and the folder shape is what tells a
+         * "saddle" from the eleven other saddles.
+         */}
         <input
           ref={folderPick}
           type="file"
@@ -1376,9 +1350,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
           // @ts-expect-error - webkitdirectory is not in the React typings
           webkitdirectory=""
           onChange={(e) => {
-            const files = Array.from(e.target.files ?? []).filter((f) =>
-              f.name.toLowerCase().endsWith('.png')
-            )
+            const files = Array.from(e.target.files ?? []).filter((f) => f.name.toLowerCase().endsWith('.png'))
             if (files.length > 0) void fileThem(files)
             e.target.value = ''
           }}
@@ -1404,9 +1376,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         <div className="section-title">Cosmetic hats</div>
 
         <p className="small muted">
-          The eight hats the server sells. Drop a picture on each and it becomes that
-          hat&apos;s real look instead of a block balanced on somebody&apos;s head. The names
-          are filled in for you &mdash; the plugin looks for these exact ones.
+          The eight hats the server sells. Drop a picture on each and it becomes that hat&apos;s real look instead of a
+          block balanced on somebody&apos;s head. The names are filled in for you &mdash; the plugin looks for these
+          exact ones.
         </p>
 
         <div className="row gap-8 wrap">
@@ -1441,10 +1413,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                     }}
                   />
                 ) : (
-                  <div
-                    className="row"
-                    style={{ height: 48, alignItems: 'center', justifyContent: 'center' }}
-                  >
+                  <div className="row" style={{ height: 48, alignItems: 'center', justifyContent: 'center' }}>
                     <Plus size={16} className="dim" />
                   </div>
                 )}
@@ -1492,42 +1461,32 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 onChange={(e) => setWish(e.target.value.slice(0, 200))}
               />
 
-              <button
-                className="btn btn-primary btn-sm"
-                disabled={thinking !== null}
-                onClick={() => void dreamAll()}
-              >
+              <button className="btn btn-primary btn-sm" disabled={thinking !== null} onClick={() => void dreamAll()}>
                 {thinking !== null && <Spinner />} Draw all eight
               </button>
             </div>
 
             <div className="row gap-6 wrap">
               {HAT_STYLES.map((idea) => (
-                <button
-                  key={idea}
-                  className="btn btn-sm"
-                  style={{ fontSize: 12 }}
-                  onClick={() => setWish(idea)}
-                >
+                <button key={idea} className="btn btn-sm" style={{ fontSize: 12 }} onClick={() => setWish(idea)}>
                   {idea}
                 </button>
               ))}
             </div>
 
             <p className="tiny dim">
-              The model describes shapes and the app draws them &mdash; it cannot paint pixels
-              directly, so bold simple hats come out well and fiddly ones do not.{' '}
-              <strong>Click any hat again to re-roll just that one</strong> &mdash; each try
-              asks for something different. If a hat will not come out right, draw it yourself
-              and drop the file on it instead.
+              The model describes shapes and the app draws them &mdash; it cannot paint pixels directly, so bold simple
+              hats come out well and fiddly ones do not. <strong>Click any hat again to re-roll just that one</strong>{' '}
+              &mdash; each try asks for something different. If a hat will not come out right, draw it yourself and drop
+              the file on it instead.
             </p>
           </div>
         )}
 
         <p className="tiny dim">
-          Once the pack is on the server, set <code>cosmetics.customModels: true</code> in the
-          plugin config and restart. It is off by default because a pack with some hats and
-          not others shows the missing texture for the rest.
+          Once the pack is on the server, set <code>cosmetics.customModels: true</code> in the plugin config and
+          restart. It is off by default because a pack with some hats and not others shows the missing texture for the
+          rest.
         </p>
       </div>
 
@@ -1545,8 +1504,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
         {draft.sounds.length === 0 ? (
           <p className="small muted">
-            Pick a sound the game already plays and put your own audio under it. Minecraft only
-            plays <strong>.ogg</strong> — mp3 and wav are ignored, so convert first.
+            Pick a sound the game already plays and put your own audio under it. Minecraft only plays{' '}
+            <strong>.ogg</strong> — mp3 and wav are ignored, so convert first.
           </p>
         ) : (
           <div className="col gap-8">
@@ -1556,9 +1515,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                   className="input"
                   style={{ flex: '1 1 140px' }}
                   value={sound.label}
-                  onChange={(e) =>
-                    changeSound(at, { label: e.target.value, id: safeId(e.target.value) })
-                  }
+                  onChange={(e) => changeSound(at, { label: e.target.value, id: safeId(e.target.value) })}
                 />
 
                 <select
@@ -1612,25 +1569,23 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         <div className="section-title">Main menu</div>
 
         <p className="small muted">
-          The title screen background is a cube of six pictures the camera sits inside. Set one
-          and the rest are filled with it, so a single image works — set them face by face for a
-          real panorama.
+          The title screen background is a cube of six pictures the camera sits inside. Set one and the rest are filled
+          with it, so a single image works — set them face by face for a real panorama.
         </p>
 
         {/*
-          * The one thing here that cannot be worked out by trying it.
-          *
-          * A server's pack is applied on connecting and dropped on leaving, and
-          * the title screen is neither - so somebody sets a panorama, serves
-          * it, joins, and never sees it, with nothing anywhere to say why.
-          */}
+         * The one thing here that cannot be worked out by trying it.
+         *
+         * A server's pack is applied on connecting and dropped on leaving, and
+         * the title screen is neither - so somebody sets a panorama, serves
+         * it, joins, and never sees it, with nothing anywhere to say why.
+         */}
         {target?.kind === 'server' && (draft.panorama || draft.logo) && (
           <p className="small" style={{ color: 'var(--warning)' }}>
-            These will not show while the pack comes from a server. Minecraft applies a
-            server&apos;s pack when you connect and drops it when you leave, and the title screen
-            is neither — so a menu background can only come from a pack installed on your own
-            machine. Build it again with &quot;(just me)&quot; and turn it on under Options,
-            Resource Packs.
+            These will not show while the pack comes from a server. Minecraft applies a server&apos;s pack when you
+            connect and drops it when you leave, and the title screen is neither — so a menu background can only come
+            from a pack installed on your own machine. Build it again with &quot;(just me)&quot; and turn it on under
+            Options, Resource Packs.
           </p>
         )}
 
@@ -1647,16 +1602,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               }}
             >
               {draft.panorama?.[at] ? (
-                <img
-                  src={draft.panorama[at]}
-                  alt={name}
-                  style={{ width: '100%', borderRadius: 4, display: 'block' }}
-                />
+                <img src={draft.panorama[at]} alt={name} style={{ width: '100%', borderRadius: 4, display: 'block' }} />
               ) : (
-                <div
-                  className="row"
-                  style={{ height: 52, alignItems: 'center', justifyContent: 'center' }}
-                >
+                <div className="row" style={{ height: 52, alignItems: 'center', justifyContent: 'center' }}>
                   <ImageIcon size={18} className="dim" />
                 </div>
               )}
@@ -1684,11 +1632,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
           {draft.logo && (
             <>
-              <img
-                src={draft.logo}
-                alt="logo"
-                style={{ height: 30, borderRadius: 4, imageRendering: 'pixelated' }}
-              />
+              <img src={draft.logo} alt="logo" style={{ height: 30, borderRadius: 4, imageRendering: 'pixelated' }} />
               <button className="btn btn-sm" onClick={() => setDraft({ logo: null })}>
                 <Trash2 size={13} />
               </button>
@@ -1722,18 +1666,14 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
           <div className="section-title" style={{ flex: 1 }}>
             Keep it
           </div>
-          <button
-            className="btn btn-primary btn-sm"
-            disabled={isEmpty(draft)}
-            onClick={() => void keep()}
-          >
+          <button className="btn btn-primary btn-sm" disabled={isEmpty(draft)} onClick={() => void keep()}>
             Save this pack
           </button>
         </div>
 
         <p className="small muted">
-          Saved as it is, textures and all, so you can come back to it or build a variant
-          without starting again. Until you save, a pack only lives while the launcher is open.
+          Saved as it is, textures and all, so you can come back to it or build a variant without starting again. Until
+          you save, a pack only lives while the launcher is open.
         </p>
 
         {saved.length > 0 && (
@@ -1793,11 +1733,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
           <div className="field" style={{ flex: '1 1 220px' }}>
             <label className="field-label">Where it goes</label>
-            <select
-              className="select"
-              value={targetId}
-              onChange={(e) => setTargetId(e.target.value)}
-            >
+            <select className="select" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
               {targets.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.label}
@@ -1825,9 +1761,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                   value={reachFor}
                   onChange={(e) => setReachFor(e.target.value as typeof reachFor)}
                 >
-                  <option value="house">
-                    Me and my network{host?.localAddress ? ` (${host.localAddress})` : ''}
-                  </option>
+                  <option value="house">Me and my network{host?.localAddress ? ` (${host.localAddress})` : ''}</option>
                   <option value="internet">Players over the internet</option>
                   <option value="typed">An address I type</option>
                 </select>
@@ -1858,13 +1792,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
           <button
             className="btn btn-primary"
-            title={
-              nothing
-                ? 'There is nothing in the pack yet'
-                : !target
-                  ? 'Pick where it goes first'
-                  : undefined
-            }
+            title={nothing ? 'There is nothing in the pack yet' : !target ? 'Pick where it goes first' : undefined}
             disabled={busy || nothing || !target}
             onClick={() => void install()}
           >
@@ -1877,17 +1805,16 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         {target?.kind === 'server' ? (
           <>
             <p className="tiny dim">
-              The server hands out a link, not the file — so the launcher serves the pack over
-              that port for as long as it is open. Windows will ask before anything listens on
-              it.
+              The server hands out a link, not the file — so the launcher serves the pack over that port for as long as
+              it is open. Windows will ask before anything listens on it.
             </p>
 
             {/*
-              * server.properties holds exactly one url, and on a router that
-              * will not hairpin, no single address reaches both the machine
-              * that made the pack and the internet. Saying which one you have
-              * chosen beats picking silently and letting the other fail.
-              */}
+             * server.properties holds exactly one url, and on a router that
+             * will not hairpin, no single address reaches both the machine
+             * that made the pack and the internet. Saying which one you have
+             * chosen beats picking silently and letting the other fail.
+             */}
             <p className="tiny dim">
               {reachFor === 'house'
                 ? 'Works for you and anyone in the house. Players joining over the internet will not be able to fetch it.'
@@ -1897,13 +1824,13 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             </p>
 
             {/*
-              * The same button the server port gets, for the pack port.
-              *
-              * Having forwarded 25565 does nothing for this one: the game speaks its own
-              * protocol and this speaks http, so they cannot share a port. Somebody whose
-              * server friends can already join would otherwise hand out a pack link that
-              * only works inside their own house.
-              */}
+             * The same button the server port gets, for the pack port.
+             *
+             * Having forwarded 25565 does nothing for this one: the game speaks its own
+             * protocol and this speaks http, so they cannot share a port. Somebody whose
+             * server friends can already join would otherwise hand out a pack link that
+             * only works inside their own house.
+             */}
             <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
               {forwarding?.open ? (
                 <>
@@ -1916,11 +1843,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 </>
               ) : (
                 <>
-                  <button
-                    className="btn btn-sm"
-                    disabled={asking}
-                    onClick={() => void openThePort()}
-                  >
+                  <button className="btn btn-sm" disabled={asking} onClick={() => void openThePort()}>
                     {asking && <Spinner />} <Globe size={14} /> Open port {port} for friends
                   </button>
                   <button className="btn btn-sm" disabled={asking} onClick={() => void checkPort()}>
@@ -1944,22 +1867,21 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             )}
 
             <p className="tiny dim">
-              This is a different port from the one players connect on — the game speaks its own
-              protocol and the pack is fetched over http, so having forwarded your server port
-              does nothing for this one.
+              This is a different port from the one players connect on — the game speaks its own protocol and the pack
+              is fetched over http, so having forwarded your server port does nothing for this one.
             </p>
           </>
         ) : (
           <p className="tiny dim">
-            Written into this instance&apos;s resourcepacks folder. Turn it on in game under
-            Options, then Resource Packs.
+            Written into this instance&apos;s resourcepacks folder. Turn it on in game under Options, then Resource
+            Packs.
           </p>
         )}
 
         {nothing && (
           <p className="small" style={{ color: 'var(--warning)' }}>
-            Nothing in the pack yet, so there is nothing to build — add a texture, a hat, a
-            sound or a menu background and the button wakes up.
+            Nothing in the pack yet, so there is nothing to build — add a texture, a hat, a sound or a menu background
+            and the button wakes up.
           </p>
         )}
       </div>
@@ -1971,8 +1893,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
           <div className="section-title">Built</div>
 
           <p className="small muted">
-            {built.contents.items} texture{built.contents.items === 1 ? '' : 's'},{' '}
-            {built.contents.sounds} sound{built.contents.sounds === 1 ? '' : 's'}
+            {built.contents.items} texture{built.contents.items === 1 ? '' : 's'}, {built.contents.sounds} sound
+            {built.contents.sounds === 1 ? '' : 's'}
             {built.contents.panorama ? ', a menu background' : ''}
             {built.contents.logo ? ', a logo' : ''} — {(built.bytes / 1024).toFixed(0)}KB.
           </p>
@@ -1983,31 +1905,24 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 <code className="tiny selectable" style={{ flex: 1, wordBreak: 'break-all' }}>
                   {url}
                 </code>
-                <button
-                  className="btn btn-sm"
-                  onClick={() => void navigator.clipboard.writeText(url)}
-                >
+                <button className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(url)}>
                   Copy
                 </button>
               </div>
 
               <label className="row gap-4 small" style={{ alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={required}
-                  onChange={(e) => setRequired(e.target.checked)}
-                />
+                <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} />
                 Kick anyone who refuses it
               </label>
 
               {/*
-                * What the probe found, said plainly.
-                *
-                * The failure this catches is the worst kind to debug from the
-                * game: everything is configured correctly, and the download
-                * fails anyway because the router will not route this machine
-                * back to its own public address.
-                */}
+               * What the probe found, said plainly.
+               *
+               * The failure this catches is the worst kind to debug from the
+               * game: everything is configured correctly, and the download
+               * fails anyway because the router will not route this machine
+               * back to its own public address.
+               */}
               {reach && !reach.ok && (
                 <div className="col gap-8">
                   <p className="small" style={{ color: 'var(--warning)', margin: 0 }}>
@@ -2015,11 +1930,10 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                   </p>
 
                   <p className="tiny dim" style={{ margin: 0 }}>
-                    Almost always because your router will not send you back to your own
-                    public address. It can still be the right link for friends joining from
-                    outside &mdash; but you will not be able to download it yourself, so test
-                    with someone else or install the pack for yourself with the
-                    &quot;(just me)&quot; target instead.
+                    Almost always because your router will not send you back to your own public address. It can still be
+                    the right link for friends joining from outside &mdash; but you will not be able to download it
+                    yourself, so test with someone else or install the pack for yourself with the &quot;(just me)&quot;
+                    target instead.
                   </p>
 
                   {reach.alternative && (
@@ -2034,9 +1948,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                       >
                         Use my local address instead
                       </button>
-                      <span className="tiny dim">
-                        Works for you and anyone in the house, not over the internet.
-                      </span>
+                      <span className="tiny dim">Works for you and anyone in the house, not over the internet.</span>
                     </div>
                   )}
                 </div>
@@ -2049,8 +1961,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               )}
 
               <p className="tiny dim">
-                Restart the server for it to start offering the pack. The link has the pack&apos;s
-                own hash in it, so rebuilding gives a new link and nobody is left on a stale copy.
+                Restart the server for it to start offering the pack. The link has the pack&apos;s own hash in it, so
+                rebuilding gives a new link and nobody is left on a stale copy.
               </p>
             </>
           )}
@@ -2062,16 +1974,10 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               <div className="col gap-4">
                 {built.commands.map((command) => (
                   <div key={command} className="row gap-8" style={{ alignItems: 'center' }}>
-                    <code
-                      className="tiny selectable"
-                      style={{ flex: 1, wordBreak: 'break-all' }}
-                    >
+                    <code className="tiny selectable" style={{ flex: 1, wordBreak: 'break-all' }}>
                       {command}
                     </code>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => void navigator.clipboard.writeText(command)}
-                    >
+                    <button className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(command)}>
                       Copy
                     </button>
                   </div>

@@ -5,12 +5,14 @@ import {
   AlertTriangle,
   Bot,
   Boxes,
+  Camera,
   CheckCircle2,
   Copy,
   ExternalLink,
   FolderOpen,
   Globe,
   HardDrive,
+  LayoutGrid,
   Link2,
   Play,
   Plus,
@@ -18,11 +20,14 @@ import {
   Send,
   Server,
   Share2,
+  SlidersHorizontal,
   Square,
+  Terminal,
   Trash2,
   Users,
   Wrench
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type {
   Instance,
   ModInfo,
@@ -43,16 +48,7 @@ import { ServerBackups } from '../components/ServerBackups'
 import { RestartSchedule } from '../components/RestartSchedule'
 import { RelayTunnel } from '../components/RelayTunnel'
 import { activeAccount, useStore } from '../store/useStore'
-import {
-  ConfirmDialog,
-  EmptyState,
-  ErrorView,
-  Field,
-  Modal,
-  Spinner,
-  Toggle,
-  useAutoScroll
-} from '../components/ui'
+import { ConfirmDialog, EmptyState, ErrorView, Field, Modal, Spinner, Toggle, useAutoScroll } from '../components/ui'
 
 /** Splits `host:port`, tolerating a bare host. */
 function splitAddress(address: string): [string, number] {
@@ -134,6 +130,24 @@ function blankInput(version: string, owner?: string | null): SaveHostedServerInp
   }
 }
 
+/** The parts of running a server, each its own screen. */
+type HostTab = 'overview' | 'players' | 'controls' | 'mods' | 'world' | 'sharing' | 'console'
+
+/*
+ * Named for what somebody came to do rather than for the code behind them.
+ * "Players" is moderation, "Controls" is everything the plugin can be told to
+ * do, and neither word appears in either file.
+ */
+const HOST_TABS: { id: HostTab; label: string; icon: LucideIcon }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutGrid },
+  { id: 'players', label: 'Players', icon: Users },
+  { id: 'controls', label: 'Controls', icon: SlidersHorizontal },
+  { id: 'mods', label: 'Mods', icon: Boxes },
+  { id: 'world', label: 'World', icon: Camera },
+  { id: 'sharing', label: 'Sharing', icon: Globe },
+  { id: 'console', label: 'Console', icon: Terminal }
+]
+
 /**
  * Runs a Minecraft server from inside the launcher, so a persistent world — one
  * the AI companion can join — needs no separate download, no config file, and no
@@ -149,6 +163,7 @@ export function HostServerScreen(): JSX.Element {
   const [versions, setVersions] = useState<VersionSummary[]>([])
   const [software, setSoftware] = useState<ServerSoftwareInfo[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [tab, setTab] = useState<HostTab>('overview')
   const [lines, setLines] = useState<HostedServerConsoleLine[]>([])
   const [command, setCommand] = useState('')
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
@@ -216,6 +231,21 @@ export function HostServerScreen(): JSX.Element {
   const [inviting, setInviting] = useState(false)
 
   const consoleRef = useAutoScroll(lines.length)
+
+  /*
+   * The console opens at the newest line.
+   *
+   * useAutoScroll only follows a log that is already near the bottom, which is
+   * right while it is being read and wrong the moment the panel mounts: a
+   * fresh div starts at scrollTop 0, so now that the console lives behind a
+   * tab, opening it showed the first line the server ever printed. It was
+   * never noticed before because the panel mounted once and stayed.
+   */
+  useEffect(() => {
+    if (tab !== 'console') return
+    const element = consoleRef.current
+    if (element) element.scrollTop = element.scrollHeight
+  }, [tab, selectedId, consoleRef])
 
   const load = useCallback(async () => {
     try {
@@ -300,7 +330,16 @@ export function HostServerScreen(): JSX.Element {
   }, [selectedId])
 
   const selected = useMemo(() => servers.find((s) => s.id === selectedId) ?? null, [servers, selectedId])
-  const state = selected ? (states[selected.id] ?? { status: 'stopped' as const, detail: '', players: [], id: selected.id, pid: null, startedAt: null }) : null
+  const state = selected
+    ? (states[selected.id] ?? {
+        status: 'stopped' as const,
+        detail: '',
+        players: [],
+        id: selected.id,
+        pid: null,
+        startedAt: null
+      })
+    : null
   const live = state?.status === 'running' || state?.status === 'starting' || state?.status === 'stopping'
 
   const softwareInfo = software.find((entry) => entry.id === editing?.software) ?? null
@@ -505,46 +544,49 @@ export function HostServerScreen(): JSX.Element {
   async function prepareForCompanions(): Promise<void> {
     if (!selected) return
 
-    await run(async () => {
-      // The two properties, saved through the same path the settings form uses.
-      const saved = await api.host.save({
-        ...selected,
-        allowFlight: true,
-        spawnProtection: 0
-      })
-      setSelectedId(saved.id)
-
-      /*
-       * Operator status is granted by the running server, not by a file: the
-       * server rewrites ops.json itself, so editing it under a live server is
-       * overwritten. If it is not running, the settings above still apply and
-       * the player is told what is left to do.
-       */
-      const list = await api.companion.list()
-      const running = states[selected.id]?.status === 'running'
-
-      if (running) {
-        for (const companion of list) {
-          if (!companion.username) continue
-          await api.host.command(selected.id, `op ${companion.username}`)
-        }
-      }
-
-      /*
-       * Said here rather than returned: `run` only shows the message it was
-       * given up front, and what to say depends on whether the server answered.
-       */
-      if (!running) {
-        pushToast({
-          kind: 'info',
-          title: 'Flight on, spawn protection off',
-          message:
-            'Start the server and press this again to make the companions operators — that part needs a running server.'
+    await run(
+      async () => {
+        // The two properties, saved through the same path the settings form uses.
+        const saved = await api.host.save({
+          ...selected,
+          allowFlight: true,
+          spawnProtection: 0
         })
-      }
-    }, states[selected.id]?.status === 'running'
-      ? 'Ready for companions: flight on, spawn protection off, companions opped'
-      : 'Server settings saved')
+        setSelectedId(saved.id)
+
+        /*
+         * Operator status is granted by the running server, not by a file: the
+         * server rewrites ops.json itself, so editing it under a live server is
+         * overwritten. If it is not running, the settings above still apply and
+         * the player is told what is left to do.
+         */
+        const list = await api.companion.list()
+        const running = states[selected.id]?.status === 'running'
+
+        if (running) {
+          for (const companion of list) {
+            if (!companion.username) continue
+            await api.host.command(selected.id, `op ${companion.username}`)
+          }
+        }
+
+        /*
+         * Said here rather than returned: `run` only shows the message it was
+         * given up front, and what to say depends on whether the server answered.
+         */
+        if (!running) {
+          pushToast({
+            kind: 'info',
+            title: 'Flight on, spawn protection off',
+            message:
+              'Start the server and press this again to make the companions operators — that part needs a running server.'
+          })
+        }
+      },
+      states[selected.id]?.status === 'running'
+        ? 'Ready for companions: flight on, spawn protection off, companions opped'
+        : 'Server settings saved'
+    )
   }
 
   async function applyToCompanion(): Promise<void> {
@@ -641,7 +683,10 @@ export function HostServerScreen(): JSX.Element {
           message="Create one and the launcher downloads the official server from Mojang, sets it up, and runs it for you."
           action={
             <div className="row gap-8">
-              <button className="btn btn-primary" onClick={() => setEditing(blankInput(versions[0]?.id ?? '1.21.11', account?.username))}>
+              <button
+                className="btn btn-primary"
+                onClick={() => setEditing(blankInput(versions[0]?.id ?? '1.21.11', account?.username))}
+              >
                 <Plus size={15} /> Create a server
               </button>
               <button className="btn" onClick={() => setPackBrowsing(true)}>
@@ -701,8 +746,8 @@ export function HostServerScreen(): JSX.Element {
                     <strong>Accept the Minecraft EULA to run this server</strong>
                   </div>
                   <p className="small dim" style={{ margin: 0 }}>
-                    Mojang requires anyone running a Minecraft server to agree to their End User Licence Agreement.
-                    The launcher will not tick this for you — read it and decide.
+                    Mojang requires anyone running a Minecraft server to agree to their End User Licence Agreement. The
+                    launcher will not tick this for you — read it and decide.
                   </p>
                   <div className="row gap-10">
                     <button className="btn btn-ghost" onClick={() => void api.app.openExternal(eulaUrl)}>
@@ -718,6 +763,8 @@ export function HostServerScreen(): JSX.Element {
                   </div>
                 </div>
               )}
+
+              {/* --------------------------------------------------- who */}
 
               <div className="panel panel-pad col gap-12">
                 <div className="row gap-8 between">
@@ -773,586 +820,718 @@ export function HostServerScreen(): JSX.Element {
                     )}
                   </div>
                 </div>
+              </div>
 
-                <div className="row gap-8 wrap">
+              {/*
+               * The jobs, not the panels.
+               *
+               * All of this used to be one column fifteen panels long: finding
+               * moderation meant scrolling past the console, and nothing marked
+               * where one job ended and the next began. Somebody here to ban a
+               * player and somebody here to install a plugin want different
+               * screens, so they get different screens.
+               */}
+              <div className="host-tabs">
+                {HOST_TABS.map((entry) => (
                   <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void deploySteward()}
-                    disabled={busy || deploying}
+                    key={entry.id}
+                    className={`tab ${tab === entry.id ? 'active' : ''}`}
+                    onClick={() => setTab(entry.id)}
                   >
-                    {deploying ? <Spinner /> : <Bot size={14} />} Put a companion on this server
+                    <entry.icon size={14} />
+                    {entry.id === 'mods' && softwareInfo?.plugins ? 'Plugins' : entry.label}
+                    {entry.id === 'players' && state.players.length > 0 && (
+                      <span className="host-tab-count">{state.players.length}</span>
+                    )}
                   </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => void applyToCompanion()} disabled={busy}>
-                    <Bot size={14} /> Point every companion here
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void prepareForCompanions()}
-                    disabled={busy}
-                    title="Turns on flight, removes spawn protection, and makes every companion an operator — the three things that stop them building"
-                  >
-                    <Wrench size={14} /> Set up for companions
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void checkRouter()}
-                    disabled={busy || checkingRouter}
-                  >
-                    <Globe size={14} /> {checkingRouter ? 'Asking the router…' : 'Play with friends online'}
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void copyInvite()}
-                    disabled={busy || inviting}
-                  >
-                    <Link2 size={14} /> {inviting ? 'Building the link…' : 'Copy invite link'}
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void gatherShareDetails()}
-                    disabled={busy || gathering}
-                  >
-                    <Share2 size={14} /> {gathering ? 'Checking…' : 'Share / list this server'}
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    disabled={busy || live}
-                    onClick={() =>
-                      setEditing({
-                        id: selected.id,
-                        name: selected.name,
-                        minecraftVersion: selected.minecraftVersion,
-                        software: selected.software,
-                        port: selected.port,
-                        onlineMode: selected.onlineMode,
-                        reachability: selected.reachability ?? 'anyone',
-                        memoryMb: selected.memoryMb,
-                        motd: selected.motd,
-                        difficulty: selected.difficulty,
-                        gameMode: selected.gameMode,
-                        maxPlayers: selected.maxPlayers,
-                        allowCheats: selected.allowCheats,
-                        operators: selected.operators ?? [],
+                ))}
+              </div>
 
-                        // Carried in so the panel shows this server's settings
-                        // rather than the defaults for a new one.
-                        levelSeed: selected.levelSeed ?? '',
-                        pvp: selected.pvp ?? true,
-                        hardcore: selected.hardcore ?? false,
-                        allowFlight: selected.allowFlight ?? false,
-                        spawnProtection: selected.spawnProtection ?? 16,
-                        viewDistance: selected.viewDistance ?? 10,
-                        simulationDistance: selected.simulationDistance ?? 10,
-                        spawnMonsters: selected.spawnMonsters ?? true,
-                        spawnAnimals: selected.spawnAnimals ?? true,
-                        whitelist: selected.whitelist ?? false
-                      })
-                    }
-                  >
-                    <HardDrive size={14} /> Settings
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm danger"
-                    disabled={busy || live}
-                    onClick={() => setConfirmDelete(selected)}
-                  >
-                    <Trash2 size={14} /> Delete
-                  </button>
-                </div>
+              {/* ---------------------------------------------- overview */}
 
-                {stewards.length > 0 && (
-                  <div className="panel panel-pad col gap-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    <div className="row gap-8">
-                      <Bot size={15} style={{ color: 'var(--accent)' }} />
-                      <strong className="small">Lives on this server</strong>
-                    </div>
-                    {stewards.map((steward) => (
-                      <div key={steward.id} className="row gap-12">
-                        <div className="flex-1" style={{ minWidth: 0 }}>
-                          <div className="small truncate" style={{ fontWeight: 600 }}>
-                            {steward.username}
-                          </div>
-                          <div className="tiny dim truncate">
-                            {steward.hasApiKey || steward.routine
-                              ? 'Joins when the server starts, leaves when it stops'
-                              : 'Needs a model on the Companion screen before it can talk'}
-                          </div>
-                        </div>
-                        <button className="btn btn-ghost btn-sm" onClick={() => void dismissSteward(steward.id)}>
-                          Remove from server
-                        </button>
+              {tab === 'overview' && (
+                <>
+                  <div className="panel panel-pad col gap-12">
+                    <div className="section-title">At a glance</div>
+
+                    <dl className="host-facts">
+                      <div>
+                        <dt>Software</dt>
+                        <dd>
+                          {software.find((e) => e.id === selected.software)?.label ?? selected.software}
+                          {selected.softwareVersion ? ` ${selected.softwareVersion}` : ''}
+                        </dd>
                       </div>
-                    ))}
+                      <div>
+                        <dt>Minecraft</dt>
+                        <dd>{selected.minecraftVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Port</dt>
+                        <dd>{selected.port}</dd>
+                      </div>
+                      <div>
+                        <dt>Players</dt>
+                        <dd>
+                          {state.players.length} of {selected.maxPlayers}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Mode</dt>
+                        <dd>
+                          {selected.gameMode} · {selected.difficulty}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Memory</dt>
+                        <dd>{(selected.memoryMb / 1024).toFixed(1)} GB</dd>
+                      </div>
+                      <div>
+                        <dt>Who can join</dt>
+                        <dd>{selected.onlineMode ? 'Mojang accounts only' : 'Anyone, any name'}</dd>
+                      </div>
+                      <div>
+                        <dt>Whitelist</dt>
+                        <dd>{selected.whitelist ? 'On' : 'Off'}</dd>
+                      </div>
+                    </dl>
                   </div>
-                )}
 
-                {share && (
-                  <div className="panel panel-pad col gap-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    <div className="row gap-8 between">
-                      <strong className="small">Share this server</strong>
-                      <button className="btn btn-ghost btn-icon" onClick={() => setShare(null)} title="Close">
-                        ×
-                      </button>
-                    </div>
-
-                    {/* Where people connect, indoors and out. */}
-                    <div className="col gap-6">
-                      <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-                        <span className="tiny dim" style={{ minWidth: 96 }}>
-                          In your house
-                        </span>
-                        <span className="host-address">{share.localAddress}</span>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => void navigator.clipboard.writeText(share.localAddress)}
-                        >
-                          <Copy size={13} /> Copy
-                        </button>
-                      </div>
-
-                      <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-                        <span className="tiny dim" style={{ minWidth: 96 }}>
-                          Everyone else
-                        </span>
-                        {share.publicAddress ? (
-                          <>
-                            <span className="host-address">{share.publicAddress}</span>
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => void navigator.clipboard.writeText(share.publicAddress as string)}
-                            >
-                              <Copy size={13} /> Copy
-                            </button>
-                            {share.reachable === true && (
-                              <span className="pill success tiny">
-                                <span className="dot online" /> answering
-                              </span>
-                            )}
-                            {share.reachable === false && (
-                              <span className="pill tiny dim">no answer from in here</span>
-                            )}
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              disabled={outside === 'checking'}
-                              onClick={() => void checkOutside(selected.id)}
-                            >
-                              {outside === 'checking' ? <Spinner /> : <Globe size={13} />} Check from
-                              outside
-                            </button>
-                          </>
-                        ) : (
-                          <span className="tiny dim">not available yet</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {share.note && (
-                      <p className="tiny dim" style={{ margin: 0 }}>
-                        {share.note}
-                      </p>
-                    )}
-
-                    {outside && outside !== 'checking' && (
-                      <p
-                        className="tiny"
-                        style={{ margin: 0, color: outside.reachable ? 'var(--good, #6ee7a0)' : undefined }}
-                      >
-                        {outside.note}
-                        {outside.reachable && outside.motd ? ` It replied: "${outside.motd}".` : ''}
-                      </p>
-                    )}
-
-                    {/*
-                     * A description in the shape every listing site asks for, so
-                     * it is one paste rather than ten fields typed by hand.
-                     */}
-                    <Field
-                      label="Ready to paste"
-                      hint="Most listing sites want an address, a version and a line about the server."
-                    >
-                      <textarea
-                        className="input mono"
-                        rows={4}
-                        readOnly
-                        value={
-                          `${selected.name}\n` +
-                          `Address: ${share.publicAddress ?? share.localAddress}\n` +
-                          `Version: Minecraft ${share.minecraftVersion} (${share.software})\n` +
-                          `Slots: ${share.maxPlayers}\n` +
-                          `${share.motd}`
-                        }
-                      />
-                    </Field>
-
+                  <div className="panel panel-pad col gap-12">
+                    <div className="section-title">AI companions</div>
                     <div className="row gap-8 wrap">
                       <button
                         className="btn btn-ghost btn-sm"
+                        onClick={() => void deploySteward()}
+                        disabled={busy || deploying}
+                      >
+                        {deploying ? <Spinner /> : <Bot size={14} />} Put a companion on this server
+                      </button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => void applyToCompanion()} disabled={busy}>
+                        <Bot size={14} /> Point every companion here
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => void prepareForCompanions()}
+                        disabled={busy}
+                        title="Turns on flight, removes spawn protection, and makes every companion an operator — the three things that stop them building"
+                      >
+                        <Wrench size={14} /> Set up for companions
+                      </button>
+                    </div>
+                    {stewards.length > 0 && (
+                      <div className="panel panel-pad col gap-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                        <div className="row gap-8">
+                          <Bot size={15} style={{ color: 'var(--accent)' }} />
+                          <strong className="small">Lives on this server</strong>
+                        </div>
+                        {stewards.map((steward) => (
+                          <div key={steward.id} className="row gap-12">
+                            <div className="flex-1" style={{ minWidth: 0 }}>
+                              <div className="small truncate" style={{ fontWeight: 600 }}>
+                                {steward.username}
+                              </div>
+                              <div className="tiny dim truncate">
+                                {steward.hasApiKey || steward.routine
+                                  ? 'Joins when the server starts, leaves when it stops'
+                                  : 'Needs a model on the Companion screen before it can talk'}
+                              </div>
+                            </div>
+                            <button className="btn btn-ghost btn-sm" onClick={() => void dismissSteward(steward.id)}>
+                              Remove from server
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="panel panel-pad col gap-12">
+                    <div className="section-title">This server</div>
+                    <div className="row gap-8 wrap">
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={busy || live}
                         onClick={() =>
-                          void navigator.clipboard.writeText(
-                            `${selected.name}\n` +
-                              `Address: ${share.publicAddress ?? share.localAddress}\n` +
-                              `Version: Minecraft ${share.minecraftVersion} (${share.software})\n` +
-                              `Slots: ${share.maxPlayers}\n` +
-                              `${share.motd}`
-                          )
+                          setEditing({
+                            id: selected.id,
+                            name: selected.name,
+                            minecraftVersion: selected.minecraftVersion,
+                            software: selected.software,
+                            port: selected.port,
+                            onlineMode: selected.onlineMode,
+                            reachability: selected.reachability ?? 'anyone',
+                            memoryMb: selected.memoryMb,
+                            motd: selected.motd,
+                            difficulty: selected.difficulty,
+                            gameMode: selected.gameMode,
+                            maxPlayers: selected.maxPlayers,
+                            allowCheats: selected.allowCheats,
+                            operators: selected.operators ?? [],
+
+                            // Carried in so the panel shows this server's settings
+                            // rather than the defaults for a new one.
+                            levelSeed: selected.levelSeed ?? '',
+                            pvp: selected.pvp ?? true,
+                            hardcore: selected.hardcore ?? false,
+                            allowFlight: selected.allowFlight ?? false,
+                            spawnProtection: selected.spawnProtection ?? 16,
+                            viewDistance: selected.viewDistance ?? 10,
+                            simulationDistance: selected.simulationDistance ?? 10,
+                            spawnMonsters: selected.spawnMonsters ?? true,
+                            spawnAnimals: selected.spawnAnimals ?? true,
+                            whitelist: selected.whitelist ?? false
+                          })
                         }
                       >
-                        <Copy size={13} /> Copy all of it
+                        <HardDrive size={14} /> Settings
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-sm danger"
+                        disabled={busy || live}
+                        onClick={() => setConfirmDelete(selected)}
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => void api.host.openFolder(selected.id)}>
+                        <FolderOpen size={14} /> Open folder
                       </button>
                     </div>
 
-                    {/*
-                     * Links, not submissions. Every one of these wants an account
-                     * of your own and most forbid posting by machine, so the
-                     * honest help is to carry the details to the door.
-                     */}
-                    <div className="col gap-6">
-                      <span className="tiny dim">
-                        Listing sites — each needs a free account of your own, then paste the details above:
-                      </span>
-                      <div className="row gap-8 wrap">
-                        {[
-                          ['minecraft-server-list.com', 'https://minecraft-server-list.com'],
-                          ['minecraftservers.org', 'https://minecraftservers.org'],
-                          ['topminecraftservers.org', 'https://topminecraftservers.org'],
-                          ['minecraft-mp.com', 'https://minecraft-mp.com'],
-                          ['planetminecraft.com', 'https://www.planetminecraft.com/servers/']
-                        ].map(([label, url]) => (
-                          <button
-                            key={url}
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => void api.app.openExternal(url)}
-                          >
-                            <ExternalLink size={13} /> {label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
+                    {live && (
+                      <p className="tiny dim" style={{ margin: 0 }}>
+                        Settings and Delete need the server stopped.
+                      </p>
+                    )}
                     {!selected.onlineMode && (
-                      <p className="tiny" style={{ margin: 0, color: 'var(--warning)' }}>
-                        This server does not verify players with Mojang. Listing it publicly means anyone who reads
-                        the listing can join under any name they type — turn verification on before advertising it.
+                      <p className="tiny dim" style={{ margin: 0 }}>
+                        This server does not verify who joins, which is what lets the companion connect without a second
+                        Minecraft account.{' '}
+                        {selected.reachability === 'local'
+                          ? 'Only programs on this PC can reach it.'
+                          : selected.reachability === 'network'
+                            ? 'Anyone on your local network can join as any username.'
+                            : 'Anyone who can reach the port can join as any username.'}
                       </p>
                     )}
                   </div>
-                )}
+                </>
+              )}
 
-                {forwarding && (
-                  <div className="panel panel-pad col gap-8" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    {!forwarding.available ? (
-                      <>
-                        <strong className="small">Your router will not forward ports</strong>
-                        <p className="tiny dim" style={{ margin: 0 }}>{forwarding.reason}</p>
-                      </>
-                    ) : forwarding.open ? (
-                      <>
-                        <div className="row gap-8" style={{ alignItems: 'center' }}>
-                          <span className="pill success tiny">
-                            <span className="dot online" /> Open to the internet
-                          </span>
-                          <span className="tiny dim">via {forwarding.router}</span>
-                        </div>
-                        {forwarding.externalAddress && (
-                          <div className="row gap-8" style={{ alignItems: 'center' }}>
-                            <span className="tiny dim">Friends connect to</span>
-                            <span className="host-address">
-                              {forwarding.externalAddress}:{selected.port}
-                            </span>
-                          </div>
-                        )}
-                        {/*
-                          * The router being open is only half of it.
-                          *
-                          * A forwarded port carries a connection as far as this
-                          * machine and no further; Windows Firewall then drops
-                          * it silently unless something allows it. Reporting
-                          * only the router is what made a blocked server look
-                          * like a working one.
-                          */}
-                        {forwarding.firewall && !forwarding.firewall.allowed && (
-                          <div className="col gap-8" style={{
-                            borderLeft: '2px solid var(--warning, #d9a441)',
-                            paddingLeft: 12
-                          }}>
-                            <strong className="small">
-                              Windows is still blocking it on this PC
-                            </strong>
-                            <p className="tiny dim" style={{ margin: 0 }}>
-                              The router is forwarding port {selected.port} correctly, but Windows Firewall
-                              drops the connection when it arrives, so friends see a server that never
-                              answers. {forwarding.firewall.reason === 'the launcher is not running as an administrator'
-                                ? 'Adding the rule needs administrator rights, which the launcher does not ask for.'
-                                : forwarding.firewall.reason}
-                            </p>
-                            {forwarding.firewall.manualCommand && (
-                              <>
-                                <p className="tiny dim" style={{ margin: 0 }}>
-                                  Paste this into PowerShell, run as administrator:
-                                </p>
-                                <div className="row gap-8" style={{ alignItems: 'center' }}>
-                                  <code className="host-address" style={{ fontSize: 11, overflowX: 'auto' }}>
-                                    {forwarding.firewall.manualCommand}
-                                  </code>
-                                  <button
-                                    className="btn btn-ghost btn-sm"
-                                    onClick={() =>
-                                      void navigator.clipboard
-                                        .writeText(forwarding.firewall!.manualCommand!)
-                                        .catch(() => undefined)
-                                    }
-                                  >
-                                    Copy
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        )}
+              {/* ----------------------------------------------- players */}
 
-                        {forwarding.firewall?.allowed && (
-                          <span className="tiny dim">
-                            Windows is letting it through too.
-                          </span>
-                        )}
+              {tab === 'players' && (
+                <ServerAdmin
+                  serverId={selected.id}
+                  players={state.players}
+                  running={state.status === 'running'}
+                  show="players"
+                />
+              )}
 
-                        <p className="tiny dim" style={{ margin: 0 }}>
-                          The router is asked to keep this for twelve hours, and it is closed again when you stop
-                          the server.
-                        </p>
-                        <div className="row gap-8">
-                          <button
-                            className="btn btn-ghost btn-sm danger"
-                            onClick={() => void closeToInternet()}
-                            disabled={checkingRouter}
-                          >
-                            Close the port
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <strong className="small">Your router can open the port</strong>
-                        <p className="tiny dim" style={{ margin: 0 }}>
-                          {forwarding.router} answered. Port {selected.port} is not open yet.
-                        </p>
-                        <div className="row gap-8">
-                          <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => void openToInternet()}
-                            disabled={checkingRouter}
-                          >
-                            Open port {selected.port}
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
+              {/* ---------------------------------------------- controls */}
 
-                {!selected.onlineMode && (
-                  <p className="tiny dim" style={{ margin: 0 }}>
-                    This server does not verify who joins, which is what lets the companion connect without a second
-                    Minecraft account.{' '}
-                    {selected.reachability === 'local'
-                      ? 'Only programs on this PC can reach it.'
-                      : selected.reachability === 'network'
-                        ? 'Anyone on your local network can join as any username.'
-                        : 'Anyone who can reach the port can join as any username.'}
-                  </p>
-                )}
-              </div>
+              {tab === 'controls' && (
+                <ServerAdmin
+                  serverId={selected.id}
+                  players={state.players}
+                  running={state.status === 'running'}
+                  show="controls"
+                />
+              )}
 
-              {/* ------------------------------------------------ moderation */}
-              <ServerAdmin
-                serverId={selected.id}
-                players={state?.players ?? []}
-                running={state?.status === 'running'}
-              />
+              {/* -------------------------------------------------- mods */}
 
-              {/* -------------------------------------------------- website */}
-              <ServerSitePanel serverId={selected.id} />
-
-              {/* ----------------------------------------------------- mods */}
-              <div className="panel col">
-                <div className="panel-head row gap-8 between">
-                  <span className="small">
-                    {softwareInfo?.plugins ? 'Plugins' : 'Mods'}
-                    {mods.length > 0 && <span className="dim"> · {mods.length}</span>}
-                  </span>
-                  <div className="row gap-8">
-                    <button
-                      className="btn btn-primary btn-sm"
-                      /*
-                       * Only disabled once we know the software takes neither.
-                       * Written the other way round, an unloaded `softwareInfo`
-                       * made both halves true and greyed the button out on a
-                       * server that accepts mods perfectly well.
-                       */
-                      disabled={busy || softwareInfo?.mods === false && softwareInfo?.plugins === false}
-                      onClick={() => setBrowsing(true)}
-                      title="Search Modrinth and CurseForge, and install straight into this server"
-                    >
-                      <Search size={14} /> Browse mods
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(async () => {
-                          await api.host.importMods(selected.id)
-                          await refreshMods(selected.id)
-                        })
-                      }
-                    >
-                      <Plus size={14} /> Add files
-                    </button>
-                    {joinTargets.length > 0 && softwareInfo?.mods && (
+              {tab === 'mods' && (
+                <div className="panel col">
+                  <div className="panel-head row gap-8 between">
+                    <span className="small">
+                      {softwareInfo?.plugins ? 'Plugins' : 'Mods'}
+                      {mods.length > 0 && <span className="dim"> · {mods.length}</span>}
+                    </span>
+                    <div className="row gap-8">
+                      <button
+                        className="btn btn-primary btn-sm"
+                        /*
+                         * Only disabled once we know the software takes neither.
+                         * Written the other way round, an unloaded `softwareInfo`
+                         * made both halves true and greyed the button out on a
+                         * server that accepts mods perfectly well.
+                         */
+                        disabled={busy || (softwareInfo?.mods === false && softwareInfo?.plugins === false)}
+                        onClick={() => setBrowsing(true)}
+                        title="Search Modrinth and CurseForge, and install straight into this server"
+                      >
+                        <Search size={14} /> Browse mods
+                      </button>
                       <button
                         className="btn btn-ghost btn-sm"
-                        disabled={busy || mods.length === 0}
-                        title={`Copy these mods into ${joinTargets[0].name} so you can join`}
-                        onClick={() => void run(() => api.host.syncMods(selected.id, joinTargets[0].id))}
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            await api.host.importMods(selected.id)
+                            await refreshMods(selected.id)
+                          })
+                        }
                       >
-                        <Copy size={14} /> Copy to {joinTargets[0].name}
+                        <Plus size={14} /> Add files
                       </button>
+                      {joinTargets.length > 0 && softwareInfo?.mods && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={busy || mods.length === 0}
+                          title={`Copy these mods into ${joinTargets[0].name} so you can join`}
+                          onClick={() => void run(() => api.host.syncMods(selected.id, joinTargets[0].id))}
+                        >
+                          <Copy size={14} /> Copy to {joinTargets[0].name}
+                        </button>
+                      )}
+                      <button className="btn btn-ghost btn-sm" onClick={() => void api.host.openFolder(selected.id)}>
+                        <FolderOpen size={14} /> Open folder
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="col" style={{ padding: '4px 0', maxHeight: 220, overflowY: 'auto' }}>
+                    {softwareInfo && !softwareInfo.mods && !softwareInfo.plugins ? (
+                      <p className="tiny dim" style={{ padding: '10px 12px', margin: 0 }}>
+                        Vanilla servers take neither mods nor plugins. Switch this server to Paper for plugins, or
+                        Fabric, Forge or NeoForge for mods.
+                      </p>
+                    ) : mods.length === 0 ? (
+                      <p className="tiny dim" style={{ padding: '10px 12px', margin: 0 }}>
+                        Nothing here yet. Add jar files, or drop them in with Open folder. The server has to be
+                        restarted before it picks anything up.
+                      </p>
+                    ) : (
+                      mods.map((mod) => (
+                        <div key={mod.fileName} className="host-mod-row row gap-10 between">
+                          <div className="col gap-2" style={{ minWidth: 0 }}>
+                            <span className="small truncate">{mod.name || mod.fileName}</span>
+                            <span className="tiny dim truncate">
+                              {mod.version ? `${mod.version} · ` : ''}
+                              {mod.fileName}
+                            </span>
+                            {mod.issues.slice(0, 1).map((issue) => (
+                              <span
+                                key={issue.code}
+                                className="tiny"
+                                style={{ color: issue.severity === 'error' ? 'var(--danger)' : 'var(--warning)' }}
+                              >
+                                {issue.message}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="row gap-8">
+                            <Toggle
+                              checked={mod.enabled}
+                              onChange={(value) =>
+                                void run(async () => {
+                                  await api.host.toggleMod(selected.id, mod.fileName, value)
+                                  await refreshMods(selected.id)
+                                })
+                              }
+                            />
+                            <button
+                              className="btn btn-ghost btn-icon"
+                              onClick={() =>
+                                void run(async () => {
+                                  await api.host.deleteMod(selected.id, mod.fileName)
+                                  await refreshMods(selected.id)
+                                })
+                              }
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
                     )}
-                    <button className="btn btn-ghost btn-sm" onClick={() => void api.host.openFolder(selected.id)}>
-                      <FolderOpen size={14} /> Open folder
+                  </div>
+                </div>
+              )}
+
+              {/* ------------------------------------------------- world */}
+
+              {tab === 'world' && (
+                <div className="panel col">
+                  <div className="panel-head row gap-8 between">
+                    <span className="small">World snapshots</span>
+                    <span className="tiny dim">Restore points for {selected.name}</span>
+                  </div>
+                  <div className="panel-pad">
+                    <ServerBackups serverId={selected.id} serverName={selected.name} running={live} />
+
+                    <RestartSchedule serverId={selected.id} />
+                  </div>
+                </div>
+              )}
+
+              {/* ----------------------------------------------- sharing */}
+
+              {tab === 'sharing' && (
+                <>
+                  <div className="panel panel-pad col gap-12">
+                    <div className="section-title">Let people in</div>
+                    <div className="row gap-8 wrap">
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => void checkRouter()}
+                        disabled={busy || checkingRouter}
+                      >
+                        <Globe size={14} /> {checkingRouter ? 'Asking the router…' : 'Play with friends online'}
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => void copyInvite()}
+                        disabled={busy || inviting}
+                      >
+                        <Link2 size={14} /> {inviting ? 'Building the link…' : 'Copy invite link'}
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => void gatherShareDetails()}
+                        disabled={busy || gathering}
+                      >
+                        <Share2 size={14} /> {gathering ? 'Checking…' : 'Share / list this server'}
+                      </button>
+                    </div>
+                    <p className="tiny dim" style={{ margin: 0 }}>
+                      Try &ldquo;Play with friends online&rdquo; first &mdash; it asks the router to open the port,
+                      which is the fastest route and involves nobody else. The relay below is for when the router will
+                      not.
+                    </p>
+                  </div>
+                  {share && (
+                    <div className="panel panel-pad col gap-10" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                      <div className="row gap-8 between">
+                        <strong className="small">Share this server</strong>
+                        <button className="btn btn-ghost btn-icon" onClick={() => setShare(null)} title="Close">
+                          ×
+                        </button>
+                      </div>
+
+                      {/* Where people connect, indoors and out. */}
+                      <div className="col gap-6">
+                        <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                          <span className="tiny dim" style={{ minWidth: 96 }}>
+                            In your house
+                          </span>
+                          <span className="host-address">{share.localAddress}</span>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => void navigator.clipboard.writeText(share.localAddress)}
+                          >
+                            <Copy size={13} /> Copy
+                          </button>
+                        </div>
+
+                        <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                          <span className="tiny dim" style={{ minWidth: 96 }}>
+                            Everyone else
+                          </span>
+                          {share.publicAddress ? (
+                            <>
+                              <span className="host-address">{share.publicAddress}</span>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => void navigator.clipboard.writeText(share.publicAddress as string)}
+                              >
+                                <Copy size={13} /> Copy
+                              </button>
+                              {share.reachable === true && (
+                                <span className="pill success tiny">
+                                  <span className="dot online" /> answering
+                                </span>
+                              )}
+                              {share.reachable === false && (
+                                <span className="pill tiny dim">no answer from in here</span>
+                              )}
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                disabled={outside === 'checking'}
+                                onClick={() => void checkOutside(selected.id)}
+                              >
+                                {outside === 'checking' ? <Spinner /> : <Globe size={13} />} Check from outside
+                              </button>
+                            </>
+                          ) : (
+                            <span className="tiny dim">not available yet</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {share.note && (
+                        <p className="tiny dim" style={{ margin: 0 }}>
+                          {share.note}
+                        </p>
+                      )}
+
+                      {outside && outside !== 'checking' && (
+                        <p
+                          className="tiny"
+                          style={{ margin: 0, color: outside.reachable ? 'var(--good, #6ee7a0)' : undefined }}
+                        >
+                          {outside.note}
+                          {outside.reachable && outside.motd ? ` It replied: "${outside.motd}".` : ''}
+                        </p>
+                      )}
+
+                      {/*
+                       * A description in the shape every listing site asks for, so
+                       * it is one paste rather than ten fields typed by hand.
+                       */}
+                      <Field
+                        label="Ready to paste"
+                        hint="Most listing sites want an address, a version and a line about the server."
+                      >
+                        <textarea
+                          className="input mono"
+                          rows={4}
+                          readOnly
+                          value={
+                            `${selected.name}\n` +
+                            `Address: ${share.publicAddress ?? share.localAddress}\n` +
+                            `Version: Minecraft ${share.minecraftVersion} (${share.software})\n` +
+                            `Slots: ${share.maxPlayers}\n` +
+                            `${share.motd}`
+                          }
+                        />
+                      </Field>
+
+                      <div className="row gap-8 wrap">
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() =>
+                            void navigator.clipboard.writeText(
+                              `${selected.name}\n` +
+                                `Address: ${share.publicAddress ?? share.localAddress}\n` +
+                                `Version: Minecraft ${share.minecraftVersion} (${share.software})\n` +
+                                `Slots: ${share.maxPlayers}\n` +
+                                `${share.motd}`
+                            )
+                          }
+                        >
+                          <Copy size={13} /> Copy all of it
+                        </button>
+                      </div>
+
+                      {/*
+                       * Links, not submissions. Every one of these wants an account
+                       * of your own and most forbid posting by machine, so the
+                       * honest help is to carry the details to the door.
+                       */}
+                      <div className="col gap-6">
+                        <span className="tiny dim">
+                          Listing sites — each needs a free account of your own, then paste the details above:
+                        </span>
+                        <div className="row gap-8 wrap">
+                          {[
+                            ['minecraft-server-list.com', 'https://minecraft-server-list.com'],
+                            ['minecraftservers.org', 'https://minecraftservers.org'],
+                            ['topminecraftservers.org', 'https://topminecraftservers.org'],
+                            ['minecraft-mp.com', 'https://minecraft-mp.com'],
+                            ['planetminecraft.com', 'https://www.planetminecraft.com/servers/']
+                          ].map(([label, url]) => (
+                            <button
+                              key={url}
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => void api.app.openExternal(url)}
+                            >
+                              <ExternalLink size={13} /> {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {!selected.onlineMode && (
+                        <p className="tiny" style={{ margin: 0, color: 'var(--warning)' }}>
+                          This server does not verify players with Mojang. Listing it publicly means anyone who reads
+                          the listing can join under any name they type — turn verification on before advertising it.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {forwarding && (
+                    <div className="panel panel-pad col gap-8" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                      {!forwarding.available ? (
+                        <>
+                          <strong className="small">Your router will not forward ports</strong>
+                          <p className="tiny dim" style={{ margin: 0 }}>
+                            {forwarding.reason}
+                          </p>
+                        </>
+                      ) : forwarding.open ? (
+                        <>
+                          <div className="row gap-8" style={{ alignItems: 'center' }}>
+                            <span className="pill success tiny">
+                              <span className="dot online" /> Open to the internet
+                            </span>
+                            <span className="tiny dim">via {forwarding.router}</span>
+                          </div>
+                          {forwarding.externalAddress && (
+                            <div className="row gap-8" style={{ alignItems: 'center' }}>
+                              <span className="tiny dim">Friends connect to</span>
+                              <span className="host-address">
+                                {forwarding.externalAddress}:{selected.port}
+                              </span>
+                            </div>
+                          )}
+                          {/*
+                           * The router being open is only half of it.
+                           *
+                           * A forwarded port carries a connection as far as this
+                           * machine and no further; Windows Firewall then drops
+                           * it silently unless something allows it. Reporting
+                           * only the router is what made a blocked server look
+                           * like a working one.
+                           */}
+                          {forwarding.firewall && !forwarding.firewall.allowed && (
+                            <div
+                              className="col gap-8"
+                              style={{
+                                borderLeft: '2px solid var(--warning, #d9a441)',
+                                paddingLeft: 12
+                              }}
+                            >
+                              <strong className="small">Windows is still blocking it on this PC</strong>
+                              <p className="tiny dim" style={{ margin: 0 }}>
+                                The router is forwarding port {selected.port} correctly, but Windows Firewall drops the
+                                connection when it arrives, so friends see a server that never answers.{' '}
+                                {forwarding.firewall.reason === 'the launcher is not running as an administrator'
+                                  ? 'Adding the rule needs administrator rights, which the launcher does not ask for.'
+                                  : forwarding.firewall.reason}
+                              </p>
+                              {forwarding.firewall.manualCommand && (
+                                <>
+                                  <p className="tiny dim" style={{ margin: 0 }}>
+                                    Paste this into PowerShell, run as administrator:
+                                  </p>
+                                  <div className="row gap-8" style={{ alignItems: 'center' }}>
+                                    <code className="host-address" style={{ fontSize: 11, overflowX: 'auto' }}>
+                                      {forwarding.firewall.manualCommand}
+                                    </code>
+                                    <button
+                                      className="btn btn-ghost btn-sm"
+                                      onClick={() =>
+                                        void navigator.clipboard
+                                          .writeText(forwarding.firewall!.manualCommand!)
+                                          .catch(() => undefined)
+                                      }
+                                    >
+                                      Copy
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+
+                          {forwarding.firewall?.allowed && (
+                            <span className="tiny dim">Windows is letting it through too.</span>
+                          )}
+
+                          <p className="tiny dim" style={{ margin: 0 }}>
+                            The router is asked to keep this for twelve hours, and it is closed again when you stop the
+                            server.
+                          </p>
+                          <div className="row gap-8">
+                            <button
+                              className="btn btn-ghost btn-sm danger"
+                              onClick={() => void closeToInternet()}
+                              disabled={checkingRouter}
+                            >
+                              Close the port
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <strong className="small">Your router can open the port</strong>
+                          <p className="tiny dim" style={{ margin: 0 }}>
+                            {forwarding.router} answered. Port {selected.port} is not open yet.
+                          </p>
+                          <div className="row gap-8">
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => void openToInternet()}
+                              disabled={checkingRouter}
+                            >
+                              Open port {selected.port}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <div className="panel col">
+                    <div className="panel-head row gap-8 between">
+                      <span className="small">Reaching your friends</span>
+                    </div>
+                    <div className="panel-pad">
+                      <RelayTunnel serverId={selected.id} onlineMode={selected.onlineMode} />
+                    </div>
+                  </div>
+                  <ServerSitePanel serverId={selected.id} />
+                </>
+              )}
+
+              {/* ----------------------------------------------- console */}
+
+              {tab === 'console' && (
+                <div className="panel col" style={{ minHeight: 240 }}>
+                  <div className="panel-head row gap-8 between">
+                    <span className="small">Console</span>
+                    {state.players.length > 0 && (
+                      <span className="tiny dim row gap-6">
+                        <Users size={12} /> {state.players.length} online
+                      </span>
+                    )}
+                  </div>
+                  <div ref={consoleRef} className="log-feed flex-1" style={{ padding: '8px 12px' }}>
+                    {visibleLines.length === 0 ? (
+                      <div className="tiny dim">Nothing yet. Start the server to see its output here.</div>
+                    ) : (
+                      visibleLines.map((line) => (
+                        <div
+                          key={line.id}
+                          className="tiny mono"
+                          style={{
+                            color:
+                              line.stream === 'err'
+                                ? 'var(--danger)'
+                                : line.stream === 'in'
+                                  ? 'var(--accent)'
+                                  : 'var(--text-dim)',
+                            whiteSpace: 'pre-wrap'
+                          }}
+                        >
+                          {line.text}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="panel-foot row gap-8">
+                    <input
+                      className="input flex-1"
+                      placeholder={live ? 'Send a command, e.g. time set day' : 'Start the server to send commands'}
+                      value={command}
+                      disabled={!live}
+                      onChange={(event) => setCommand(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') sendCommand()
+                      }}
+                    />
+                    <button
+                      className="btn btn-ghost btn-icon"
+                      disabled={!live || !command.trim()}
+                      onClick={sendCommand}
+                    >
+                      <Send size={15} />
                     </button>
                   </div>
                 </div>
-
-                <div className="col" style={{ padding: '4px 0', maxHeight: 220, overflowY: 'auto' }}>
-                  {softwareInfo && !softwareInfo.mods && !softwareInfo.plugins ? (
-                    <p className="tiny dim" style={{ padding: '10px 12px', margin: 0 }}>
-                      Vanilla servers take neither mods nor plugins. Switch this server to Paper for plugins, or
-                      Fabric, Forge or NeoForge for mods.
-                    </p>
-                  ) : mods.length === 0 ? (
-                    <p className="tiny dim" style={{ padding: '10px 12px', margin: 0 }}>
-                      Nothing here yet. Add jar files, or drop them in with Open folder. The server has to be
-                      restarted before it picks anything up.
-                    </p>
-                  ) : (
-                    mods.map((mod) => (
-                      <div key={mod.fileName} className="host-mod-row row gap-10 between">
-                        <div className="col gap-2" style={{ minWidth: 0 }}>
-                          <span className="small truncate">{mod.name || mod.fileName}</span>
-                          <span className="tiny dim truncate">
-                            {mod.version ? `${mod.version} · ` : ''}
-                            {mod.fileName}
-                          </span>
-                          {mod.issues.slice(0, 1).map((issue) => (
-                            <span
-                              key={issue.code}
-                              className="tiny"
-                              style={{ color: issue.severity === 'error' ? 'var(--danger)' : 'var(--warning)' }}
-                            >
-                              {issue.message}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="row gap-8">
-                          <Toggle
-                            checked={mod.enabled}
-                            onChange={(value) =>
-                              void run(async () => {
-                                await api.host.toggleMod(selected.id, mod.fileName, value)
-                                await refreshMods(selected.id)
-                              })
-                            }
-                          />
-                          <button
-                            className="btn btn-ghost btn-icon"
-                            onClick={() =>
-                              void run(async () => {
-                                await api.host.deleteMod(selected.id, mod.fileName)
-                                await refreshMods(selected.id)
-                              })
-                            }
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* --------------------------------------------------- relay */}
-              <div className="panel col">
-                <div className="panel-head row gap-8 between">
-                  <span className="small">Reaching your friends</span>
-                </div>
-                <div className="panel-pad">
-                  <RelayTunnel serverId={selected.id} onlineMode={selected.onlineMode} />
-                </div>
-              </div>
-
-              {/* ------------------------------------------------- backups */}
-              <div className="panel col">
-                <div className="panel-head row gap-8 between">
-                  <span className="small">World snapshots</span>
-                  <span className="tiny dim">Restore points for {selected.name}</span>
-                </div>
-                <div className="panel-pad">
-                  <ServerBackups serverId={selected.id} serverName={selected.name} running={live} />
-
-                  <RestartSchedule serverId={selected.id} />
-                </div>
-              </div>
-
-              {/* -------------------------------------------------- console */}
-              <div className="panel col" style={{ minHeight: 240 }}>
-                <div className="panel-head row gap-8 between">
-                  <span className="small">Console</span>
-                  {state.players.length > 0 && (
-                    <span className="tiny dim row gap-6">
-                      <Users size={12} /> {state.players.length} online
-                    </span>
-                  )}
-                </div>
-                <div ref={consoleRef} className="log-feed flex-1" style={{ padding: '8px 12px' }}>
-                  {visibleLines.length === 0 ? (
-                    <div className="tiny dim">Nothing yet. Start the server to see its output here.</div>
-                  ) : (
-                    visibleLines.map((line) => (
-                      <div
-                        key={line.id}
-                        className="tiny mono"
-                        style={{
-                          color:
-                            line.stream === 'err'
-                              ? 'var(--danger)'
-                              : line.stream === 'in'
-                                ? 'var(--accent)'
-                                : 'var(--text-dim)',
-                          whiteSpace: 'pre-wrap'
-                        }}
-                      >
-                        {line.text}
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="panel-foot row gap-8">
-                  <input
-                    className="input flex-1"
-                    placeholder={live ? 'Send a command, e.g. time set day' : 'Start the server to send commands'}
-                    value={command}
-                    disabled={!live}
-                    onChange={(event) => setCommand(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') sendCommand()
-                    }}
-                  />
-                  <button className="btn btn-ghost btn-icon" disabled={!live || !command.trim()} onClick={sendCommand}>
-                    <Send size={15} />
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -1629,16 +1808,17 @@ export function HostServerScreen(): JSX.Element {
             </Field>
 
             <div className="field-grid">
-              <Field label="Spawn protection" hint="Blocks around spawn only operators can build in. 0 disables it. Non-operators — including companions — are refused every placement inside it.">
+              <Field
+                label="Spawn protection"
+                hint="Blocks around spawn only operators can build in. 0 disables it. Non-operators — including companions — are refused every placement inside it."
+              >
                 <input
                   className="input"
                   type="number"
                   min={0}
                   max={256}
                   value={editing.spawnProtection ?? 16}
-                  onChange={(event) =>
-                    setEditing({ ...editing, spawnProtection: Number(event.target.value) })
-                  }
+                  onChange={(event) => setEditing({ ...editing, spawnProtection: Number(event.target.value) })}
                 />
               </Field>
 
@@ -1668,7 +1848,11 @@ export function HostServerScreen(): JSX.Element {
               />
             </Field>
 
-            <Field label="Hostile mobs spawn" hint="Turn off for a peaceful build server without changing difficulty." inline>
+            <Field
+              label="Hostile mobs spawn"
+              hint="Turn off for a peaceful build server without changing difficulty."
+              inline
+            >
               <Toggle
                 checked={editing.spawnMonsters ?? true}
                 onChange={(value) => setEditing({ ...editing, spawnMonsters: value })}
@@ -1684,7 +1868,11 @@ export function HostServerScreen(): JSX.Element {
 
             <div className="settings-group-label">Players</div>
 
-            <Field label="Players can hurt each other" hint="Turn off so nobody can be killed by another player." inline>
+            <Field
+              label="Players can hurt each other"
+              hint="Turn off so nobody can be killed by another player."
+              inline
+            >
               <Toggle checked={editing.pvp ?? true} onChange={(value) => setEditing({ ...editing, pvp: value })} />
             </Field>
 
@@ -1725,13 +1913,13 @@ export function HostServerScreen(): JSX.Element {
       </Modal>
 
       {/*
-        * The same browser instances use, pointed at the server.
-        *
-        * Adding a mod to a server used to mean finding the jar yourself,
-        * checking it matched the loader and version, and dropping it in the
-        * right folder. It is the same content from the same places either way,
-        * so it may as well be the same two clicks.
-        */}
+       * The same browser instances use, pointed at the server.
+       *
+       * Adding a mod to a server used to mean finding the jar yourself,
+       * checking it matched the loader and version, and dropping it in the
+       * right folder. It is the same content from the same places either way,
+       * so it may as well be the same two clicks.
+       */}
       <Modal
         open={browsing && Boolean(selected)}
         title={`Add mods to ${selected?.name ?? ''}`}
@@ -1763,11 +1951,11 @@ export function HostServerScreen(): JSX.Element {
       </Modal>
 
       {/*
-        * Building a new server from a pack. There is no server to point at yet,
-        * so the destination is a placeholder that only carries `isServer` — the
-        * pack supplies the version and loader, and the browser is locked to
-        * modpacks because nothing else here would create anything.
-        */}
+       * Building a new server from a pack. There is no server to point at yet,
+       * so the destination is a placeholder that only carries `isServer` — the
+       * pack supplies the version and loader, and the browser is locked to
+       * modpacks because nothing else here would create anything.
+       */}
       <Modal
         open={packBrowsing}
         title="Host a modpack"
@@ -1845,7 +2033,6 @@ export function HostServerScreen(): JSX.Element {
           player data, and server settings all go.
         </p>
       </Modal>
-
     </>
   )
 }

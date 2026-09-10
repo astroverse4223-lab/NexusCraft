@@ -39,11 +39,21 @@ const SPANS = [
 export function ServerAdmin({
   serverId,
   players,
-  running
+  running,
+  show
 }: {
   serverId: string
   players: string[]
   running: boolean
+
+  /**
+   * Which half to draw.
+   *
+   * Dealing with a person and running the server are different jobs done at
+   * different moments, and stacked together they were ten panels of scrolling
+   * with the thing you wanted somewhere in the middle.
+   */
+  show: 'players' | 'controls'
 }): JSX.Element {
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [said, setSaid] = useState<string | null>(null)
@@ -83,9 +93,9 @@ export function ServerAdmin({
   }
 
   useEffect(() => {
-    void refresh()
+    if (show === 'players') void refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverId, running])
+  }, [serverId, running, show])
 
   const run = async (command: string, tell: string): Promise<void> => {
     try {
@@ -106,9 +116,11 @@ export function ServerAdmin({
   if (!running) {
     return (
       <div className="panel panel-pad col gap-8">
-        <div className="section-title">Moderation</div>
+        <div className="section-title">{show === 'players' ? 'Players' : 'Controls'}</div>
         <p className="small muted">
-          The server is stopped. Start it to see who is on and what they are doing.
+          {show === 'players'
+            ? 'The server is stopped. Start it to see who is on and what they are doing.'
+            : 'The server is stopped. Every button here sends a command to a running server.'}
         </p>
       </div>
     )
@@ -118,438 +130,424 @@ export function ServerAdmin({
     <div className="col gap-16">
       {error && <ErrorView error={error} onDismiss={() => setError(null)} />}
 
-      <div className="panel panel-pad col gap-12">
-        <div className="row gap-8" style={{ alignItems: 'center' }}>
-          <div className="section-title" style={{ flex: 1 }}>
-            Who is on
-          </div>
-          <span className="tiny dim">{players.length} online</span>
-        </div>
+      {show === 'players' && (
+        <>
+          <div className="panel panel-pad col gap-12">
+            <div className="row gap-8" style={{ alignItems: 'center' }}>
+              <div className="section-title" style={{ flex: 1 }}>
+                Who is on
+              </div>
+              <span className="tiny dim">{players.length} online</span>
+            </div>
 
-        {players.length === 0 ? (
-          <p className="small muted">Nobody is connected.</p>
-        ) : (
-          <>
+            {players.length === 0 ? (
+              <p className="small muted">Nobody is connected.</p>
+            ) : (
+              <>
+                <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
+                  <div className="field" style={{ width: 140 }}>
+                    <label className="field-label">How long</label>
+                    <select className="select" value={span} onChange={(e) => setSpan(e.target.value)}>
+                      {SPANS.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field" style={{ flex: '1 1 220px' }}>
+                    <label className="field-label">Reason</label>
+                    <input
+                      className="input"
+                      value={why}
+                      placeholder="what they did — they will be told this"
+                      onChange={(e) => setWhy(e.target.value.slice(0, 120))}
+                    />
+                  </div>
+                </div>
+
+                <div className="col gap-8">
+                  {players.map((name) => (
+                    <div key={name} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                      <img
+                        src={`https://mc-heads.net/avatar/${encodeURIComponent(name)}/24`}
+                        alt=""
+                        width={24}
+                        height={24}
+                        style={{ borderRadius: 4, imageRendering: 'pixelated' }}
+                        onError={(e) => {
+                          ;(e.currentTarget as HTMLImageElement).style.visibility = 'hidden'
+                        }}
+                      />
+
+                      <span className="small" style={{ flex: '1 1 120px' }}>
+                        {name}
+                      </span>
+
+                      <button
+                        className="btn btn-sm"
+                        title="Warn them"
+                        onClick={() => void run(`warn ${name} ${reason()}`, `Warned ${name}.`)}
+                      >
+                        <Gavel size={13} /> Warn
+                      </button>
+
+                      <button
+                        className="btn btn-sm"
+                        title="Stop them talking"
+                        onClick={() => void run(`mute ${name} ${span} ${reason()}`, `Muted ${name} for ${span}.`)}
+                      >
+                        <MicOff size={13} /> Mute
+                      </button>
+
+                      <button
+                        className="btn btn-sm"
+                        title="Disconnect them — they can come straight back"
+                        onClick={() => void run(`kick ${name} ${reason()}`, `Kicked ${name}.`)}
+                      >
+                        <LogOut size={13} /> Kick
+                      </button>
+
+                      {/*
+                       * Two clicks, deliberately.
+                       *
+                       * Every other button here is reversible in a moment; this one
+                       * ends somebody's time on the server, and the row is a line of
+                       * near-identical buttons where the wrong one is easy to hit.
+                       */}
+                      {confirming === name ? (
+                        <>
+                          <button
+                            className="btn btn-sm danger"
+                            onClick={() => {
+                              void run(`tempban ${name} ${span} ${reason()}`, `Banned ${name} for ${span}.`)
+                              setConfirming(null)
+                            }}
+                          >
+                            Ban {name} for {span}?
+                          </button>
+                          <button className="btn btn-sm" onClick={() => setConfirming(null)}>
+                            No
+                          </button>
+                        </>
+                      ) : (
+                        <button className="btn btn-sm" title="Ban them" onClick={() => setConfirming(name)}>
+                          <Ban size={13} /> Ban
+                        </button>
+                      )}
+
+                      <button
+                        className="btn btn-sm"
+                        title="Give them operator"
+                        onClick={() => void run(`op ${name}`, `${name} is an operator.`)}
+                      >
+                        <ShieldCheck size={13} /> Op
+                      </button>
+
+                      <button
+                        className="btn btn-sm"
+                        title="What they have done before"
+                        onClick={() => void run(`history ${name}`, `History for ${name} is in the console.`)}
+                      >
+                        History
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {said && (
+              <p className="tiny" style={{ color: 'var(--success)' }}>
+                {said}
+              </p>
+            )}
+          </div>
+
+          <div className="panel panel-pad col gap-12">
+            <div className="section-title">Say something</div>
+
+            <div className="row gap-8 wrap">
+              <input
+                className="input"
+                style={{ flex: '1 1 260px' }}
+                value={announcement}
+                placeholder="everyone on the server sees this"
+                onChange={(e) => setAnnouncement(e.target.value.slice(0, 200))}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' || !announcement.trim()) return
+
+                  void run(`say ${announcement.trim()}`, 'Said.')
+                  setAnnouncement('')
+                }}
+              />
+              <button
+                className="btn btn-sm"
+                disabled={!announcement.trim()}
+                onClick={() => {
+                  void run(`say ${announcement.trim()}`, 'Said.')
+                  setAnnouncement('')
+                }}
+              >
+                Send
+              </button>
+            </div>
+
+            <p className="tiny dim">
+              Goes out as a server message, not as you. Useful for telling everybody a restart is coming, or that the
+              Warden is about to rise.
+            </p>
+          </div>
+
+          {/* ------------------------------------------------------ anybody */}
+
+          <div className="panel panel-pad col gap-12">
+            <div className="section-title">Anybody else</div>
+
+            <p className="small muted">
+              Most moderation happens after somebody has gone &mdash; they say something and log off. Type a name, or
+              pick one the server has seen before.
+            </p>
+
+            <div className="row gap-8 wrap">
+              <input
+                className="input"
+                style={{ flex: '1 1 200px' }}
+                value={who}
+                list="known-players"
+                placeholder="a player's name"
+                onChange={(e) => setWho(e.target.value.trim().slice(0, 16))}
+              />
+              <datalist id="known-players">
+                {known.slice(0, 200).map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+
+              <button
+                className="btn btn-sm"
+                disabled={!who}
+                onClick={() => void run(`tempban ${who} ${span} ${reason()}`, `Banned ${who}.`)}
+              >
+                <Ban size={13} /> Ban
+              </button>
+              <button
+                className="btn btn-sm"
+                disabled={!who}
+                onClick={() => void run(`mute ${who} ${span} ${reason()}`, `Muted ${who}.`)}
+              >
+                <MicOff size={13} /> Mute
+              </button>
+              <button
+                className="btn btn-sm"
+                disabled={!who}
+                onClick={() => void run(`history ${who}`, `History for ${who} is in the console.`)}
+              >
+                History
+              </button>
+            </div>
+
             <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
-              <div className="field" style={{ width: 140 }}>
-                <label className="field-label">How long</label>
-                <select className="select" value={span} onChange={(e) => setSpan(e.target.value)}>
-                  {SPANS.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
+              <div className="field" style={{ width: 130 }}>
+                <label className="field-label">Money</label>
+                <input
+                  className="input"
+                  type="number"
+                  value={amount}
+                  onChange={(e) => setAmount(Number(e.target.value) || 0)}
+                />
+              </div>
+              <button
+                className="btn btn-sm"
+                disabled={!who || amount === 0}
+                onClick={() => void run(`nexus pay ${who} ${amount}`, `Paid ${who}.`)}
+              >
+                Pay
+              </button>
+
+              <div className="field" style={{ width: 120 }}>
+                <label className="field-label">Rank</label>
+                <select className="select" value={rank} onChange={(e) => setRank(e.target.value)}>
+                  {RANKS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
                     </option>
                   ))}
                 </select>
               </div>
+              <button
+                className="btn btn-sm"
+                disabled={!who}
+                onClick={() => void run(`nexus setrank ${who} ${rank}`, `${who} is now ${rank}.`)}
+              >
+                Set rank
+              </button>
 
-              <div className="field" style={{ flex: '1 1 220px' }}>
-                <label className="field-label">Reason</label>
-                <input
-                  className="input"
-                  value={why}
-                  placeholder="what they did — they will be told this"
-                  onChange={(e) => setWhy(e.target.value.slice(0, 120))}
-                />
+              {/*
+               * A key has a tier, and the player has to be on.
+               *
+               * `givekey` wants <player> <common|rare|legendary>, and refuses
+               * outright for anybody offline - so a button that sent only a name
+               * would have quietly printed a usage line into the console and
+               * looked, from here, exactly like it had worked.
+               */}
+              <div className="field" style={{ width: 120 }}>
+                <label className="field-label">Key</label>
+                <select className="select" value={key} onChange={(e) => setKey(e.target.value)}>
+                  <option value="common">Common</option>
+                  <option value="rare">Rare</option>
+                  <option value="legendary">Legendary</option>
+                </select>
               </div>
+              <button
+                className="btn btn-sm"
+                disabled={!who || !players.includes(who)}
+                title={who && !players.includes(who) ? 'They have to be online for a key' : 'Give them a crate key'}
+                onClick={() => void run(`nexus givekey ${who} ${key}`, `Gave ${who} a ${key} key.`)}
+              >
+                Crate key
+              </button>
+            </div>
+          </div>
+
+          {/* ------------------------------------------------------ the undoing */}
+
+          <div className="panel panel-pad col gap-12">
+            <div className="row gap-8" style={{ alignItems: 'center' }}>
+              <div className="section-title" style={{ flex: 1 }}>
+                Banned and muted
+              </div>
+              <button className="btn btn-sm" onClick={() => void refresh()}>
+                Refresh
+              </button>
             </div>
 
-            <div className="col gap-8">
-              {players.map((name) => (
-                <div key={name} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-                  <img
-                    src={`https://mc-heads.net/avatar/${encodeURIComponent(name)}/24`}
-                    alt=""
-                    width={24}
-                    height={24}
-                    style={{ borderRadius: 4, imageRendering: 'pixelated' }}
-                    onError={(e) => {
-                      ;(e.currentTarget as HTMLImageElement).style.visibility = 'hidden'
-                    }}
-                  />
+            {punished.length === 0 ? (
+              <p className="small muted">Nobody is banned or muted.</p>
+            ) : (
+              <div className="col gap-8">
+                {punished.map((entry, at) => (
+                  <div key={entry.name + at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                    <span
+                      className="tiny"
+                      style={{
+                        color: entry.kind === 'ban' ? 'var(--danger)' : 'var(--warning)',
+                        width: 44
+                      }}
+                    >
+                      {entry.kind}
+                    </span>
 
-                  <span className="small" style={{ flex: '1 1 120px' }}>
-                    {name}
-                  </span>
+                    <span className="small" style={{ flex: '1 1 110px' }}>
+                      {entry.name}
+                    </span>
 
-                  <button
-                    className="btn btn-sm"
-                    title="Warn them"
-                    onClick={() => void run(`warn ${name} ${reason()}`, `Warned ${name}.`)}
-                  >
-                    <Gavel size={13} /> Warn
-                  </button>
+                    <span className="tiny dim truncate" style={{ flex: '2 1 160px' }}>
+                      {entry.reason} &mdash; by {entry.by}
+                    </span>
 
-                  <button
-                    className="btn btn-sm"
-                    title="Stop them talking"
-                    onClick={() =>
-                      void run(`mute ${name} ${span} ${reason()}`, `Muted ${name} for ${span}.`)
-                    }
-                  >
-                    <MicOff size={13} /> Mute
-                  </button>
+                    <span className="tiny dim">
+                      {entry.until === 0 ? 'forever' : 'until ' + new Date(entry.until).toLocaleString()}
+                    </span>
 
-                  <button
-                    className="btn btn-sm"
-                    title="Disconnect them — they can come straight back"
-                    onClick={() => void run(`kick ${name} ${reason()}`, `Kicked ${name}.`)}
-                  >
-                    <LogOut size={13} /> Kick
-                  </button>
-
-                  {/*
-                    * Two clicks, deliberately.
-                    *
-                    * Every other button here is reversible in a moment; this one
-                    * ends somebody's time on the server, and the row is a line of
-                    * near-identical buttons where the wrong one is easy to hit.
-                    */}
-                  {confirming === name ? (
-                    <>
-                      <button
-                        className="btn btn-sm danger"
-                        onClick={() => {
-                          void run(
-                            `tempban ${name} ${span} ${reason()}`,
-                            `Banned ${name} for ${span}.`
-                          )
-                          setConfirming(null)
-                        }}
-                      >
-                        Ban {name} for {span}?
-                      </button>
-                      <button className="btn btn-sm" onClick={() => setConfirming(null)}>
-                        No
-                      </button>
-                    </>
-                  ) : (
                     <button
                       className="btn btn-sm"
-                      title="Ban them"
-                      onClick={() => setConfirming(name)}
+                      onClick={() =>
+                        void run(
+                          `${entry.kind === 'ban' ? 'unban' : 'unmute'} ${entry.name}`,
+                          `Lifted the ${entry.kind} on ${entry.name}.`
+                        )
+                      }
                     >
-                      <Ban size={13} /> Ban
+                      Lift it
                     </button>
-                  )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
-                  <button
-                    className="btn btn-sm"
-                    title="Give them operator"
-                    onClick={() => void run(`op ${name}`, `${name} is an operator.`)}
-                  >
-                    <ShieldCheck size={13} /> Op
-                  </button>
+      {show === 'controls' && (
+        <>
+          <div className="panel panel-pad col gap-12">
+            <div className="section-title">Run something</div>
 
-                  <button
-                    className="btn btn-sm"
-                    title="What they have done before"
-                    onClick={() => void run(`history ${name}`, `History for ${name} is in the console.`)}
-                  >
-                    History
-                  </button>
-                </div>
+            <div className="row gap-6 wrap">
+              <button className="btn btn-sm" onClick={() => void run('nexus backup', 'Backing up.')}>
+                Back up now
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('save-all', 'World saved.')}>
+                Save the world
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('nexus startboss', 'The Warden is rising.')}>
+                Start the boss
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('nexus chatgame', 'Asked a question.')}>
+                Chat game
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('nexus pack', 'Re-read the resource pack.')}>
+                Reload the pack
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('nexus npcs', 'Greeters put back.')}>
+                Put the bots back
+              </button>
+            </div>
+
+            <div className="section-title">Fire an event</div>
+
+            <div className="row gap-6 wrap">
+              {EVENTS.map((event) => (
+                <button
+                  key={event.id}
+                  className="btn btn-sm"
+                  onClick={() => void run(`nexus event ${event.id}`, `${event.label} started.`)}
+                >
+                  {event.label}
+                </button>
               ))}
             </div>
-          </>
-        )}
 
-        {said && <p className="tiny" style={{ color: 'var(--success)' }}>{said}</p>}
-      </div>
+            <div className="section-title">The world</div>
 
-      <div className="panel panel-pad col gap-12">
-        <div className="section-title">Say something</div>
+            <div className="row gap-6 wrap">
+              <button className="btn btn-sm" onClick={() => void run('time set day', 'Daytime.')}>
+                Day
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('time set night', 'Night.')}>
+                Night
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('weather clear', 'Clear skies.')}>
+                Clear
+              </button>
+              <button className="btn btn-sm" onClick={() => void run('weather rain', 'Raining.')}>
+                Rain
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => void run('whitelist on', 'Whitelist on - only listed players can join.')}
+              >
+                Whitelist on
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => void run('whitelist off', 'Whitelist off - anybody can join.')}
+              >
+                Whitelist off
+              </button>
+            </div>
 
-        <div className="row gap-8 wrap">
-          <input
-            className="input"
-            style={{ flex: '1 1 260px' }}
-            value={announcement}
-            placeholder="everyone on the server sees this"
-            onChange={(e) => setAnnouncement(e.target.value.slice(0, 200))}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter' || !announcement.trim()) return
-
-              void run(`say ${announcement.trim()}`, 'Said.')
-              setAnnouncement('')
-            }}
-          />
-          <button
-            className="btn btn-sm"
-            disabled={!announcement.trim()}
-            onClick={() => {
-              void run(`say ${announcement.trim()}`, 'Said.')
-              setAnnouncement('')
-            }}
-          >
-            Send
-          </button>
-        </div>
-
-        <p className="tiny dim">
-          Goes out as a server message, not as you. Useful for telling everybody a restart is
-          coming, or that the Warden is about to rise.
-        </p>
-      </div>
-
-      {/* ------------------------------------------------------ anybody */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="section-title">Anybody else</div>
-
-        <p className="small muted">
-          Most moderation happens after somebody has gone &mdash; they say something and log
-          off. Type a name, or pick one the server has seen before.
-        </p>
-
-        <div className="row gap-8 wrap">
-          <input
-            className="input"
-            style={{ flex: '1 1 200px' }}
-            value={who}
-            list="known-players"
-            placeholder="a player's name"
-            onChange={(e) => setWho(e.target.value.trim().slice(0, 16))}
-          />
-          <datalist id="known-players">
-            {known.slice(0, 200).map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-
-          <button
-            className="btn btn-sm"
-            disabled={!who}
-            onClick={() => void run(`tempban ${who} ${span} ${reason()}`, `Banned ${who}.`)}
-          >
-            <Ban size={13} /> Ban
-          </button>
-          <button
-            className="btn btn-sm"
-            disabled={!who}
-            onClick={() => void run(`mute ${who} ${span} ${reason()}`, `Muted ${who}.`)}
-          >
-            <MicOff size={13} /> Mute
-          </button>
-          <button
-            className="btn btn-sm"
-            disabled={!who}
-            onClick={() => void run(`history ${who}`, `History for ${who} is in the console.`)}
-          >
-            History
-          </button>
-        </div>
-
-        <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
-          <div className="field" style={{ width: 130 }}>
-            <label className="field-label">Money</label>
-            <input
-              className="input"
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value) || 0)}
-            />
+            <p className="tiny dim">
+              Time and weather apply to the world the console counts as default, which is the hub. Everything else is
+              server-wide.
+            </p>
           </div>
-          <button
-            className="btn btn-sm"
-            disabled={!who || amount === 0}
-            onClick={() => void run(`nexus pay ${who} ${amount}`, `Paid ${who}.`)}
-          >
-            Pay
-          </button>
 
-          <div className="field" style={{ width: 120 }}>
-            <label className="field-label">Rank</label>
-            <select className="select" value={rank} onChange={(e) => setRank(e.target.value)}>
-              {RANKS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button
-            className="btn btn-sm"
-            disabled={!who}
-            onClick={() => void run(`nexus setrank ${who} ${rank}`, `${who} is now ${rank}.`)}
-          >
-            Set rank
-          </button>
-
-          {/*
-            * A key has a tier, and the player has to be on.
-            *
-            * `givekey` wants <player> <common|rare|legendary>, and refuses
-            * outright for anybody offline - so a button that sent only a name
-            * would have quietly printed a usage line into the console and
-            * looked, from here, exactly like it had worked.
-            */}
-          <div className="field" style={{ width: 120 }}>
-            <label className="field-label">Key</label>
-            <select className="select" value={key} onChange={(e) => setKey(e.target.value)}>
-              <option value="common">Common</option>
-              <option value="rare">Rare</option>
-              <option value="legendary">Legendary</option>
-            </select>
-          </div>
-          <button
-            className="btn btn-sm"
-            disabled={!who || !players.includes(who)}
-            title={
-              who && !players.includes(who)
-                ? 'They have to be online for a key'
-                : 'Give them a crate key'
-            }
-            onClick={() => void run(`nexus givekey ${who} ${key}`, `Gave ${who} a ${key} key.`)}
-          >
-            Crate key
-          </button>
-        </div>
-      </div>
-
-      {/* ------------------------------------------------------ the undoing */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="row gap-8" style={{ alignItems: 'center' }}>
-          <div className="section-title" style={{ flex: 1 }}>
-            Banned and muted
-          </div>
-          <button className="btn btn-sm" onClick={() => void refresh()}>
-            Refresh
-          </button>
-        </div>
-
-        {punished.length === 0 ? (
-          <p className="small muted">Nobody is banned or muted.</p>
-        ) : (
-          <div className="col gap-8">
-            {punished.map((entry, at) => (
-              <div key={entry.name + at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
-                <span
-                  className="tiny"
-                  style={{
-                    color: entry.kind === 'ban' ? 'var(--danger)' : 'var(--warning)',
-                    width: 44
-                  }}
-                >
-                  {entry.kind}
-                </span>
-
-                <span className="small" style={{ flex: '1 1 110px' }}>
-                  {entry.name}
-                </span>
-
-                <span className="tiny dim truncate" style={{ flex: '2 1 160px' }}>
-                  {entry.reason} &mdash; by {entry.by}
-                </span>
-
-                <span className="tiny dim">
-                  {entry.until === 0
-                    ? 'forever'
-                    : 'until ' + new Date(entry.until).toLocaleString()}
-                </span>
-
-                <button
-                  className="btn btn-sm"
-                  onClick={() =>
-                    void run(
-                      `${entry.kind === 'ban' ? 'unban' : 'unmute'} ${entry.name}`,
-                      `Lifted the ${entry.kind} on ${entry.name}.`
-                    )
-                  }
-                >
-                  Lift it
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ------------------------------------------------------ the server */}
-
-      <div className="panel panel-pad col gap-12">
-        <div className="section-title">Run something</div>
-
-        <div className="row gap-6 wrap">
-          <button className="btn btn-sm" onClick={() => void run('nexus backup', 'Backing up.')}>
-            Back up now
-          </button>
-          <button className="btn btn-sm" onClick={() => void run('save-all', 'World saved.')}>
-            Save the world
-          </button>
-          <button
-            className="btn btn-sm"
-            onClick={() => void run('nexus startboss', 'The Warden is rising.')}
-          >
-            Start the boss
-          </button>
-          <button
-            className="btn btn-sm"
-            onClick={() => void run('nexus chatgame', 'Asked a question.')}
-          >
-            Chat game
-          </button>
-          <button
-            className="btn btn-sm"
-            onClick={() => void run('nexus pack', 'Re-read the resource pack.')}
-          >
-            Reload the pack
-          </button>
-          <button className="btn btn-sm" onClick={() => void run('nexus npcs', 'Greeters put back.')}>
-            Put the bots back
-          </button>
-        </div>
-
-        <div className="section-title">Fire an event</div>
-
-        <div className="row gap-6 wrap">
-          {EVENTS.map((event) => (
-            <button
-              key={event.id}
-              className="btn btn-sm"
-              onClick={() => void run(`nexus event ${event.id}`, `${event.label} started.`)}
-            >
-              {event.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="section-title">The world</div>
-
-        <div className="row gap-6 wrap">
-          <button className="btn btn-sm" onClick={() => void run('time set day', 'Daytime.')}>
-            Day
-          </button>
-          <button className="btn btn-sm" onClick={() => void run('time set night', 'Night.')}>
-            Night
-          </button>
-          <button className="btn btn-sm" onClick={() => void run('weather clear', 'Clear skies.')}>
-            Clear
-          </button>
-          <button className="btn btn-sm" onClick={() => void run('weather rain', 'Raining.')}>
-            Rain
-          </button>
-          <button
-            className="btn btn-sm"
-            onClick={() => void run('whitelist on', 'Whitelist on - only listed players can join.')}
-          >
-            Whitelist on
-          </button>
-          <button
-            className="btn btn-sm"
-            onClick={() => void run('whitelist off', 'Whitelist off - anybody can join.')}
-          >
-            Whitelist off
-          </button>
-        </div>
-
-        <p className="tiny dim">
-          Time and weather apply to the world the console counts as default, which is the hub.
-          Everything else is server-wide.
-        </p>
-      </div>
-
-      <Restarts serverId={serverId} />
+          <Restarts serverId={serverId} />
+        </>
+      )}
     </div>
   )
 }
@@ -587,12 +585,9 @@ function Restarts({ serverId }: { serverId: string }): JSX.Element {
 
         said.add(mark)
 
-        const when =
-          mark >= 60 ? `${Math.round(mark / 60)} minute${mark === 60 ? '' : 's'}` : `${mark} seconds`
+        const when = mark >= 60 ? `${Math.round(mark / 60)} minute${mark === 60 ? '' : 's'}` : `${mark} seconds`
 
-        void api.host
-          .command(serverId, `say Server restarting in ${when}.`)
-          .catch(() => undefined)
+        void api.host.command(serverId, `say Server restarting in ${when}.`).catch(() => undefined)
         break
       }
 
@@ -625,7 +620,6 @@ function Restarts({ serverId }: { serverId: string }): JSX.Element {
       void api.host.command(serverId, 'say The restart has been called off.').catch(() => undefined)
     }
   }
-
 
   return (
     <div className="panel panel-pad col gap-12">
@@ -663,8 +657,8 @@ function Restarts({ serverId }: { serverId: string }): JSX.Element {
       )}
 
       <p className="tiny dim">
-        Everybody is told at five minutes, two, one, thirty seconds, ten and five. Leave this
-        tab open — the countdown runs in the launcher, and closing it stops the server anyway.
+        Everybody is told at five minutes, two, one, thirty seconds, ten and five. Leave this tab open — the countdown
+        runs in the launcher, and closing it stops the server anyway.
       </p>
     </div>
   )

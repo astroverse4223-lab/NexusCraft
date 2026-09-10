@@ -69,6 +69,7 @@ import {
   recipePrompt as texturePrompt,
   type TextureRecipe
 } from '@shared/textureRecipe'
+import { foldToModels } from './brainModels'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { packFormatOf } from '../content/datapackService'
@@ -94,28 +95,11 @@ const apiKeyName = (id: string): string => `companion-llm-key-${id}`
 /**
  * The language models available to design with.
  *
- * Borrowed from the companions rather than configured again. Somebody who has
- * set up a companion has already chosen a provider, entered a key and picked a
- * model; asking for all of that a second time to draw a flag would be rude.
+ * Borrowed from the AI companions rather than configured again, then folded
+ * down to the distinct models behind them - see brainModels for why.
  */
 export function bannerBrains(): BannerBrain[] {
-  return listCompanions().map((companion) => {
-    const local = /localhost|127\.0\.0\.1/.test(companion.baseUrl)
-    const ready = Boolean(companion.model) && (local || companion.hasApiKey)
-
-    let reason = ''
-    if (!companion.model) reason = 'no model chosen for this companion yet'
-    else if (!ready) reason = 'needs an API key on the AI Companion tab'
-
-    return {
-      id: companion.id,
-      label: companion.username || 'Companion',
-      provider: companion.provider,
-      model: companion.model,
-      ready,
-      reason
-    }
-  })
+  return foldToModels(listCompanions())
 }
 
 function brainConfig(companionId: string): LlmConfig {
@@ -180,8 +164,7 @@ function turns(system: string, wanted: string, current: unknown): ChatMessage[] 
     {
       role: 'user',
       content:
-        `Change it: ${wanted}\n\n` +
-        'Keep everything the change does not touch. Answer with the whole object again.'
+        `Change it: ${wanted}\n\n` + 'Keep everything the change does not touch. Answer with the whole object again.'
     }
   ]
 }
@@ -409,11 +392,7 @@ async function describe<T>(
 
   let reply
   try {
-    reply = await chat(
-      { ...config, maxTokens },
-      turns(system, wanted, request.current),
-      []
-    )
+    reply = await chat({ ...config, maxTokens }, turns(system, wanted, request.current), [])
   } catch (err) {
     if (err instanceof LlmError) {
       throw new LauncherError('NETWORK_ERROR', err.message, {
@@ -445,29 +424,17 @@ async function describe<T>(
  * drawing anything here, it is choosing knobs, and a reasoning model given
  * room to plan a picture will use it and time out.
  */
-export async function designRecipe(
-  request: DesignRequest
-): Promise<{ recipe: TextureRecipe; model: string }> {
-  const { result, model } = await describe(
-    request,
-    'texture style',
-    texturePrompt(),
-    readTextureStyle,
-    2_000
-  )
+export async function designRecipe(request: DesignRequest): Promise<{ recipe: TextureRecipe; model: string }> {
+  const { result, model } = await describe(request, 'texture style', texturePrompt(), readTextureStyle, 2_000)
   return { recipe: result, model }
 }
 
-export async function designMotd(
-  request: DesignRequest
-): Promise<{ design: MotdDesign; model: string }> {
+export async function designMotd(request: DesignRequest): Promise<{ design: MotdDesign; model: string }> {
   const { result, model } = await describe(request, 'MOTD', motdPrompt(), readMotd, 2_000)
   return { design: result, model }
 }
 
-export async function designLogo(
-  request: DesignRequest
-): Promise<{ design: LogoDesign; model: string }> {
+export async function designLogo(request: DesignRequest): Promise<{ design: LogoDesign; model: string }> {
   const { result, model } = await describe(request, 'logo', logoPrompt(), readLogo, 3_000)
   return { design: result, model }
 }
@@ -475,13 +442,7 @@ export async function designLogo(
 export async function designFirework(
   request: DesignRequest
 ): Promise<{ design: FireworkDesign; dropped: number; model: string }> {
-  const { result, model } = await describe(
-    request,
-    'firework',
-    fireworkPrompt(),
-    readFirework,
-    4_000
-  )
+  const { result, model } = await describe(request, 'firework', fireworkPrompt(), readFirework, 4_000)
   return { design: result.design, dropped: result.dropped, model }
 }
 
@@ -504,10 +465,7 @@ export async function designItem(
  * server older than 1.20.5 the component syntax is accepted and quietly
  * produces a plain item, which is a wrong answer rather than an error.
  */
-export async function giveDesigned(
-  serverId: string,
-  command: string
-): Promise<GiveResult> {
+export async function giveDesigned(serverId: string, command: string): Promise<GiveResult> {
   const server = getHostedServer(serverId)
 
   if (!supportsGive(server.minecraftVersion)) {
@@ -557,11 +515,7 @@ const REFUSALS = [
   'That player does not exist'
 ]
 
-async function waitForRefusal(
-  serverId: string,
-  command: string,
-  before: number
-): Promise<GiveResult> {
+async function waitForRefusal(serverId: string, command: string, before: number): Promise<GiveResult> {
   // Long enough for the server to have answered, short enough that nobody
   // notices the button pausing.
   await new Promise((resolve) => setTimeout(resolve, 700))
@@ -620,10 +574,7 @@ export function applyMotd(serverId: string, design: MotdDesign): { motd: string 
  * good ideas back is a better outcome than getting an error because the fourth
  * model call timed out.
  */
-export async function designMany<T>(
-  count: number,
-  one: () => Promise<T>
-): Promise<{ results: T[]; asked: number }> {
+export async function designMany<T>(count: number, one: () => Promise<T>): Promise<{ results: T[]; asked: number }> {
   const asked = Math.max(1, Math.min(6, count))
 
   const settled = await Promise.allSettled(Array.from({ length: asked }, () => one()))
@@ -634,11 +585,13 @@ export async function designMany<T>(
 
   if (results.length === 0) {
     const first = settled.find((s) => s.status === 'rejected')
-    throw (first as PromiseRejectedResult | undefined)?.reason ??
+    throw (
+      (first as PromiseRejectedResult | undefined)?.reason ??
       new LauncherError('NETWORK_ERROR', 'nothing came back', {
         title: 'Nothing came back',
         message: 'None of the attempts produced a design. Try again.'
       })
+    )
   }
 
   log.info(`${results.length} of ${asked} variations came back`)
@@ -650,13 +603,7 @@ export async function designMany<T>(
 export async function designRecipes(
   request: DesignRequest
 ): Promise<{ pack: RecipePack; dropped: string[]; model: string }> {
-  const { result, model } = await describe(
-    request,
-    'recipe pack',
-    recipePrompt(),
-    readRecipes,
-    6_000
-  )
+  const { result, model } = await describe(request, 'recipe pack', recipePrompt(), readRecipes, 6_000)
   return { pack: result.pack, dropped: result.dropped, model }
 }
 
@@ -723,9 +670,7 @@ export function buildLootPack(pack: LootPack, versionId: string): LootBuild {
   const skipped: string[] = []
 
   for (const rule of pack.rules) {
-    const base = vanillaLootTable(versionId, rule.table) as
-      | { pools?: unknown[] }
-      | null
+    const base = vanillaLootTable(versionId, rule.table) as { pools?: unknown[] } | null
 
     if (!base) {
       skipped.push(`${rule.id}: no vanilla ${rule.table} to add to`)
@@ -761,10 +706,7 @@ export interface LootInstallResult extends RecipeInstallResult {
   skipped: string[]
 }
 
-export async function installLootPack(
-  serverId: string,
-  pack: LootPack
-): Promise<LootInstallResult> {
+export async function installLootPack(serverId: string, pack: LootPack): Promise<LootInstallResult> {
   const server = getHostedServer(serverId)
   const dir = hostedServerDir(server.id)
 
@@ -840,13 +782,7 @@ export async function exportLootPack(
 export async function designAdvancements(
   request: DesignRequest
 ): Promise<{ pack: AdvancementPack; dropped: string[]; model: string }> {
-  const { result, model } = await describe(
-    request,
-    'advancement pack',
-    advancementPrompt(),
-    readAdvancements,
-    6_000
-  )
+  const { result, model } = await describe(request, 'advancement pack', advancementPrompt(), readAdvancements, 6_000)
   return { pack: result.pack, dropped: result.dropped, model }
 }
 
@@ -888,10 +824,7 @@ function writePackZip(files: { path: string; content: string }[], output: string
   zip.writeZip(output)
 }
 
-export async function installAdvancementPack(
-  serverId: string,
-  pack: AdvancementPack
-): Promise<RecipeInstallResult> {
+export async function installAdvancementPack(serverId: string, pack: AdvancementPack): Promise<RecipeInstallResult> {
   const server = getHostedServer(serverId)
   const dir = hostedServerDir(server.id)
 
@@ -991,10 +924,7 @@ export interface RecipeInstallResult {
  * to reload before it notices - which it is, rather than leaving somebody
  * wondering why their new recipe does not craft.
  */
-export async function installRecipePack(
-  serverId: string,
-  pack: RecipePack
-): Promise<RecipeInstallResult> {
+export async function installRecipePack(serverId: string, pack: RecipePack): Promise<RecipeInstallResult> {
   const server = getHostedServer(serverId)
   const dir = hostedServerDir(server.id)
 
@@ -1014,9 +944,7 @@ export async function installRecipePack(
   const running = isHostedServerRunning(server.id)
   if (running) sendHostedServerCommand(server.id, 'reload confirm')
 
-  log.info(
-    `wrote ${files.length} files to ${output} (pack_format ${packFormat})`
-  )
+  log.info(`wrote ${files.length} files to ${output} (pack_format ${packFormat})`)
 
   return { path: output, fileCount: files.length, packFormat, world, reloadNeeded: running }
 }
@@ -1143,11 +1071,7 @@ export interface GiveResult {
  * answer — so the version is checked first and the command is handed back for
  * the user to run themselves rather than sent.
  */
-export async function giveBanner(
-  serverId: string,
-  target: string,
-  design: BannerDesign
-): Promise<GiveResult> {
+export async function giveBanner(serverId: string, target: string, design: BannerDesign): Promise<GiveResult> {
   const server = getHostedServer(serverId)
   const command = giveCommand(design, target.trim() || '@a')
 
