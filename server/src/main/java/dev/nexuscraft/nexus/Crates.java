@@ -183,6 +183,26 @@ public final class Crates {
         nexus.vault().give(player, prize);
 
         reveal(player, tier, won, many);
+
+        /*
+         * Legendary keys, sometimes, carry a set as well as the prize.
+         *
+         * Added alongside the roll rather than inside it so the reveal keeps
+         * working exactly as it did - the prize table is a table of materials
+         * and a set of armour is not a material. One in eight by default, and
+         * nothing at all when the pack defines no sets.
+         */
+        if (tier == Tier.LEGENDARY) {
+            double chance = nexus.getConfig().getDouble("armouryDrops.legendaryChance", 0.125);
+            String set = nexus.armoury().dropSet("crate");
+
+            if (set != null && chance > 0 && random.nextDouble() < chance
+                    && nexus.armoury().give(player, set)) {
+                nexus.feed().say(Feed.Weight.BIG, player.getName() + " pulled the "
+                        + nexus.armoury().get(set).label() + " set out of a legendary crate.");
+            }
+        }
+
         return true;
     }
 

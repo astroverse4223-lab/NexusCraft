@@ -36,7 +36,7 @@ public final class Completions {
             "rollback", "lookup", "ignoreclaims", "endseason",
             "backup", "backups", "votekey", "rebuild",
             "setrank", "pay", "givekey", "coins",
-            "addskin", "removeskin", "pack", "save");
+            "addskin", "removeskin", "pack", "save", "armour");
 
     private static final List<String> GUILD = List.of(
             "create", "invite", "accept", "leave", "kick", "promote", "demote",
@@ -322,9 +322,21 @@ public final class Completions {
                 case "removeskin" -> List.of();
                 case "hologram", "holo" -> List.of("leaderboard", "online");
                 case "holopreset", "preset" -> Presets.names();
+
+                // Read from the config the launcher writes, so a set completes
+                // the moment its pack is built rather than when somebody
+                // remembers to add it here.
+                case "armour", "armor" -> nexus.armoury().ids();
                 case "holosize" -> List.of("0.5", "1", "1.5", "2", "3", "4", "6");
                 case "holoraise" -> List.of("-1", "-0.5", "0.5", "1", "2");
                 case "rebuild" -> List.of("dropper", "parkour", "prison", "digsite");
+                default -> List.of();
+            };
+        }
+
+        if (args.length == 4) {
+            return switch (sub) {
+                case "armour", "armor" -> ARMOUR_PIECES;
                 default -> List.of();
             };
         }
@@ -333,6 +345,7 @@ public final class Completions {
             return switch (sub) {
                 case "setrank" -> ranks();
                 case "givekey" -> TIERS;
+                case "armour", "armor" -> names();
                 case "rollback", "lookup" -> List.of("10", "30", "60", "180", "1440");
                 case "clearnpc" -> List.of("last");
                 case "endseason" -> List.of("confirm");
@@ -348,6 +361,10 @@ public final class Completions {
     private static boolean needsLength(String command) {
         return command.equalsIgnoreCase("mute") || command.equalsIgnoreCase("tempban");
     }
+
+    /** Named rather than read, because the four are fixed by the game. */
+    private static final List<String> ARMOUR_PIECES =
+            List.of("helmet", "chestplate", "leggings", "boots");
 
     private static final List<String> SPANS =
             List.of("30m", "1h", "6h", "12h", "1d", "3d", "7d", "forever");

@@ -726,6 +726,8 @@ export const api = {
           reachable: boolean
           /** A local url that did answer, when the published one did not. */
           alternative: string | null
+          /** Whether the running server was told, so no restart is needed. */
+          offering: boolean
         }
       >('resourcepack:serve', {
         serverId,

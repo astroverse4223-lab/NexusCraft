@@ -35,6 +35,30 @@ resourcePack:
   required: false
   prompt: 'This server has its own textures. Worth saying yes.'
 
+# Custom armour sets the resource pack defines.
+#
+# Written by the launcher when it builds a pack with armour in it, so the ids
+# here are the ids the pack was actually built with. Editing them by hand only
+# makes sense if you built the pack somewhere else.
+#
+#   armoury:
+#     emberforged:
+#       label: Emberforged
+#       base: diamond      # the item prefix, so diamond_helmet and the rest
+armoury: {}
+
+# Where those sets turn up on their own.
+#
+# Both are optional. Left empty, the first set in the armoury is used, so a
+# server that has just built its first pack gets working drops without anybody
+# configuring anything.
+armouryDrops:
+  # Given whole to whoever did the most damage to the Warden.
+  boss: ''
+  # A chance for a legendary crate to carry a set as well as its prize.
+  crate: ''
+  legendaryChance: 0.125
+
 # A copy of the server's chat, posted into a Discord channel.
 #
 # This uses a webhook, not a bot - there is no application to create, no token

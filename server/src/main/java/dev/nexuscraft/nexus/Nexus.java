@@ -48,6 +48,7 @@ public final class Nexus extends JavaPlugin {
     private Quests quests;
     private Vault vault;
     private Cosmetics cosmetics;
+    private Armoury armoury;
     private Jobs jobs;
     private Trader trader;
     private Skins skins;
@@ -120,6 +121,7 @@ public final class Nexus extends JavaPlugin {
         vault = new Vault(this);
         quests = new Quests(this);
         cosmetics = new Cosmetics(this);
+        armoury = new Armoury(this);
         jobs = new Jobs(this);
         trader = new Trader(this);
         skins = new Skins(this);
@@ -495,6 +497,10 @@ public final class Nexus extends JavaPlugin {
 
     public Cosmetics cosmetics() {
         return cosmetics;
+    }
+
+    public Armoury armoury() {
+        return armoury;
     }
 
     public Jobs jobs() {
@@ -2754,8 +2760,84 @@ public final class Nexus extends JavaPlugin {
                         : Text.bad("Nothing within a few blocks."));
             }
 
+            /*
+             * Custom armour, handed out the way everything else is.
+             *
+             * The sets come from the config the launcher writes when it builds
+             * the pack, so this lists whatever that pack actually defines
+             * rather than a second copy of the same list kept here.
+             */
+            case "armour", "armor" -> {
+                if (args.length < 2) {
+                    sender.sendMessage(Text.good(armoury.ids().isEmpty()
+                            ? "No armour sets yet. Build a pack with some in the launcher."
+                            : "Sets: " + String.join(", ", armoury.ids())));
+                    sender.sendMessage(Text.plain("/nexus armour <set> <player> [piece]"));
+                    return true;
+                }
+
+                String setId = args[1];
+                if (!armoury.has(setId)) {
+                    sender.sendMessage(Text.bad("There is no set called " + setId + "."));
+                    return true;
+                }
+
+                Player who = args.length > 2
+                        ? getServer().getPlayerExact(args[2])
+                        : (sender instanceof Player self ? self : null);
+
+                if (who == null) {
+                    sender.sendMessage(Text.bad(args.length > 2
+                            ? args[2] + " is not online."
+                            : "Name somebody to give it to."));
+                    return true;
+                }
+
+                /*
+                 * A named piece, or the whole set. Handing over four items when
+                 * one was asked for is the kind of thing that fills an
+                 * inventory and looks like a bug.
+                 */
+                if (args.length > 3) {
+                    Armoury.Piece piece = Armoury.piece(args[3]);
+                    if (piece == null) {
+                        sender.sendMessage(Text.bad("No such piece. Try helmet, chestplate, leggings or boots."));
+                        return true;
+                    }
+
+                    org.bukkit.inventory.ItemStack made = armoury.make(setId, piece);
+                    if (made == null) {
+                        sender.sendMessage(Text.bad("That set could not be made."));
+                        return true;
+                    }
+
+                    for (org.bukkit.inventory.ItemStack left : who.getInventory().addItem(made).values()) {
+                        who.getWorld().dropItemNaturally(who.getLocation(), left);
+                    }
+
+                    sender.sendMessage(Text.good("Gave " + who.getName() + " the "
+                            + armoury.get(setId).label() + " " + piece.label() + "."));
+                    return true;
+                }
+
+                armoury.give(who, setId);
+                sender.sendMessage(Text.good("Gave " + who.getName() + " the "
+                        + armoury.get(setId).label() + " set."));
+                return true;
+            }
+
             case "pack" -> {
                 packs.reload();
+
+                /*
+                 * The same config carries the armour the pack defines, and a
+                 * new pack usually means new sets - so re-reading one without
+                 * the other leaves the server offering textures for armour it
+                 * cannot hand out.
+                 */
+                reloadConfig();
+                armoury.reload();
+
                 sender.sendMessage(Text.good(packs.configured()
                         ? "Re-reading the resource pack. Hashing it now."
                         : "No resourcePack.url set in config.yml."));

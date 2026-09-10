@@ -211,7 +211,12 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
    */
   const [reachFor, setReachFor] = useState<'house' | 'internet' | 'typed'>('house')
 
-  const [built, setBuilt] = useState<BuiltPack | null>(null)
+  /*
+   * A built pack, plus the two things only serving one can report: whether the
+   * running server was told about it, so the screen does not ask for a restart
+   * that already happened.
+   */
+  const [built, setBuilt] = useState<(BuiltPack & { offering?: boolean }) | null>(null)
   const [url, setUrl] = useState('')
   const [reach, setReach] = useState<{ ok: boolean; alternative: string | null } | null>(null)
   const [host, setHost] = useState<PackHostStatus | null>(null)
@@ -2518,8 +2523,11 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                   )}
 
                   <p className="tiny dim">
-                    Restart the server for it to start offering the pack. The link has the pack&apos;s own hash in it,
-                    so rebuilding gives a new link and nobody is left on a stale copy.
+                    {built.offering
+                      ? 'The plugin has already been told, so anyone joining is offered it now. No restart.'
+                      : 'Start the server and it will offer the pack when people join.'}{' '}
+                    The link has the pack&apos;s own hash in it, so rebuilding gives a new link and nobody is
+                    left on a stale copy.
                   </p>
                 </>
               )}

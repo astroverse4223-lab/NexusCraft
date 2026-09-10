@@ -54,6 +54,7 @@ import {
   readResourcePack,
   vanillaTexture,
   vanillaTextures,
+  pointPluginAtPack,
   pointServerAtPack,
   writeResourcePack
 } from '../services/content/resourcePackService'
@@ -2104,7 +2105,37 @@ export function registerIpcHandlers(): void {
       const url = packUrl(address, payload.port)
       if (!url) throw new LauncherError('NOT_FOUND', 'nothing being served')
 
-      await pointServerAtPack(dir, { url, sha1: built.sha1, required: payload.required })
+      /*
+       * One of the two offers it, never both.
+       *
+       * Minecraft offers the pack named in server.properties, and the plugin
+       * offers the one named in its own config, and a player joining a server
+       * with both set is asked twice for the same file. The plugin is the
+       * better half when it is there - it hashes the file itself, and it can
+       * be told to re-read without a restart, which server.properties cannot -
+       * so it takes the job and the vanilla setting is cleared.
+       */
+      const pluginTook = await pointPluginAtPack(
+        dir,
+        { url, required: payload.required },
+        payload.draft.armour
+      )
+
+      await pointServerAtPack(
+        dir,
+        pluginTook ? null : { url, sha1: built.sha1, required: payload.required }
+      )
+
+      /*
+       * And told, if it is up. Without this the config is right and the
+       * running server is still handing out the previous url, which looks
+       * exactly like the rebuild not having worked.
+       */
+      let offering = false
+      if (pluginTook && isHostedServerRunning(server.id)) {
+        sendHostedServerCommand(server.id, 'nexus pack')
+        offering = true
+      }
 
       /*
        * Does that url actually answer from here?
@@ -2124,13 +2155,23 @@ export function registerIpcHandlers(): void {
 
       const usable = alternative !== null && (await canFetch(alternative))
 
-      toast('success', 'Pack is being served', 'Restart the server and players will be offered it when they join.')
+      toast(
+        'success',
+        'Pack is being served',
+        offering
+          ? 'The plugin has been told - anyone joining is offered it now, no restart needed.'
+          : pluginTook
+            ? 'Start the server and players will be offered it when they join.'
+            : 'Restart the server and players will be offered it when they join.'
+      )
 
       return {
         ...built,
         url,
         port: payload.port,
         address,
+        /** Whether the running server was told, so nobody is asked to restart for nothing. */
+        offering,
         reachable,
         // Offered rather than swapped in, because which one is right depends
         // on who is meant to be joining - and only the operator knows that.

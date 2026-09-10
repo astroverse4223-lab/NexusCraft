@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import AdmZip from 'adm-zip'
+import { parseDocument } from 'yaml'
 import { packMcmeta } from '@shared/creations'
 import {
   type BuiltPack,
@@ -368,6 +369,61 @@ function giveLine(item: PackItem): string {
     `/give @p ${item.base}[minecraft:item_model="${NAMESPACE}:${safeId(item.id)}",` +
     `minecraft:custom_name='{"text":"${name}","italic":false}']`
   )
+}
+
+/** Where the plugin keeps its settings, when the plugin is installed at all. */
+const pluginConfig = (serverDir: string): string =>
+  join(serverDir, 'plugins', 'Nexus', 'config.yml')
+
+/**
+ * Points the plugin at the pack, and tells it what armour the pack defines.
+ *
+ * Worth doing instead of only writing server.properties, because Minecraft
+ * reads `resource-pack` once at startup and never again - so every rebuild
+ * needed a restart, and the url carries the pack's own hash so every rebuild
+ * is a new url. The plugin offers the pack itself on join and can be told to
+ * re-read at any moment, which turns that loop into pressing one button.
+ *
+ * The document is edited rather than rewritten: this file is full of comments
+ * explaining what each setting does, and a config that loses them the first
+ * time the launcher touches it is a worse config.
+ *
+ * Returns false when there is no plugin, which is how the caller knows to fall
+ * back to server.properties.
+ */
+export async function pointPluginAtPack(
+  serverDir: string,
+  pack: { url: string; required: boolean } | null,
+  armour: PackArmour[] = []
+): Promise<boolean> {
+  const file = pluginConfig(serverDir)
+  if (!existsSync(file)) return false
+
+  try {
+    const doc = parseDocument(await readFile(file, 'utf8'))
+
+    doc.setIn(['resourcePack', 'url'], pack?.url ?? '')
+    doc.setIn(['resourcePack', 'required'], pack?.required ?? false)
+
+    /*
+     * The armour sets, written from the pack that defines them.
+     *
+     * So the two cannot drift: the ids the plugin hands out are the ids the
+     * pack was built with, rather than something typed twice.
+     */
+    const sets: Record<string, { label: string; base: string }> = {}
+    for (const set of armour) sets[safeId(set.id)] = { label: set.label, base: set.base }
+
+    doc.set('armoury', doc.createNode(sets))
+
+    await writeFile(file, doc.toString(), 'utf8')
+    log.info(`plugin now offers ${pack ? pack.url : 'no pack'}, ${armour.length} armour sets`)
+
+    return true
+  } catch (err) {
+    log.warn(`could not write the plugin config: ${(err as Error).message}`)
+    return false
+  }
 }
 
 /**

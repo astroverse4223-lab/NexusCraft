@@ -609,6 +609,23 @@ public final class Boss {
         String top = best == null ? "somebody"
                 : String.valueOf(nexus.getServer().getOfflinePlayer(best).getName());
 
+        /*
+         * Something only he drops.
+         *
+         * The purse is split by damage, which is fair and completely
+         * forgettable - money from a boss spends the same as money from a
+         * pumpkin farm. A set of armour nobody can craft is the thing people
+         * come back for, and it goes to whoever hit hardest rather than being
+         * split four ways into nothing.
+         */
+        String set = nexus.armoury().dropSet("boss");
+        Player winner = best == null ? null : nexus.getServer().getPlayer(best);
+
+        if (set != null && winner != null && nexus.armoury().give(winner, set)) {
+            nexus.feed().say(Feed.Weight.BIG, top + " took the "
+                    + nexus.armoury().get(set).label() + " set from the Warden.");
+        }
+
         nexus.feed().say(Feed.Weight.BIG, "The Warden of the Deep was killed by "
                 + paid.size() + (paid.size() == 1 ? " player" : " players")
                 + ", led by " + top + ".");
