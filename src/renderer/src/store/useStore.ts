@@ -33,8 +33,6 @@ export type Route =
   | 'settings'
   | 'account'
   | 'companion'
-  | 'banners'
-  | 'icon'
   | 'generators'
 
 /**

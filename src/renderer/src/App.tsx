@@ -17,8 +17,6 @@ import { ServersScreen } from './screens/Servers'
 import { DiscoverScreen } from './screens/Discover'
 import { BlueprintsScreen } from './screens/Blueprints'
 import { HostServerScreen } from './screens/HostServer'
-import { BannersScreen } from './screens/Banners'
-import { IconMakerScreen } from './screens/IconMaker'
 import { GeneratorsScreen } from './screens/Generators'
 import { SkinsScreen } from './screens/Skins'
 import { AccountScreen } from './screens/Account'
@@ -107,10 +105,6 @@ function renderRoute(route: string): JSX.Element {
       return <BlueprintsScreen />
     case 'host':
       return <HostServerScreen />
-    case 'banners':
-      return <BannersScreen />
-    case 'icon':
-      return <IconMakerScreen />
     case 'generators':
       return <GeneratorsScreen />
     case 'skins':

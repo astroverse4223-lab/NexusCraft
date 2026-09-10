@@ -34,18 +34,8 @@ import { DropZone } from '../components/DropZone'
 import { formatBytes, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
 import { BrowseTab } from './Browse'
 import { DataPacksTab } from './DataPacks'
-import { MapArtTab } from './MapArt'
-import { PackMakerTab } from './PackMaker'
 
-type Tab =
-  | 'browse'
-  | 'mods'
-  | 'datapacks'
-  | 'resourcepacks'
-  | 'shaderpacks'
-  | 'mapart'
-  | 'packmaker'
-  | 'screenshots'
+type Tab = 'browse' | 'mods' | 'datapacks' | 'resourcepacks' | 'shaderpacks' | 'mapart' | 'packmaker' | 'screenshots'
 
 export function ModsScreen(): JSX.Element {
   const instance = useStore(focusedInstance)
@@ -111,12 +101,6 @@ export function ModsScreen(): JSX.Element {
         <button className={`tab ${tab === 'shaderpacks' ? 'active' : ''}`} onClick={() => setTab('shaderpacks')}>
           Shaders
         </button>
-        <button className={`tab ${tab === 'mapart' ? 'active' : ''}`} onClick={() => setTab('mapart')}>
-          Map art
-        </button>
-        <button className={`tab ${tab === 'packmaker' ? 'active' : ''}`} onClick={() => setTab('packmaker')}>
-          Make a pack
-        </button>
         <button className={`tab ${tab === 'screenshots' ? 'active' : ''}`} onClick={() => setTab('screenshots')}>
           Screenshots
         </button>
@@ -125,11 +109,11 @@ export function ModsScreen(): JSX.Element {
       {tab === 'browse' && (
         <>
           {/*
-            * On Browse, not on the installed-mods tab. This screen opens on
-            * Browse, so a card on the other tab is one nobody finds — which is
-            * exactly how the update checker went unnoticed for months. Browse
-            * is also where "get me a mod" belongs.
-            */}
+           * On Browse, not on the installed-mods tab. This screen opens on
+           * Browse, so a card on the other tab is one nobody finds — which is
+           * exactly how the update checker went unnoticed for months. Browse
+           * is also where "get me a mod" belongs.
+           */}
           <div className="mb-16">
             <BundledMods instance={instance} />
           </div>
@@ -140,8 +124,6 @@ export function ModsScreen(): JSX.Element {
       {tab === 'datapacks' && <DataPacksTab instance={instance} />}
       {tab === 'resourcepacks' && <ContentTab instance={instance} kind="resourcepacks" />}
       {tab === 'shaderpacks' && <ContentTab instance={instance} kind="shaderpacks" />}
-      {tab === 'mapart' && <MapArtTab instance={instance} />}
-      {tab === 'packmaker' && <PackMakerTab instance={instance} />}
       {tab === 'screenshots' && <ScreenshotsTab instance={instance} />}
     </>
   )
@@ -278,7 +260,8 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       const result = await api.mods.import(instance.id, files)
       pushToast({
         kind: result.imported > 0 ? 'success' : 'warning',
-        title: result.imported > 0 ? `${result.imported} mod${result.imported === 1 ? '' : 's'} added` : 'Nothing imported',
+        title:
+          result.imported > 0 ? `${result.imported} mod${result.imported === 1 ? '' : 's'} added` : 'Nothing imported',
         message: result.imported > 0 ? undefined : 'Only .jar files can be installed as mods.'
       })
       await load()
@@ -507,18 +490,20 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
               NexusCraft blocks the launch while these are enabled, because Minecraft would crash on startup.
             </div>
             {/*
-              * The banner used to end with "disable or remove them below",
-              * which on a 180-mod pack means finding each one by hand. The
-              * launcher already knows exactly which they are.
-              */}
+             * The banner used to end with "disable or remove them below",
+             * which on a 180-mod pack means finding each one by hand. The
+             * launcher already knows exactly which they are.
+             */}
             <div className="row gap-8 mt-8 wrap">
-              {[...new Set(problems.flatMap((mod) => mod.issues.filter((i) => i.severity === 'error').map((i) => i.code)))].map(
-                (code) => (
-                  <span key={code} className="pill">
-                    {ISSUE_LABELS[code] ?? code}
-                  </span>
+              {[
+                ...new Set(
+                  problems.flatMap((mod) => mod.issues.filter((i) => i.severity === 'error').map((i) => i.code))
                 )
-              )}
+              ].map((code) => (
+                <span key={code} className="pill">
+                  {ISSUE_LABELS[code] ?? code}
+                </span>
+              ))}
             </div>
           </div>
           <button
@@ -559,7 +544,12 @@ function ModsTab({ instance }: { instance: Instance }): JSX.Element {
       ) : (
         <div className="col gap-8">
           {filtered.map((mod) => (
-            <ModRow key={mod.fileName} mod={mod} onToggle={(value) => void toggle(mod, value)} onDelete={() => setDeleting(mod)} />
+            <ModRow
+              key={mod.fileName}
+              mod={mod}
+              onToggle={(value) => void toggle(mod, value)}
+              onDelete={() => setDeleting(mod)}
+            />
           ))}
         </div>
       )}
@@ -1046,7 +1036,10 @@ function ScreenshotsTab({ instance }: { instance: Instance }): JSX.Element {
 
   useEffect(() => {
     setShots(null)
-    void api.content.screenshots(instance.id).then(setShots).catch(() => setShots([]))
+    void api.content
+      .screenshots(instance.id)
+      .then(setShots)
+      .catch(() => setShots([]))
   }, [instance.id])
 
   return (
@@ -1097,11 +1090,7 @@ function ScreenshotsTab({ instance }: { instance: Instance }): JSX.Element {
       )}
 
       {preview?.dataUrl && (
-        <div
-          className="modal-backdrop"
-          onClick={() => setPreview(null)}
-          style={{ cursor: 'zoom-out' }}
-        >
+        <div className="modal-backdrop" onClick={() => setPreview(null)} style={{ cursor: 'zoom-out' }}>
           <img
             src={preview.dataUrl}
             alt={preview.fileName}

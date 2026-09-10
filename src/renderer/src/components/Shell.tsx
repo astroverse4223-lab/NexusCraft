@@ -14,8 +14,6 @@ import {
   Layers,
   Bot,
   HardDrive,
-  Flag,
-  Image as ImageIcon,
   Sparkles
 } from 'lucide-react'
 import { useState } from 'react'
@@ -105,8 +103,15 @@ const LIBRARY: NavEntry[] = [
   { route: 'servers', label: 'Servers', icon: Server },
   { route: 'discover', label: 'Discover', icon: Compass },
   { route: 'host', label: 'Host a Server', icon: HardDrive },
-  { route: 'banners', label: 'Banners', icon: Flag },
-  { route: 'icon', label: 'Server Icon', icon: ImageIcon },
+  /*
+   * One entry, not three.
+   *
+   * Banners and the server icon had their own rows here while map art and the
+   * pack maker were tabs inside Mods & Packs, so making something meant
+   * knowing which of three places it lived in. They are all sections of
+   * Generators now: Mods & Packs is what you install, Generators is what you
+   * make.
+   */
   { route: 'generators', label: 'Generators', icon: Sparkles }
 ]
 
@@ -128,11 +133,7 @@ export function Sidebar(): JSX.Element {
 
   const renderGroup = (entries: NavEntry[]): JSX.Element[] =>
     entries.map(({ route: target, label, icon: Icon }) => (
-      <button
-        key={target}
-        className={`nav-item ${route === target ? 'active' : ''}`}
-        onClick={() => navigate(target)}
-      >
+      <button key={target} className={`nav-item ${route === target ? 'active' : ''}`} onClick={() => navigate(target)}>
         <Icon size={16.5} strokeWidth={2} />
         {label}
         {target === 'instances' && instances.length > 0 && <span className="badge">{instances.length}</span>}

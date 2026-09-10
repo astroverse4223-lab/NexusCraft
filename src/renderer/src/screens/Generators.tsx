@@ -16,9 +16,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   Copy,
+  Flag,
   Flame,
+  Image as ImageIcon,
+  Map as MapIcon,
   MessageSquare,
   Package,
+  Palette,
   Sparkles,
   Trophy,
   Type
@@ -56,9 +60,16 @@ import { useStore } from '../store/useStore'
 import { ErrorView, Spinner } from '../components/ui'
 import type { AdvancementDesign, AdvancementPack } from '@shared/advancements'
 import { PromptChips } from '../components/PromptChips'
+import { BannersScreen } from './Banners'
+import { IconMakerScreen } from './IconMaker'
+import { MapArtTab } from './MapArt'
+import { PackMakerTab } from './PackMaker'
+import { focusedInstance } from '../store/useStore'
+import { EmptyState } from '../components/ui'
 import { DesignTools } from '../components/DesignTools'
 
-type Section = 'motd' | 'logo' | 'firework' | 'item' | 'recipes' | 'loot' | 'advancement'
+type Section =
+  'motd' | 'logo' | 'icon' | 'banners' | 'firework' | 'item' | 'recipes' | 'loot' | 'advancement' | 'mapart' | 'pack'
 
 const BLANK_MOTD: MotdDesign = { line1: '&aYour Server', line2: '&7Come and have a look' }
 
@@ -100,6 +111,14 @@ const BLANK_ITEM: ItemDesign = {
 
 export function GeneratorsScreen(): JSX.Element {
   const pushToast = useStore((s) => s.pushToast)
+
+  /*
+   * Map art and the pack maker belong to an instance - they read that
+   * version's own textures out of its jar - while everything else here is
+   * server content and belongs to nothing. That is the only reason this screen
+   * knows what an instance is.
+   */
+  const instance = useStore(focusedInstance)
 
   /*
    * Everything the user has made lives in the store, not here.
@@ -276,9 +295,7 @@ export function GeneratorsScreen(): JSX.Element {
   )
 
   const command =
-    section === 'firework'
-      ? fireworkCommand(firework, target.trim() || '@a')
-      : itemCommand(item, target.trim() || '@a')
+    section === 'firework' ? fireworkCommand(firework, target.trim() || '@a') : itemCommand(item, target.trim() || '@a')
 
   const send = async (): Promise<void> => {
     if (!server) return
@@ -319,26 +336,47 @@ export function GeneratorsScreen(): JSX.Element {
 
   const ready = brains?.filter((b) => b.ready) ?? []
 
+  /*
+   * Everything you make, in one place.
+   *
+   * Banners and the server icon had their own entries down the sidebar, and
+   * map art and the pack maker were tabs inside Mods & Packs - so making
+   * something meant knowing which of three places it lived in. The rule now is
+   * plain: Mods & Packs is what you install, this is what you make.
+   */
+  /*
+   * The four that arrived from elsewhere are whole screens already.
+   *
+   * Everything else here shares one shape - describe it to a model, then tune
+   * it by hand - and these four do not: they have their own pickers, previews
+   * and ways of saving. So they get the header and the tabs and nothing else,
+   * rather than the shared half being reshaped to fit around them.
+   */
+  const OWN_SCREEN: Section[] = ['icon', 'banners', 'mapart', 'pack']
+
   const TABS: [Section, string, typeof Type][] = [
     ['motd', 'Server message', MessageSquare],
     ['logo', 'Logo', Type],
+    ['icon', 'Server icon', ImageIcon],
+    ['banners', 'Banners', Flag],
     ['firework', 'Firework', Flame],
     ['item', 'Custom item', Package],
     ['recipes', 'Recipes', BookOpen],
     ['loot', 'Loot', Package],
-    ['advancement', 'Advancements', Trophy]
+    ['advancement', 'Advancements', Trophy],
+    ['mapart', 'Map art', MapIcon],
+    ['pack', 'Resource pack', Palette]
   ]
 
-  return (
+  const chrome = (
     <>
       <div className="screen-header">
         <div>
           <div className="eyebrow">Your server</div>
           <h1>Generators</h1>
           <p className="subtitle">
-            Describe what you want and get it built. The lettering is Minecraft&apos;s own, taken
-            from the game, so a message or a logo looks the way it will look in the game rather
-            than approximately like it.
+            Describe what you want and get it built. The lettering is Minecraft&apos;s own, taken from the game, so a
+            message or a logo looks the way it will look in the game rather than approximately like it.
           </p>
         </div>
       </div>
@@ -346,24 +384,63 @@ export function GeneratorsScreen(): JSX.Element {
       {error && <ErrorView error={error} onDismiss={() => setError(null)} />}
 
       {/*
-        * The app's own tab strip, rather than a row of filled buttons.
-        *
-        * Six primary-coloured pills in a row read as six things to press, and
-        * the selected one looked no more selected than the rest did urgent.
-        */}
-      <div className="tabs mb-16" style={{ flexWrap: 'wrap' }}>
+       * The app's own tab strip, rather than a row of filled buttons.
+       *
+       * Six primary-coloured pills in a row read as six things to press, and
+       * the selected one looked no more selected than the rest did urgent.
+       */}
+      <div className="tab-strip mb-16">
         {TABS.map(([key, label, Icon]) => (
-          <button
-            key={key}
-            className={section === key ? 'tab active' : 'tab'}
-            onClick={() => setSection(key)}
-          >
+          <button key={key} className={section === key ? 'tab active' : 'tab'} onClick={() => setSection(key)}>
             <span className="row gap-8" style={{ alignItems: 'center' }}>
               <Icon size={14} /> {label}
             </span>
           </button>
         ))}
       </div>
+    </>
+  )
+
+  if (OWN_SCREEN.includes(section)) {
+    return (
+      <>
+        {chrome}
+
+        {section === 'icon' && <IconMakerScreen />}
+        {section === 'banners' && <BannersScreen />}
+
+        {(section === 'mapart' || section === 'pack') &&
+          (instance ? (
+            <>
+              {section === 'mapart' && <MapArtTab instance={instance} />}
+              {section === 'pack' && <PackMakerTab instance={instance} />}
+            </>
+          ) : (
+            <div className="panel">
+              <EmptyState
+                icon={<Palette size={24} />}
+                title="No instance selected"
+                message="Map art and resource packs are built from a particular Minecraft version's own files, so they need an instance. Create or pick one first."
+              />
+            </div>
+          ))}
+      </>
+    )
+  }
+
+  /*
+   * Past the early return, the section is one of the shared ones.
+   *
+   * TypeScript cannot see that through an Array.includes, and the prompt
+   * chips are typed to the generators that actually have prompts - so the
+   * narrowing is stated rather than the type widened to accept four sections
+   * that never reach here.
+   */
+  const shared = section as Exclude<Section, 'icon' | 'banners' | 'mapart' | 'pack'>
+
+  return (
+    <>
+      {chrome}
 
       {/* --------------------------------------------------- describe it */}
       <div className="panel panel-pad col gap-12 mb-16">
@@ -371,8 +448,8 @@ export function GeneratorsScreen(): JSX.Element {
           <Spinner />
         ) : ready.length === 0 ? (
           <p className="small muted">
-            No AI is set up yet. Add one on the AI Companion tab — Ollama runs on this PC for free
-            — or build it by hand below.
+            No AI is set up yet. Add one on the AI Companion tab — Ollama runs on this PC for free — or build it by hand
+            below.
           </p>
         ) : (
           <div className="row gap-8 wrap">
@@ -410,19 +487,13 @@ export function GeneratorsScreen(): JSX.Element {
                 </option>
               ))}
             </select>
-            <button
-              className="btn btn-primary"
-              disabled={designing || !prompt.trim()}
-              onClick={() => void ask()}
-            >
+            <button className="btn btn-primary" disabled={designing || !prompt.trim()} onClick={() => void ask()}>
               {designing ? <Spinner /> : <Sparkles size={15} />} Design it
             </button>
           </div>
         )}
 
-        {ready.length > 0 && (
-          <PromptChips kind={section} disabled={designing} onPick={(text) => void ask(text)} />
-        )}
+        {ready.length > 0 && <PromptChips kind={shared} disabled={designing} onPick={(text) => void ask(text)} />}
       </div>
 
       <div className="mb-16">
@@ -515,17 +586,17 @@ export function GeneratorsScreen(): JSX.Element {
           />
         )}
         {section === 'advancement' && (
-        <AdvancementSection
-          pack={advancements}
-          setPack={setAdvancements}
-          servers={servers}
-          busy={busy}
-          setBusy={setBusy}
-          onError={setError}
-        />
-      )}
+          <AdvancementSection
+            pack={advancements}
+            setPack={setAdvancements}
+            servers={servers}
+            busy={busy}
+            setBusy={setBusy}
+            onError={setError}
+          />
+        )}
 
-      {section === 'loot' && (
+        {section === 'loot' && (
           <DesignTools
             kind="loot"
             design={loot}
@@ -581,11 +652,11 @@ export function GeneratorsScreen(): JSX.Element {
         />
       )}
 
-      {section === 'logo' && <LogoSection design={logo} setDesign={setLogo} busy={busy} setBusy={setBusy} onError={setError} />}
-
-      {section === 'firework' && (
-        <FireworkSection design={firework} setDesign={setFirework} />
+      {section === 'logo' && (
+        <LogoSection design={logo} setDesign={setLogo} busy={busy} setBusy={setBusy} onError={setError} />
       )}
+
+      {section === 'firework' && <FireworkSection design={firework} setDesign={setFirework} />}
 
       {section === 'item' && <ItemSection design={item} setDesign={setItem} />}
 
@@ -603,14 +674,7 @@ export function GeneratorsScreen(): JSX.Element {
       )}
 
       {section === 'loot' && (
-        <LootSection
-          pack={loot}
-          setPack={setLoot}
-          servers={servers}
-          busy={busy}
-          setBusy={setBusy}
-          onError={setError}
-        />
+        <LootSection pack={loot} setPack={setLoot} servers={servers} busy={busy} setBusy={setBusy} onError={setError} />
       )}
 
       {(section === 'firework' || section === 'item') && (
@@ -646,11 +710,7 @@ export function GeneratorsScreen(): JSX.Element {
                 </option>
               ))}
             </select>
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={busy || !server}
-              onClick={() => void send()}
-            >
+            <button className="btn btn-primary btn-sm" disabled={busy || !server} onClick={() => void send()}>
               Give in game
             </button>
             <button
@@ -688,15 +748,12 @@ export function GeneratorsScreen(): JSX.Element {
 
           {command.length + 1 > CHAT_LIMIT && (
             <p className="tiny" style={{ color: 'var(--warn, #e0a02a)' }}>
-              {command.length + 1} characters. Chat only takes {CHAT_LIMIT}, so pasting this
-              into the game will cut it off - use Give in game, or a command block.
+              {command.length + 1} characters. Chat only takes {CHAT_LIMIT}, so pasting this into the game will cut it
+              off - use Give in game, or a command block.
             </p>
           )}
 
-          <code
-            className="tiny dim"
-            style={{ wordBreak: 'break-all', display: 'block', lineHeight: 1.5 }}
-          >
+          <code className="tiny dim" style={{ wordBreak: 'break-all', display: 'block', lineHeight: 1.5 }}>
             /{command}
           </code>
         </div>
@@ -790,8 +847,7 @@ function MotdSection({
     }
   }, [server])
 
-  const matches =
-    live !== null && live.line1 === design.line1 && live.line2 === design.line2
+  const matches = live !== null && live.line1 === design.line1 && live.line2 === design.line2
 
   const insert = (code: string): void => {
     const key = line === 1 ? 'line1' : 'line2'
@@ -829,9 +885,7 @@ function MotdSection({
                   className="input"
                   value={value}
                   onFocus={() => setLine(which)}
-                  onChange={(e) =>
-                    setDesign({ ...design, [which === 1 ? 'line1' : 'line2']: e.target.value })
-                  }
+                  onChange={(e) => setDesign({ ...design, [which === 1 ? 'line1' : 'line2']: e.target.value })}
                 />
               </div>
             )
@@ -883,26 +937,22 @@ function MotdSection({
             </select>
           )}
 
-          <button
-            className="btn btn-primary btn-sm"
-            disabled={busy || !serverId}
-            onClick={() => void onSave()}
-          >
+          <button className="btn btn-primary btn-sm" disabled={busy || !serverId} onClick={() => void onSave()}>
             Save as the server message
           </button>
           <p className="tiny dim">
-            Written into the server&apos;s settings, so it survives the next restart. The server has
-            to restart before anyone sees it.
+            Written into the server&apos;s settings, so it survives the next restart. The server has to restart before
+            anyone sees it.
           </p>
 
           {/*
-            * What the server is serving right now, beside what is on screen.
-            *
-            * The preview above shows the design being edited, which is not the
-            * same thing - a message designed and never saved looked, in the
-            * app, exactly like a message that was live. Showing both makes the
-            * difference visible instead of surprising.
-            */}
+           * What the server is serving right now, beside what is on screen.
+           *
+           * The preview above shows the design being edited, which is not the
+           * same thing - a message designed and never saved looked, in the
+           * app, exactly like a message that was live. Showing both makes the
+           * difference visible instead of surprising.
+           */}
           {live !== null && (
             <div className="col gap-8" style={{ marginTop: 4 }}>
               <div className="divider" />
@@ -1014,14 +1064,10 @@ function paintLogo(canvas: HTMLCanvasElement, design: LogoDesign): void {
   })
 
   if (design.tagline) {
-    drawText(
-      ctx,
-      design.tagline,
-      (LOGO_WIDTH - taglineUnits * small) / 2,
-      y + GLYPH * scale + GAP * scale,
-      small,
-      { colour: design.taglineColour, shadow: !design.transparent }
-    )
+    drawText(ctx, design.tagline, (LOGO_WIDTH - taglineUnits * small) / 2, y + GLYPH * scale + GAP * scale, small, {
+      colour: design.taglineColour,
+      shadow: !design.transparent
+    })
   }
 }
 
@@ -1094,10 +1140,10 @@ function LogoSection({
     <div className="row gap-24 items-start wrap">
       <div className="panel panel-pad col gap-12" style={{ flex: '2 1 460px' }}>
         {/*
-          * A checkerboard behind it, so a transparent logo reads as
-          * transparent rather than as a black rectangle - which is what a
-          * flat dark panel made it look like.
-          */}
+         * A checkerboard behind it, so a transparent logo reads as
+         * transparent rather than as a black rectangle - which is what a
+         * flat dark panel made it look like.
+         */}
         <div
           style={{
             borderRadius: 10,
@@ -1164,9 +1210,7 @@ function LogoSection({
             <button
               className="btn btn-sm"
               disabled={design.colours.length >= 4}
-              onClick={() =>
-                setDesign({ ...design, colours: [...design.colours, '#55FFFF'] })
-              }
+              onClick={() => setDesign({ ...design, colours: [...design.colours, '#55FFFF'] })}
             >
               +
             </button>
@@ -1220,8 +1264,7 @@ function FireworkPreview({ design }: { design: FireworkDesign }): JSX.Element {
 
     design.bursts.forEach((burst, layer) => {
       const spread = 40 + layer * 14
-      const points =
-        burst.shape === 'small_ball' ? 40 : burst.shape === 'large_ball' ? 90 : 60
+      const points = burst.shape === 'small_ball' ? 40 : burst.shape === 'large_ball' ? 90 : 60
 
       for (let i = 0; i < points; i++) {
         const angle = (i / points) * Math.PI * 2
@@ -1346,9 +1389,7 @@ function FireworkSection({
                 <button
                   className="btn btn-sm"
                   disabled={design.bursts.length <= 1}
-                  onClick={() =>
-                    setDesign({ ...design, bursts: design.bursts.filter((_, i) => i !== index) })
-                  }
+                  onClick={() => setDesign({ ...design, bursts: design.bursts.filter((_, i) => i !== index) })}
                 >
                   Remove
                 </button>
@@ -1403,10 +1444,7 @@ function FireworkSection({
                     style={{ width: 30, height: 24, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
                   />
                 ))}
-                <button
-                  className="btn btn-sm"
-                  onClick={() => setBurst(index, { fades: [...burst.fades, '#FFFFFF'] })}
-                >
+                <button className="btn btn-sm" onClick={() => setBurst(index, { fades: [...burst.fades, '#FFFFFF'] })}>
                   +
                 </button>
                 <button
@@ -1427,13 +1465,7 @@ function FireworkSection({
 
 /* -------------------------------------------------------------------- item */
 
-function ItemSection({
-  design,
-  setDesign
-}: {
-  design: ItemDesign
-  setDesign: (d: ItemDesign) => void
-}): JSX.Element {
+function ItemSection({ design, setDesign }: { design: ItemDesign; setDesign: (d: ItemDesign) => void }): JSX.Element {
   const [search, setSearch] = useState('')
 
   /*
@@ -1444,9 +1476,7 @@ function ItemSection({
   const matches = useMemo(() => {
     const needle = search.trim().toLowerCase()
     if (!needle) return ITEMS.slice(0, 40)
-    return ITEMS.filter(
-      ([id, label]) => id.includes(needle) || label.toLowerCase().includes(needle)
-    ).slice(0, 40)
+    return ITEMS.filter(([id, label]) => id.includes(needle) || label.toLowerCase().includes(needle)).slice(0, 40)
   }, [search])
 
   const label = ITEMS.find(([id]) => id === design.id)?.[1] ?? design.id
@@ -1491,9 +1521,7 @@ function ItemSection({
               className="input"
               rows={4}
               value={design.lore.join('\n')}
-              onChange={(e) =>
-                setDesign({ ...design, lore: e.target.value.split('\n').slice(0, 8) })
-              }
+              onChange={(e) => setDesign({ ...design, lore: e.target.value.split('\n').slice(0, 8) })}
             />
           </div>
 
@@ -1506,9 +1534,7 @@ function ItemSection({
               max={99}
               style={{ width: 80 }}
               value={design.count}
-              onChange={(e) =>
-                setDesign({ ...design, count: Math.max(1, Math.min(99, Number(e.target.value) || 1)) })
-              }
+              onChange={(e) => setDesign({ ...design, count: Math.max(1, Math.min(99, Number(e.target.value) || 1)) })}
             />
             <button
               className={design.unbreakable ? 'btn btn-primary btn-sm' : 'btn btn-sm'}
@@ -1523,9 +1549,7 @@ function ItemSection({
       <div className="col gap-12" style={{ flex: '1 1 340px' }}>
         <div className="panel panel-pad col gap-12">
           <div className="section-title">Enchantments</div>
-          <p className="tiny dim">
-            Levels are capped at what the game allows, which is read from the game itself.
-          </p>
+          <p className="tiny dim">Levels are capped at what the game allows, which is read from the game itself.</p>
 
           <div style={{ maxHeight: 320, overflow: 'auto' }} className="col gap-8">
             {ENCHANTMENTS.map((ench) => {
@@ -1561,10 +1585,7 @@ function ItemSection({
                             x.id === ench.id
                               ? {
                                   ...x,
-                                  level: Math.max(
-                                    1,
-                                    Math.min(ench.maxLevel, Number(e.target.value) || 1)
-                                  )
+                                  level: Math.max(1, Math.min(ench.maxLevel, Number(e.target.value) || 1))
                                 }
                               : x
                           )
@@ -1585,13 +1606,7 @@ function ItemSection({
 /* ----------------------------------------------------------------- recipes */
 
 /** One recipe as a crafting grid, which is how anybody reads a recipe. */
-function RecipeCard({
-  recipe,
-  onRemove
-}: {
-  recipe: RecipeDesign
-  onRemove?: () => void
-}): JSX.Element {
+function RecipeCard({ recipe, onRemove }: { recipe: RecipeDesign; onRemove?: () => void }): JSX.Element {
   const label = (id: string): string => ITEMS.find(([i]) => i === id)?.[1] ?? id
 
   const cell = (item: string | null, at: number): JSX.Element => (
@@ -1645,11 +1660,7 @@ function RecipeCard({
           {recipe.id} · {recipe.kind}
         </span>
         {onRemove && (
-          <button
-            className="btn btn-sm"
-            title="Take this one out of the pack"
-            onClick={onRemove}
-          >
+          <button className="btn btn-sm" title="Take this one out of the pack" onClick={onRemove}>
             Remove
           </button>
         )}
@@ -1665,13 +1676,7 @@ function RecipeCard({
  * was phrased - somebody who asked for emeralds one time in twenty should be
  * able to read back "1 in 20" and see their own words.
  */
-function LootCard({
-  rule,
-  onRemove
-}: {
-  rule: LootRule
-  onRemove?: () => void
-}): JSX.Element {
+function LootCard({ rule, onRemove }: { rule: LootRule; onRemove?: () => void }): JSX.Element {
   const label = (id: string): string => ITEMS.find(([i]) => i === id)?.[1] ?? id
 
   return (
@@ -1684,9 +1689,7 @@ function LootCard({
             {label(drop.item)}
             <span className="dim">
               {drop.min === drop.max ? ` x${drop.min}` : ` x${drop.min}\u2013${drop.max}`}
-              {drop.chance >= 1
-                ? ' every time'
-                : ` \u00b7 1 in ${Math.max(2, Math.round(1 / drop.chance))}`}
+              {drop.chance >= 1 ? ' every time' : ` \u00b7 1 in ${Math.max(2, Math.round(1 / drop.chance))}`}
             </span>
           </span>
         ))}
@@ -1769,11 +1772,7 @@ function LootSection({
       if (target.kind === 'server') {
         await api.banners.installLoot(target.serverId as string, pack)
       } else {
-        await api.banners.installLootWorld(
-          target.instanceId as string,
-          target.worldFolder as string,
-          pack
-        )
+        await api.banners.installLootWorld(target.instanceId as string, target.worldFolder as string, pack)
       }
     } catch (err) {
       onError(toPayload(err))
@@ -1812,8 +1811,8 @@ function LootSection({
 
         {rules.length === 0 ? (
           <p className="small muted">
-            Nothing yet. Say what should drop and how often \u2014 &quot;zombies drop an emerald one
-            time in twenty&quot;, say.
+            Nothing yet. Say what should drop and how often \u2014 &quot;zombies drop an emerald one time in
+            twenty&quot;, say.
           </p>
         ) : (
           <div className="row gap-12 wrap">
@@ -1821,9 +1820,7 @@ function LootSection({
               <LootCard
                 key={rule.id}
                 rule={rule}
-                onRemove={() =>
-                  setPack({ ...pack, rules: rules.filter((r) => r.id !== rule.id) })
-                }
+                onRemove={() => setPack({ ...pack, rules: rules.filter((r) => r.id !== rule.id) })}
               />
             ))}
           </div>
@@ -1849,11 +1846,7 @@ function LootSection({
                 ))}
               </select>
             )}
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={busy || !target}
-              onClick={() => void install()}
-            >
+            <button className="btn btn-primary btn-sm" disabled={busy || !target} onClick={() => void install()}>
               {target?.kind === 'world' ? 'Install into that world' : 'Install into the server'}
             </button>
             <button className="btn btn-sm" disabled={busy} onClick={() => void save()}>
@@ -1862,8 +1855,8 @@ function LootSection({
           </div>
 
           <p className="tiny dim">
-            The existing drops are kept \u2014 what you asked for is added to the vanilla table
-            rather than replacing it. Re-enter the world for it to load.
+            The existing drops are kept \u2014 what you asked for is added to the vanilla table rather than replacing
+            it. Re-enter the world for it to load.
           </p>
         </div>
       )}
@@ -1878,13 +1871,7 @@ function LootSection({
  * plays a different sound and means something, so it is worth showing which
  * one this will be before it is installed.
  */
-function AdvancementCard({
-  design,
-  onRemove
-}: {
-  design: AdvancementDesign
-  onRemove?: () => void
-}): JSX.Element {
+function AdvancementCard({ design, onRemove }: { design: AdvancementDesign; onRemove?: () => void }): JSX.Element {
   const label = (id: string): string => ITEMS.find(([i]) => i === id)?.[1] ?? id
 
   const earned =
@@ -1994,11 +1981,7 @@ function AdvancementSection({
       if (target.kind === 'server') {
         await api.banners.installAdvancements(target.serverId as string, pack)
       } else {
-        await api.banners.installAdvancementsWorld(
-          target.instanceId as string,
-          target.worldFolder as string,
-          pack
-        )
+        await api.banners.installAdvancementsWorld(target.instanceId as string, target.worldFolder as string, pack)
       }
     } catch (err) {
       onError(toPayload(err))
@@ -2037,8 +2020,8 @@ function AdvancementSection({
 
         {list.length === 0 ? (
           <p className="small muted">
-            Nothing yet. Say what players should be aiming for \u2014 &quot;a few goals for a new
-            survival player&quot;, say.
+            Nothing yet. Say what players should be aiming for \u2014 &quot;a few goals for a new survival player&quot;,
+            say.
           </p>
         ) : (
           <div className="row gap-12 wrap">
@@ -2077,11 +2060,7 @@ function AdvancementSection({
                 ))}
               </select>
             )}
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={busy || !target}
-              onClick={() => void install()}
-            >
+            <button className="btn btn-primary btn-sm" disabled={busy || !target} onClick={() => void install()}>
               {target?.kind === 'world' ? 'Install into that world' : 'Install into the server'}
             </button>
             <button className="btn btn-sm" disabled={busy} onClick={() => void save()}>
@@ -2090,8 +2069,8 @@ function AdvancementSection({
           </div>
 
           <p className="tiny dim">
-            They appear as their own tab in the advancements screen. Ones marked &quot;granted by
-            command&quot; are earned with /advancement grant, which is how a plugin awards them.
+            They appear as their own tab in the advancements screen. Ones marked &quot;granted by command&quot; are
+            earned with /advancement grant, which is how a plugin awards them.
           </p>
         </div>
       )}
@@ -2193,11 +2172,7 @@ function RecipeSection({
         await api.banners.installRecipes(target.serverId as string, pack)
         setServerId(target.serverId as string)
       } else {
-        await api.banners.installRecipesWorld(
-          target.instanceId as string,
-          target.worldFolder as string,
-          pack
-        )
+        await api.banners.installRecipesWorld(target.instanceId as string, target.worldFolder as string, pack)
       }
     } catch (err) {
       onError(toPayload(err))
@@ -2215,11 +2190,7 @@ function RecipeSection({
         extensions: ['zip']
       })
       if (chosen) {
-        await api.banners.exportRecipes(
-          chosen,
-          pack,
-          target?.version ?? server?.minecraftVersion ?? '1.21.1'
-        )
+        await api.banners.exportRecipes(chosen, pack, target?.version ?? server?.minecraftVersion ?? '1.21.1')
       }
     } catch (err) {
       onError(toPayload(err))
@@ -2242,8 +2213,8 @@ function RecipeSection({
 
         {recipes.length === 0 ? (
           <p className="small muted">
-            Nothing yet. Describe the recipes you want above — &quot;turn cobblestone back into
-            ore&quot;, say, or &quot;a cheaper way to make saddles&quot;.
+            Nothing yet. Describe the recipes you want above — &quot;turn cobblestone back into ore&quot;, say, or
+            &quot;a cheaper way to make saddles&quot;.
           </p>
         ) : (
           <div className="row gap-12 wrap">
@@ -2282,11 +2253,7 @@ function RecipeSection({
                 ))}
               </select>
             )}
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={busy || !target}
-              onClick={() => void install()}
-            >
+            <button className="btn btn-primary btn-sm" disabled={busy || !target} onClick={() => void install()}>
               {target?.kind === 'world' ? 'Install into that world' : 'Install into the server'}
             </button>
             <button className="btn btn-sm" disabled={busy} onClick={() => void save()}>
