@@ -9,6 +9,16 @@
    * the accent look like light falling on the surface instead of paint applied
    * to it.
    */
+  /*
+   * Which way an overlay goes.
+   *
+   * Every panel, hover and hairline in this file is a translucent white laid
+   * over the ground, which is right on a dark theme and invisible on a light
+   * one. Naming the colour rather than each opacity means a light theme flips
+   * all thirty of them by redefining one variable.
+   */
+  --wash: 255, 255, 255;
+
   --bg-0: #04060b;
   --bg-1: #070a11;
   --bg-2: #0b0f18;
@@ -22,15 +32,15 @@
    * from above, which is the whole difference between "dark theme" and
    * "material".
    */
-  --panel: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.022));
-  --panel-flat: rgba(255, 255, 255, 0.035);
-  --panel-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.04));
-  --panel-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.055));
-  --border: rgba(255, 255, 255, 0.075);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  --panel: linear-gradient(180deg, rgba(var(--wash), 0.055), rgba(var(--wash), 0.022));
+  --panel-flat: rgba(var(--wash), 0.035);
+  --panel-strong: linear-gradient(180deg, rgba(var(--wash), 0.085), rgba(var(--wash), 0.04));
+  --panel-hover: linear-gradient(180deg, rgba(var(--wash), 0.11), rgba(var(--wash), 0.055));
+  --border: rgba(var(--wash), 0.075);
+  --border-strong: rgba(var(--wash), 0.16);
   /* The lit top edge, applied as an inset shadow so it never shifts layout. */
-  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  --edge-strong: inset 0 1px 0 rgba(255, 255, 255, 0.13);
+  --edge: inset 0 1px 0 rgba(var(--wash), 0.07);
+  --edge-strong: inset 0 1px 0 rgba(var(--wash), 0.13);
 
   --text: #eaf0f8;
   --text-muted: #97a7bd;
@@ -165,13 +175,13 @@ textarea {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(var(--wash), 0.1);
   border-radius: 99px;
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(var(--wash), 0.2);
   background-clip: padding-box;
 }
 
@@ -268,7 +278,7 @@ textarea {
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border);
   /* A hairline of light along the very top of the window. */
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 0 rgba(var(--wash), 0.05);
   position: relative;
   z-index: 40;
 }
@@ -305,7 +315,7 @@ textarea {
 }
 
 .window-control:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(var(--wash), 0.07);
   color: var(--text);
 }
 
@@ -415,7 +425,7 @@ textarea {
    * item should feel like the accent has touched it, not merely that it is a
    * shade lighter than its neighbours.
    */
-  background: linear-gradient(90deg, var(--accent-dim), rgba(255, 255, 255, 0.03) 60%);
+  background: linear-gradient(90deg, var(--accent-dim), rgba(var(--wash), 0.03) 60%);
   box-shadow: var(--edge);
 }
 
@@ -572,7 +582,7 @@ textarea {
   color: #03151d;
   font-weight: 650;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 1px 0 rgba(var(--wash), 0.4),
     0 2px 6px rgba(0, 0, 0, 0.3),
     0 8px 26px color-mix(in srgb, var(--accent) 30%, transparent);
 }
@@ -580,7 +590,7 @@ textarea {
 .btn-primary:hover:not(:disabled) {
   filter: brightness(1.07) saturate(1.05);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 1px 0 rgba(var(--wash), 0.5),
     0 2px 8px rgba(0, 0, 0, 0.3),
     0 12px 34px color-mix(in srgb, var(--accent) 42%, transparent);
 }
@@ -700,7 +710,7 @@ textarea {
   width: 100%;
   height: 5px;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(var(--wash), 0.1);
   outline: none;
 }
 
@@ -903,7 +913,7 @@ textarea {
 .progress-track {
   height: 6px;
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--wash), 0.08);
   overflow: hidden;
 }
 
@@ -1047,7 +1057,7 @@ textarea {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.16);
+  border: 2px solid rgba(var(--wash), 0.16);
   border-top-color: var(--accent);
   animation: spin 0.7s linear infinite;
   flex-shrink: 0;
@@ -1367,7 +1377,7 @@ textarea {
 .panel-head {
   padding: 11px 16px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--wash), 0.02);
   border-radius: var(--radius) var(--radius) 0 0;
   min-height: 44px;
   align-items: center;
@@ -1382,7 +1392,7 @@ textarea {
 .panel-foot {
   padding: 12px 14px;
   border-top: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--wash), 0.02);
   border-radius: 0 0 var(--radius) var(--radius);
   align-items: center;
 }
@@ -1407,14 +1417,14 @@ textarea {
 }
 
 .log-feed::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.09);
+  background: rgba(var(--wash), 0.09);
   border-radius: 6px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 
 .log-feed::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(var(--wash), 0.16);
   background-clip: content-box;
 }
 
@@ -1509,7 +1519,7 @@ textarea {
   font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
   font-size: 12px;
   color: var(--text-muted);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--wash), 0.04);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 3px 8px;
@@ -1525,7 +1535,7 @@ textarea {
 }
 
 .host-mod-row:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--wash), 0.02);
 }
 
 /* A heading that divides a long settings form into readable sections. */
@@ -1563,14 +1573,14 @@ textarea {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.09);
+  background: rgba(var(--wash), 0.09);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 99px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(var(--wash), 0.2);
   background-clip: content-box;
 }
 
@@ -1598,4 +1608,146 @@ textarea {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ------------------------------------------------------------------ themes */
+
+/*
+ * A theme is the surface ramp and the accent, and nothing else.
+ *
+ * Everything in this stylesheet is already drawn from tokens, so a theme need
+ * only restate the dozen that carry colour - the shapes, spacing and shadows
+ * are shared, which is what stops six themes becoming six stylesheets that
+ * drift apart. The accent is set here as well as in settings so that picking
+ * a theme visibly changes something; the accent picker then overrides it.
+ */
+
+/* Warm charcoal, lit amber. */
+[data-theme='ember'] {
+  --bg-0: #0b0705;
+  --bg-1: #120c08;
+  --bg-2: #1a110b;
+  --bg-3: #241710;
+
+  --text: #f8efe6;
+  --text-muted: #bda491;
+  --text-dim: #8a705c;
+
+  --accent: #fbbf24;
+  --accent-deep: #f59e0b;
+  --accent-dim: rgba(251, 191, 36, 0.14);
+  --accent-glow: rgba(251, 191, 36, 0.35);
+  --accent-far: #fb7185;
+}
+
+/* Deep violet, orchid. */
+[data-theme='amethyst'] {
+  --bg-0: #08050e;
+  --bg-1: #0d0916;
+  --bg-2: #140e21;
+  --bg-3: #1d152f;
+
+  --text: #f1eaf9;
+  --text-muted: #a898c2;
+  --text-dim: #756590;
+
+  --accent: #c084fc;
+  --accent-deep: #a855f7;
+  --accent-dim: rgba(192, 132, 252, 0.14);
+  --accent-glow: rgba(192, 132, 252, 0.35);
+  --accent-far: #f472b6;
+}
+
+/* Green-black, lime. */
+[data-theme='moss'] {
+  --bg-0: #040805;
+  --bg-1: #070d09;
+  --bg-2: #0b140e;
+  --bg-3: #101d15;
+
+  --text: #e9f4ea;
+  --text-muted: #94b39c;
+  --text-dim: #63806c;
+
+  --accent: #a3e635;
+  --accent-deep: #84cc16;
+  --accent-dim: rgba(163, 230, 53, 0.14);
+  --accent-glow: rgba(163, 230, 53, 0.32);
+  --accent-far: #34d399;
+}
+
+/* Near-black, red. */
+[data-theme='crimson'] {
+  --bg-0: #0a0406;
+  --bg-1: #11070a;
+  --bg-2: #180a0f;
+  --bg-3: #221016;
+
+  --text: #f8eaee;
+  --text-muted: #c19aa5;
+  --text-dim: #8d6672;
+
+  --accent: #fb7185;
+  --accent-deep: #f43f5e;
+  --accent-dim: rgba(251, 113, 133, 0.14);
+  --accent-glow: rgba(251, 113, 133, 0.35);
+  --accent-far: #fbbf24;
+}
+
+/* Very dark blue, cold cyan. */
+[data-theme='abyss'] {
+  --bg-0: #01040a;
+  --bg-1: #030711;
+  --bg-2: #050c1a;
+  --bg-3: #081326;
+
+  --text: #e6f2ff;
+  --text-muted: #8fa8c4;
+  --text-dim: #5c7a99;
+
+  --accent: #38bdf8;
+  --accent-deep: #0ea5e9;
+  --accent-dim: rgba(56, 189, 248, 0.14);
+  --accent-glow: rgba(56, 189, 248, 0.35);
+  --accent-far: #818cf8;
+}
+
+/*
+ * The one light theme.
+ *
+ * Not an inversion. The overlays flip direction with --wash, which turns every
+ * panel from a light film over dark into a faint shadow over paper, and the
+ * text ramp is rebuilt rather than reversed - a muted grey that reads well on
+ * black is far too pale on white.
+ */
+[data-theme='daylight'] {
+  --wash: 15, 23, 42;
+
+  --bg-0: #eef1f6;
+  --bg-1: #f4f6fa;
+  --bg-2: #fbfcfe;
+  --bg-3: #ffffff;
+
+  --text: #0f172a;
+  --text-muted: #475569;
+  --text-dim: #7b8798;
+
+  --border: rgba(15, 23, 42, 0.11);
+  --border-strong: rgba(15, 23, 42, 0.22);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --edge-strong: inset 0 1px 0 rgba(255, 255, 255, 1);
+
+  --accent: #4f46e5;
+  --accent-deep: #4338ca;
+  --accent-dim: rgba(79, 70, 229, 0.12);
+  --accent-glow: rgba(79, 70, 229, 0.28);
+  --accent-far: #0891b2;
+
+  --success: #15803d;
+  --warning: #b45309;
+  --danger: #b91c1c;
+  --info: #1d4ed8;
+
+  /* Softer, because a hard black shadow on paper reads as a cut-out. */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08), 0 3px 10px rgba(15, 23, 42, 0.06);
 }

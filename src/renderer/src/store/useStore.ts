@@ -15,14 +15,7 @@ import type {
   ServerStatus
 } from '@shared/types'
 import type { BannerDesign } from '@shared/banners'
-import type {
-  FireworkDesign,
-  ItemDesign,
-  LogoDesign,
-  MotdDesign,
-  RecipePack,
-  LootPack
-} from '@shared/creations'
+import type { FireworkDesign, ItemDesign, LogoDesign, MotdDesign, RecipePack, LootPack } from '@shared/creations'
 import { api, subscribe, toPayload, type AppInfo } from '../api'
 
 export type Route =
@@ -259,6 +252,7 @@ export const useStore = create<State>((set, get) => ({
         route: settings.onboardingComplete ? 'play' : 'home'
       })
 
+      applyTheme(settings.theme)
       applyAccent(settings.accentColor)
       attachEventListeners()
     } catch (err) {
@@ -293,6 +287,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const settings = await api.settings.get()
       set({ settings })
+      applyTheme(settings.theme)
       applyAccent(settings.accentColor)
     } catch (err) {
       get().showError(err)
@@ -303,7 +298,8 @@ export const useStore = create<State>((set, get) => ({
     try {
       const settings = await api.settings.update(patch)
       set({ settings })
-      if (patch.accentColor) applyAccent(settings.accentColor)
+      if (patch.theme) applyTheme(settings.theme)
+      if (patch.accentColor || patch.theme) applyAccent(settings.accentColor)
     } catch (err) {
       get().showError(err)
     }
@@ -430,12 +426,12 @@ export const useStore = create<State>((set, get) => ({
   },
 
   /**
-    * Drops one update from the list once it has been applied.
-    *
-    * Filtered in here rather than in the component, because updates are applied
-    * one after another in a loop and every iteration of that loop would
-    * otherwise be filtering the same list captured when the component rendered.
-    */
+   * Drops one update from the list once it has been applied.
+   *
+   * Filtered in here rather than in the component, because updates are applied
+   * one after another in a loop and every iteration of that loop would
+   * otherwise be filtering the same list captured when the component rendered.
+   */
   removeModUpdate(instanceId: string, fileName: string) {
     set((state) => {
       const current = state.modChecks[instanceId]
@@ -536,6 +532,21 @@ export const useStore = create<State>((set, get) => ({
 }))
 
 /** Writes the accent colour into the CSS custom properties the theme reads. */
+/**
+ * Puts the theme on the root element, where the stylesheet is watching for it.
+ *
+ * Only the name: every colour a theme changes is a token redefined under
+ * `[data-theme]` in the stylesheet, so nothing here needs to know what any of
+ * them are. The default theme has no attribute at all, so a fresh install and
+ * a stylesheet with no themes in it look the same.
+ */
+export function applyTheme(theme: string): void {
+  const root = document.documentElement
+
+  if (!theme || theme === 'nexus') delete root.dataset.theme
+  else root.dataset.theme = theme
+}
+
 export function applyAccent(color: string): void {
   const root = document.documentElement
   root.style.setProperty('--accent', color)

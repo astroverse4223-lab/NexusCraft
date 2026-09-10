@@ -12,6 +12,7 @@ import {
   ShieldQuestion
 } from 'lucide-react'
 import type { JavaInstallation, LauncherErrorPayload } from '@shared/types'
+import { THEMES } from '@shared/types'
 import { api, toPayload, type MemoryInfo } from '../api'
 import { ModAutoUpdate } from '../components/ModAutoUpdate'
 import { useStore, selectedInstance } from '../store/useStore'
@@ -42,8 +43,14 @@ export function SettingsScreen(): JSX.Element {
   const [detecting, setDetecting] = useState(false)
 
   useEffect(() => {
-    void api.app.memory().then(setMemory).catch(() => setMemory(null))
-    void api.java.list().then(setJavas).catch(() => setJavas([]))
+    void api.app
+      .memory()
+      .then(setMemory)
+      .catch(() => setMemory(null))
+    void api.java
+      .list()
+      .then(setJavas)
+      .catch(() => setJavas([]))
   }, [])
 
   useEffect(() => {
@@ -138,10 +145,7 @@ export function SettingsScreen(): JSX.Element {
             name="Show what you are playing in Discord"
             description="Puts the instance name, loader and elapsed time on your Discord profile. Does nothing if Discord is not running."
           >
-            <Toggle
-              checked={settings.discordPresence}
-              onChange={(value) => void patch({ discordPresence: value })}
-            />
+            <Toggle checked={settings.discordPresence} onChange={(value) => void patch({ discordPresence: value })} />
           </SettingRow>
 
           <SettingRow
@@ -381,6 +385,88 @@ export function SettingsScreen(): JSX.Element {
             <Toggle checked={settings.particles} onChange={(value) => void patch({ particles: value })} />
           </SettingRow>
 
+          {/*
+            Swatches rather than a list of names, because "Amethyst" tells you
+            nothing and three squares of the actual colours tell you everything.
+            Each is drawn with that theme's own tokens, so it is a sample of the
+            thing itself rather than an artist's impression of it.
+          */}
+          <SettingRow name="Theme" description="The whole palette. Picking one also sets the accent below.">
+            <div className="row gap-8 wrap">
+              {THEMES.map((entry) => {
+                const chosen = settings.theme === entry.id
+
+                return (
+                  <button
+                    key={entry.id}
+                    className="col gap-6"
+                    title={entry.blurb}
+                    onClick={() => void patch({ theme: entry.id, accentColor: entry.accent })}
+                    style={{
+                      padding: 6,
+                      borderRadius: 10,
+                      background: 'transparent',
+                      border: chosen ? '2px solid var(--accent)' : '2px solid var(--border)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <span
+                      data-theme={entry.id}
+                      style={{
+                        display: 'block',
+                        width: 62,
+                        height: 34,
+                        borderRadius: 6,
+                        overflow: 'hidden',
+                        background: 'var(--bg-1)',
+                        border: '1px solid var(--border)',
+                        position: 'relative'
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: 5,
+                          right: 5,
+                          top: 6,
+                          height: 7,
+                          borderRadius: 3,
+                          background: 'var(--panel-strong)'
+                        }}
+                      />
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: 5,
+                          bottom: 6,
+                          width: 26,
+                          height: 8,
+                          borderRadius: 3,
+                          background: 'var(--accent)'
+                        }}
+                      />
+                      <span
+                        style={{
+                          position: 'absolute',
+                          right: 5,
+                          bottom: 6,
+                          width: 14,
+                          height: 8,
+                          borderRadius: 3,
+                          background: 'var(--panel-flat)'
+                        }}
+                      />
+                    </span>
+
+                    <span className="tiny" style={{ color: chosen ? 'var(--text)' : 'var(--text-dim)' }}>
+                      {entry.label}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </SettingRow>
+
           <SettingRow name="Accent colour" description="Used for highlights, the Play button and progress bars.">
             <div className="row gap-8">
               {ACCENTS.map((color) => (
@@ -431,14 +517,20 @@ export function SettingsScreen(): JSX.Element {
                 disabled={clientId.trim() === settings.clientId}
                 onClick={() => {
                   void patch({ clientId: clientId.trim() })
-                  pushToast({ kind: 'success', title: 'Client ID saved', message: 'You can now sign in with Microsoft.' })
+                  pushToast({
+                    kind: 'success',
+                    title: 'Client ID saved',
+                    message: 'You can now sign in with Microsoft.'
+                  })
                 }}
               >
                 Save
               </button>
             </div>
             <p className="field-hint">
-              {settings.clientId ? 'A client ID is configured. Sign-in is available.' : 'No client ID yet — sign-in is disabled until one is set.'}
+              {settings.clientId
+                ? 'A client ID is configured. Sign-in is available.'
+                : 'No client ID yet — sign-in is disabled until one is set.'}
             </p>
           </div>
 
@@ -467,7 +559,10 @@ export function SettingsScreen(): JSX.Element {
               anywhere else, so it gets its own callout rather than a footnote. */}
           <div
             className="panel panel-pad"
-            style={{ borderColor: 'color-mix(in srgb, var(--warning) 32%, transparent)', background: 'color-mix(in srgb, var(--warning) 6%, transparent)' }}
+            style={{
+              borderColor: 'color-mix(in srgb, var(--warning) 32%, transparent)',
+              background: 'color-mix(in srgb, var(--warning) 6%, transparent)'
+            }}
           >
             <div className="row gap-12 items-start">
               <ShieldQuestion size={17} style={{ color: 'var(--warning)', marginTop: 2, flexShrink: 0 }} />
@@ -509,7 +604,10 @@ export function SettingsScreen(): JSX.Element {
               <li>Open the Azure portal and go to Microsoft Entra ID → App registrations → New registration.</li>
               <li>Give it any name and choose "Personal Microsoft accounts only".</li>
               <li>Open the new app → Authentication → Advanced settings → enable "Allow public client flows".</li>
-              <li>For browser redirect, add a platform → Mobile and desktop → tick <code className="mono">http://localhost</code>.</li>
+              <li>
+                For browser redirect, add a platform → Mobile and desktop → tick{' '}
+                <code className="mono">http://localhost</code>.
+              </li>
               <li>Copy the Application (client) ID from the Overview page and paste it above.</li>
               <li>Apply for Mojang's approval using that client ID — see the notice above.</li>
             </ol>
@@ -528,99 +626,102 @@ export function SettingsScreen(): JSX.Element {
         <div className="col gap-16">
           <ModAutoUpdate />
 
-        <div className="panel panel-pad">
-          <div className="row gap-12 items-start mb-16">
-            <Boxes size={18} style={{ color: 'var(--accent)', marginTop: 2 }} />
-            <div>
-              <div style={{ fontWeight: 650 }}>Content sources</div>
-              <p className="small muted mt-8" style={{ maxWidth: '68ch' }}>
-                Modrinth works with no configuration at all. CurseForge additionally requires a free API key, which is
-                issued instantly from their developer console and stored only on this PC.
+          <div className="panel panel-pad">
+            <div className="row gap-12 items-start mb-16">
+              <Boxes size={18} style={{ color: 'var(--accent)', marginTop: 2 }} />
+              <div>
+                <div style={{ fontWeight: 650 }}>Content sources</div>
+                <p className="small muted mt-8" style={{ maxWidth: '68ch' }}>
+                  Modrinth works with no configuration at all. CurseForge additionally requires a free API key, which is
+                  issued instantly from their developer console and stored only on this PC.
+                </p>
+              </div>
+            </div>
+
+            <div className="field">
+              <label className="field-label">CurseForge API key</label>
+              <div className="row gap-8">
+                <input
+                  className="input mono"
+                  type="password"
+                  value={curseKey}
+                  placeholder="Optional — leave empty to use Modrinth only"
+                  onChange={(event) => setCurseKey(event.target.value)}
+                />
+                <button
+                  className="btn btn-primary"
+                  disabled={curseKey.trim() === settings.curseForgeApiKey || checkingKey}
+                  onClick={() => {
+                    const entered = curseKey.trim()
+
+                    /*
+                     * Check the key with CurseForge before calling it saved.
+                     *
+                     * This used to announce success the instant it was clicked,
+                     * whatever had been pasted in, so a key that was never going
+                     * to work looked accepted — and the first sign of trouble was
+                     * a search failing later with a message that said nothing
+                     * about the settings screen. Only CurseForge can settle
+                     * whether a key works, so it gets asked here.
+                     */
+                    void (async () => {
+                      setCheckingKey(true)
+                      try {
+                        await patch({ curseForgeApiKey: entered })
+
+                        if (!entered) {
+                          pushToast({ kind: 'success', title: 'CurseForge key cleared' })
+                          return
+                        }
+
+                        const verdict = await api.curseforge.verify(entered)
+                        pushToast({
+                          kind: verdict.ok ? 'success' : 'error',
+                          title: verdict.ok ? 'CurseForge key works' : 'CurseForge would not accept that key',
+                          message: verdict.reason
+                        })
+                      } catch (err) {
+                        pushToast({
+                          kind: 'error',
+                          title: 'Could not check the key',
+                          message: (err as Error).message
+                        })
+                      } finally {
+                        setCheckingKey(false)
+                      }
+                    })()
+                  }}
+                >
+                  {checkingKey ? 'Checking…' : 'Save'}
+                </button>
+              </div>
+              <p className="field-hint">
+                {settings.curseForgeApiKey
+                  ? 'A key is configured — CurseForge appears in the Discover tab.'
+                  : 'No key yet. CurseForge search is disabled; Modrinth is unaffected.'}
+              </p>
+            </div>
+
+            <div className="row gap-8 mt-16">
+              <button
+                className="btn btn-sm"
+                onClick={() => void api.app.openExternal('https://console.curseforge.com')}
+              >
+                <ExternalLink size={14} /> Get a CurseForge key
+              </button>
+            </div>
+
+            <div className="divider" />
+
+            <div className="row gap-12 items-start">
+              <AlertTriangle size={17} style={{ color: 'var(--warning)', marginTop: 2, flexShrink: 0 }} />
+              <p className="small muted">
+                CurseForge lets mod authors opt out of third-party downloads. Those mods cannot be installed
+                automatically by any launcher, including this one — NexusCraft marks them “Manual only” and links to the
+                page so you can download them yourself. Modrinth has no such restriction.
               </p>
             </div>
           </div>
-
-          <div className="field">
-            <label className="field-label">CurseForge API key</label>
-            <div className="row gap-8">
-              <input
-                className="input mono"
-                type="password"
-                value={curseKey}
-                placeholder="Optional — leave empty to use Modrinth only"
-                onChange={(event) => setCurseKey(event.target.value)}
-              />
-              <button
-                className="btn btn-primary"
-                disabled={curseKey.trim() === settings.curseForgeApiKey || checkingKey}
-                onClick={() => {
-                  const entered = curseKey.trim()
-
-                  /*
-                   * Check the key with CurseForge before calling it saved.
-                   *
-                   * This used to announce success the instant it was clicked,
-                   * whatever had been pasted in, so a key that was never going
-                   * to work looked accepted — and the first sign of trouble was
-                   * a search failing later with a message that said nothing
-                   * about the settings screen. Only CurseForge can settle
-                   * whether a key works, so it gets asked here.
-                   */
-                  void (async () => {
-                    setCheckingKey(true)
-                    try {
-                      await patch({ curseForgeApiKey: entered })
-
-                      if (!entered) {
-                        pushToast({ kind: 'success', title: 'CurseForge key cleared' })
-                        return
-                      }
-
-                      const verdict = await api.curseforge.verify(entered)
-                      pushToast({
-                        kind: verdict.ok ? 'success' : 'error',
-                        title: verdict.ok ? 'CurseForge key works' : 'CurseForge would not accept that key',
-                        message: verdict.reason
-                      })
-                    } catch (err) {
-                      pushToast({
-                        kind: 'error',
-                        title: 'Could not check the key',
-                        message: (err as Error).message
-                      })
-                    } finally {
-                      setCheckingKey(false)
-                    }
-                  })()
-                }}
-              >
-                {checkingKey ? 'Checking…' : 'Save'}
-              </button>
-            </div>
-            <p className="field-hint">
-              {settings.curseForgeApiKey
-                ? 'A key is configured — CurseForge appears in the Discover tab.'
-                : 'No key yet. CurseForge search is disabled; Modrinth is unaffected.'}
-            </p>
-          </div>
-
-          <div className="row gap-8 mt-16">
-            <button className="btn btn-sm" onClick={() => void api.app.openExternal('https://console.curseforge.com')}>
-              <ExternalLink size={14} /> Get a CurseForge key
-            </button>
-          </div>
-
-          <div className="divider" />
-
-          <div className="row gap-12 items-start">
-            <AlertTriangle size={17} style={{ color: 'var(--warning)', marginTop: 2, flexShrink: 0 }} />
-            <p className="small muted">
-              CurseForge lets mod authors opt out of third-party downloads. Those mods cannot be installed
-              automatically by any launcher, including this one — NexusCraft marks them “Manual only” and links to the
-              page so you can download them yourself. Modrinth has no such restriction.
-            </p>
-          </div>
-        </div>
         </div>
       )}
 

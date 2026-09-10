@@ -953,6 +953,29 @@ export interface ModUpdateSweep {
   heldBack: number
 }
 
+/**
+ * The looks the app comes with.
+ *
+ * Each is a surface ramp and an accent and nothing else - every shape, space
+ * and shadow is shared - which is what stops six themes turning into six
+ * stylesheets that drift apart.
+ *
+ * The accent is repeated here because picking a theme also sets it: a theme
+ * that changed the greys and left the accent alone would look like nothing had
+ * happened. The accent picker still overrides it afterwards.
+ */
+export const THEMES = [
+  { id: 'nexus', label: 'Nexus', accent: '#5eead4', blurb: 'Blue-black and teal' },
+  { id: 'abyss', label: 'Abyss', accent: '#38bdf8', blurb: 'Deep water, cold light' },
+  { id: 'ember', label: 'Ember', accent: '#fbbf24', blurb: 'Warm charcoal and amber' },
+  { id: 'amethyst', label: 'Amethyst', accent: '#c084fc', blurb: 'Violet and orchid' },
+  { id: 'moss', label: 'Moss', accent: '#a3e635', blurb: 'Green-black and lime' },
+  { id: 'crimson', label: 'Crimson', accent: '#fb7185', blurb: 'Near-black and red' },
+  { id: 'daylight', label: 'Daylight', accent: '#4f46e5', blurb: 'Light, for a bright room' }
+] as const
+
+export type ThemeId = (typeof THEMES)[number]['id']
+
 export interface AppSettings {
   /** Root directory holding instances, versions, assets, libraries and runtimes. */
   dataDir: string
@@ -980,6 +1003,8 @@ export interface AppSettings {
   animatedBackground: boolean
   particles: boolean
   accentColor: string
+  /** Which of THEMES the app is wearing. */
+  theme: ThemeId
   onboardingComplete: boolean
   selectedInstanceId: string | null
   /** https JSON feed replacing the built-in public server list. Empty = built-in. */
