@@ -149,6 +149,57 @@ export interface PackTexture {
   image: string
 }
 
+/**
+ * The vanilla armour a custom set is worn as.
+ *
+ * A pack cannot add an item, so a custom set is a real one wearing different
+ * pictures: the same protection, durability and enchantability as whatever it
+ * is built on. The equipment texture and the item id do not always agree -
+ * gold's worn layers are filed under "gold" while its items are "golden_*" -
+ * so both are written down rather than derived.
+ */
+export const ARMOUR_BASES = [
+  { id: 'leather', label: 'Leather', asset: 'leather', item: 'leather' },
+  { id: 'chainmail', label: 'Chainmail', asset: 'chainmail', item: 'chainmail' },
+  { id: 'copper', label: 'Copper', asset: 'copper', item: 'copper' },
+  { id: 'iron', label: 'Iron', asset: 'iron', item: 'iron' },
+  { id: 'golden', label: 'Gold', asset: 'gold', item: 'golden' },
+  { id: 'diamond', label: 'Diamond', asset: 'diamond', item: 'diamond' },
+  { id: 'netherite', label: 'Netherite', asset: 'netherite', item: 'netherite' }
+] as const
+
+/**
+ * The four pieces, and the slot each one is equipped in.
+ *
+ * Two worn layers cover them: leggings are drawn on their own model, and the
+ * helmet, chestplate and boots share the other. That is a vanilla arrangement,
+ * not a choice made here.
+ */
+export const ARMOUR_PIECES = [
+  { id: 'helmet', label: 'Helmet', slot: 'head', layer: 'body' },
+  { id: 'chestplate', label: 'Chestplate', slot: 'chest', layer: 'body' },
+  { id: 'leggings', label: 'Leggings', slot: 'legs', layer: 'legs' },
+  { id: 'boots', label: 'Boots', slot: 'feet', layer: 'body' }
+] as const
+
+/** A custom armour set, ready to be written into a pack. */
+export interface PackArmour {
+  id: string
+  label: string
+
+  /** The item prefix it is worn as, eg "diamond" or "golden". */
+  base: string
+
+  /** The layer drawn on the body model: helmet, chestplate and boots. */
+  body: string
+
+  /** The layer drawn on the legs model. */
+  legs: string
+
+  /** The four inventory icons. */
+  icons: { helmet: string; chestplate: string; leggings: string; boots: string }
+}
+
 export interface ResourcePackDraft {
   name: string
   description: string
@@ -156,6 +207,8 @@ export interface ResourcePackDraft {
   sounds: PackSound[]
   /** Vanilla textures being replaced, by the path the game looks them up at. */
   textures: PackTexture[]
+  /** Custom armour sets, each worn as a real vanilla armour item. */
+  armour: PackArmour[]
   /** Six data urls, or null for no custom menu background. */
   panorama: string[] | null
   /** The Minecraft wordmark on the title screen, as a data url. */
@@ -169,6 +222,7 @@ export function emptyDraft(): ResourcePackDraft {
     items: [],
     sounds: [],
     textures: [],
+    armour: [],
     panorama: null,
     logo: null
   }
@@ -196,8 +250,30 @@ export function isEmpty(draft: ResourcePackDraft): boolean {
     draft.items.length === 0 &&
     draft.sounds.length === 0 &&
     draft.textures.length === 0 &&
+    draft.armour.length === 0 &&
     draft.panorama === null &&
     draft.logo === null
+  )
+}
+
+/**
+ * How to be given a piece of custom armour.
+ *
+ * Two components do the work. `item_model` swaps the inventory icon, the same
+ * way the cosmetic hats do it; `equippable` names an asset the pack defines,
+ * which is what changes the armour drawn on the body. Neither is a mod - a
+ * player without the pack is handed ordinary armour and sees ordinary armour,
+ * because a model nothing defines falls back to the item itself.
+ */
+export function giveArmour(set: PackArmour, piece: (typeof ARMOUR_PIECES)[number], namespace: string): string {
+  const name = set.label.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+  const id = safeId(set.id)
+
+  return (
+    `/give @p minecraft:${set.base}_${piece.id}[` +
+    `minecraft:equippable={slot:"${piece.slot}",asset_id:"${namespace}:${id}"},` +
+    `minecraft:item_model="${namespace}:${id}_${piece.id}",` +
+    `minecraft:custom_name='{"text":"${name} ${piece.label}","italic":false}']`
   )
 }
 
@@ -233,6 +309,7 @@ export function packSummary(contents: BuiltPack['contents']): string {
   const parts = [
     contents.textures > 0 ? many(contents.textures, 'texture') : '',
     contents.items > 0 ? many(contents.items, 'item') : '',
+    contents.armour > 0 ? many(contents.armour, 'armour set') : '',
     contents.sounds > 0 ? many(contents.sounds, 'sound') : '',
     contents.panorama ? 'a menu background' : '',
     contents.logo ? 'a logo' : ''
@@ -283,6 +360,8 @@ export interface BuiltPack {
   commands: string[]
   contents: {
     textures: number
+    /** How many custom armour sets went in. */
+    armour: number
 
     /**
      * How many of those textures are byte-for-byte the game's own.

@@ -11,10 +11,13 @@ import {
   type PackSound,
   type PackTexture,
   type ResourcePackDraft,
+  ARMOUR_PIECES,
   describeAudio,
+  giveArmour,
   isEmpty,
   isOggVorbis,
-  safeId
+  safeId,
+  type PackArmour
 } from '@shared/resourcePacks'
 import type { Instance } from '@shared/types'
 import { LauncherError } from '../../core/errors'
@@ -92,6 +95,56 @@ function itemFiles(item: PackItem, zip: AdmZip): void {
       model: { type: 'minecraft:model', model: `${NAMESPACE}:item/${id}` }
     })
   )
+}
+
+/**
+ * One custom armour set: two worn layers, four icons, one definition.
+ *
+ * The definition is the part that is easy to get wrong. `equippable.asset_id`
+ * on the item names an equipment asset, not a texture, and that asset lists
+ * which model each layer is drawn on. Read from `assets/minecraft/equipment/
+ * diamond.json` in the 26.2 jar, which names humanoid, humanoid_baby and
+ * humanoid_leggings among others - the texture id inside then resolves to
+ * `textures/entity/equipment/<layer>/<id>.png`, which is why one id covers two
+ * files that look nothing alike.
+ */
+function armourFiles(set: PackArmour, zip: AdmZip): void {
+  const id = safeId(set.id)
+
+  zip.addFile(
+    `assets/${NAMESPACE}/equipment/${id}.json`,
+    json({
+      layers: {
+        humanoid: [{ texture: `${NAMESPACE}:${id}` }],
+        humanoid_baby: [{ texture: `${NAMESPACE}:${id}` }],
+        humanoid_leggings: [{ texture: `${NAMESPACE}:${id}` }]
+      }
+    })
+  )
+
+  zip.addFile(`assets/${NAMESPACE}/textures/entity/equipment/humanoid/${id}.png`, fromDataUrl(set.body))
+  zip.addFile(`assets/${NAMESPACE}/textures/entity/equipment/humanoid_leggings/${id}.png`, fromDataUrl(set.legs))
+
+  for (const piece of ARMOUR_PIECES) {
+    const at = `${id}_${piece.id}`
+    const icon = set.icons[piece.id]
+    if (!icon) continue
+
+    zip.addFile(`assets/${NAMESPACE}/textures/item/${at}.png`, fromDataUrl(icon))
+
+    zip.addFile(
+      `assets/${NAMESPACE}/models/item/${at}.json`,
+      json({
+        parent: 'minecraft:item/generated',
+        textures: { layer0: `${NAMESPACE}:item/${at}` }
+      })
+    )
+
+    zip.addFile(
+      `assets/${NAMESPACE}/items/${at}.json`,
+      json({ model: { type: 'minecraft:model', model: `${NAMESPACE}:item/${at}` } })
+    )
+  }
 }
 
 /**
@@ -198,6 +251,7 @@ async function buildZip(draft: ResourcePackDraft, minecraftVersion: string): Pro
 
   for (const texture of draft.textures) textureFile(texture, zip)
   for (const item of draft.items) itemFiles(item, zip)
+  for (const set of draft.armour) armourFiles(set, zip)
   if (draft.sounds.length > 0) await soundFiles(draft.sounds, zip)
 
   if (draft.panorama) {
@@ -289,11 +343,17 @@ export async function writeResourcePack(
     path: dest,
     sha1,
     bytes: bytes.length,
-    commands: draft.items.filter((i) => !i.replaces).map((i) => giveLine(i)),
+    commands: [
+      ...draft.items.filter((i) => !i.replaces).map((i) => giveLine(i)),
+      ...draft.armour.flatMap((set) =>
+        ARMOUR_PIECES.filter((piece) => set.icons[piece.id]).map((piece) => giveArmour(set, piece, NAMESPACE))
+      )
+    ],
     contents: {
       textures: draft.textures.length,
       unchanged: unchangedFromVanilla(draft.textures, minecraftVersion),
       items: draft.items.length,
+      armour: draft.armour.length,
       sounds: draft.sounds.length,
       panorama: draft.panorama !== null,
       logo: draft.logo !== null

@@ -9,6 +9,7 @@ import {
   Plus,
   Save,
   Server,
+  Shield,
   Trash2,
   Upload
 } from 'lucide-react'
@@ -24,10 +25,14 @@ import {
   type PackSound,
   type PackTexture,
   type ResourcePackDraft,
+  ARMOUR_BASES,
+  ARMOUR_PIECES,
   emptyDraft,
+  giveArmour,
   isEmpty,
   packSummary,
-  safeId
+  safeId,
+  type PackArmour
 } from '@shared/resourcePacks'
 import type { BuiltPack, PackForwarding, PackHostStatus } from '@shared/resourcePacks'
 import type { Instance, LauncherErrorPayload, SavedCreation } from '@shared/types'
@@ -49,7 +54,7 @@ import { useStore } from '../store/useStore'
  */
 
 /** The parts of a resource pack, each its own screen. */
-type PackTab = 'textures' | 'items' | 'hats' | 'sounds' | 'menu' | 'saved' | 'build'
+type PackTab = 'textures' | 'items' | 'hats' | 'armour' | 'sounds' | 'menu' | 'saved' | 'build'
 
 /*
  * In the order the job is done, with the thing that produces a file last.
@@ -58,6 +63,7 @@ const PACK_TABS: { id: PackTab; label: string; icon: LucideIcon }[] = [
   { id: 'textures', label: 'Textures', icon: ImageIcon },
   { id: 'items', label: 'Items', icon: Boxes },
   { id: 'hats', label: 'Hats', icon: HardHat },
+  { id: 'armour', label: 'Armour', icon: Shield },
   { id: 'sounds', label: 'Sounds', icon: Music },
   { id: 'menu', label: 'Menu', icon: Monitor },
   { id: 'saved', label: 'Saved', icon: Save },
@@ -78,6 +84,7 @@ const HAT_IDS: ReadonlySet<string> = new Set(COSMETIC_HATS.map((hat) => hat.id))
 function countFor(tab: PackTab, draft: ResourcePackDraft): number {
   if (tab === 'textures') return draft.textures.length
   if (tab === 'sounds') return draft.sounds.length
+  if (tab === 'armour') return draft.armour.length
   if (tab === 'menu') return (draft.panorama ? 1 : 0) + (draft.logo ? 1 : 0)
 
   /*
@@ -254,6 +261,10 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
   const [tab, setTab] = useState<PackTab>('textures')
   const top = useRef<HTMLDivElement>(null)
+
+  const [armourBase, setArmourBase] = useState<string>('diamond')
+  const [armourName, setArmourName] = useState('')
+  const [forging, setForging] = useState(false)
 
   /** Which destructive button has been pressed once, so nothing goes on one click. */
   const [confirming, setConfirming] = useState<'pack' | 'textures' | null>(null)
@@ -1044,6 +1055,74 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     }
   }
 
+  /* ------------------------------------------------------------ armour -- */
+
+  /**
+   * Builds a set from a vanilla one and the chosen look.
+   *
+   * Recoloured rather than drawn. The worn layer is not a picture of armour -
+   * it is an unwrap of the player model, and every pixel of it lands somewhere
+   * specific on a body - so asking a model to invent one produces a smear.
+   * Running Mojang's own layer through the same recipe the textures use keeps
+   * every seam where it belongs and still comes out a different set of armour.
+   */
+  const forgeArmour = async (): Promise<void> => {
+    if (!style) return
+
+    const base = ARMOUR_BASES.find((b) => b.id === armourBase)
+    if (!base) return
+
+    const label = armourName.trim() || `${style.name} ${base.label}`
+    const id = safeId(label)
+
+    if (!id) {
+      setError(toPayload(new Error('That name has no letters or numbers in it, so it cannot be an id.')))
+      return
+    }
+
+    setForging(true)
+    setError(null)
+
+    try {
+      const dress = async (path: string): Promise<string | null> => {
+        const original = await api.resourcePack.texture(packVersion, path)
+        return original ? await restyle(original, style) : null
+      }
+
+      const body = await dress(`entity/equipment/humanoid/${base.asset}`)
+      const legs = await dress(`entity/equipment/humanoid_leggings/${base.asset}`)
+
+      if (!body || !legs) {
+        throw new Error(`${base.label} armour has no worn texture in ${packVersion}, so a set cannot be built on it.`)
+      }
+
+      const icons: PackArmour['icons'] = {
+        helmet: '',
+        chestplate: '',
+        leggings: '',
+        boots: ''
+      }
+
+      for (const piece of ARMOUR_PIECES) {
+        const drawn = await dress(`item/${base.item}_${piece.id}`)
+        if (!drawn) throw new Error(`${base.label} has no ${piece.label} icon in ${packVersion}.`)
+        icons[piece.id] = drawn
+      }
+
+      const set: PackArmour = { id, label, base: base.item, body, legs, icons }
+
+      mergeDraft((current) => ({
+        armour: [...current.armour.filter((a) => a.id !== id), set]
+      }))
+
+      setArmourName('')
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setForging(false)
+    }
+  }
+
   /* ------------------------------------------------------------- build -- */
 
   const install = async (): Promise<void> => {
@@ -1797,6 +1876,118 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             restart. It is off by default because a pack with some hats and not others shows the missing texture for the
             rest.
           </p>
+        </div>
+      )}
+
+      {tab === 'armour' && (
+        <div className="panel panel-pad col gap-12">
+          <div className="section-title">Custom armour</div>
+
+          <p className="small muted">
+            A set is real armour wearing different pictures &mdash; same protection and durability as whatever you build
+            it on, so nothing is unbalanced by it. Recoloured from Mojang&apos;s own layers rather than drawn from
+            nothing: the worn texture is an unwrap of the player model, and inventing one produces a smear rather than
+            armour.
+          </p>
+
+          {!style ? (
+            <p className="small" style={{ color: 'var(--warning)' }}>
+              Pick a look on the Textures tab first &mdash; that is what the set is coloured with.
+            </p>
+          ) : (
+            <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
+              <div className="field" style={{ width: 140 }}>
+                <label className="field-label">Built on</label>
+                <select className="select" value={armourBase} onChange={(e) => setArmourBase(e.target.value)}>
+                  {ARMOUR_BASES.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field" style={{ flex: '1 1 180px' }}>
+                <label className="field-label">Called</label>
+                <input
+                  className="input"
+                  value={armourName}
+                  placeholder={`${style.name} ${ARMOUR_BASES.find((b) => b.id === armourBase)?.label ?? ''}`}
+                  onChange={(e) => setArmourName(e.target.value.slice(0, 48))}
+                />
+              </div>
+
+              <button className="btn btn-primary btn-sm" disabled={forging} onClick={() => void forgeArmour()}>
+                {forging && <Spinner />} Make the set
+              </button>
+            </div>
+          )}
+
+          {draft.armour.length > 0 && (
+            <div className="col gap-10">
+              {draft.armour.map((set) => (
+                <div key={set.id} className="col gap-6">
+                  <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                    {ARMOUR_PIECES.map((piece) => (
+                      <img
+                        key={piece.id}
+                        src={set.icons[piece.id]}
+                        alt={piece.label}
+                        width={32}
+                        height={32}
+                        title={piece.label}
+                        style={{ imageRendering: 'pixelated', borderRadius: 4 }}
+                      />
+                    ))}
+
+                    <span className="small" style={{ flex: '1 1 120px' }}>
+                      <strong>{set.label}</strong>
+                      <span className="dim"> &middot; worn as {set.base}</span>
+                    </span>
+
+                    <button
+                      className="btn btn-sm"
+                      title="Take it out"
+                      onClick={() =>
+                        mergeDraft((current) => ({
+                          armour: current.armour.filter((a) => a.id !== set.id)
+                        }))
+                      }
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+
+                  <div className="row gap-8 wrap">
+                    <img
+                      src={set.body}
+                      alt="worn layer"
+                      title="The layer drawn on the body"
+                      style={{ height: 48, imageRendering: 'pixelated', borderRadius: 4 }}
+                    />
+                    <img
+                      src={set.legs}
+                      alt="legs layer"
+                      title="The layer drawn on the legs"
+                      style={{ height: 48, imageRendering: 'pixelated', borderRadius: 4 }}
+                    />
+                  </div>
+
+                  <textarea
+                    className="input mono"
+                    rows={4}
+                    readOnly
+                    value={ARMOUR_PIECES.map((piece) => giveArmour(set, piece, 'nexus')).join('\n')}
+                  />
+                </div>
+              ))}
+
+              <p className="tiny dim">
+                Hand these to anybody once the pack is on the server. A player without the pack is given ordinary armour
+                and sees ordinary armour, so nothing breaks for them.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

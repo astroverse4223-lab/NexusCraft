@@ -151,6 +151,30 @@ const resourcePackDraft = z.object({
      * set with room for the versions that add to it.
      */
     .max(4096),
+  armour: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(64),
+        base: z.string().min(1).max(32),
+        body: pngDataUrl,
+        legs: pngDataUrl,
+        icons: z.object({
+          helmet: pngDataUrl,
+          chestplate: pngDataUrl,
+          leggings: pngDataUrl,
+          boots: pngDataUrl
+        })
+      })
+    )
+    .max(32)
+    /*
+     * Defaulted, not required. Every pack saved before armour existed has no
+     * such key, and a required field would reject those at the IPC boundary
+     * with nothing on screen to say why - which is the exact shape of the bug
+     * that made "Build and serve" look dead for a day.
+     */
+    .default([]),
   panorama: z.array(pngDataUrl).length(6).nullable(),
   logo: pngDataUrl.nullable()
 })
