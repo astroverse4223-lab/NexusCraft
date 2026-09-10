@@ -102,6 +102,14 @@ describe('the command that hands a piece out', () => {
     expect(line).toContain('minecraft:item_model="nexus:emberforged_chestplate"')
   })
 
+  it('gives it to whoever was picked, and to the nearest player by default', () => {
+    const boots = ARMOUR_PIECES.find((p) => p.id === 'boots')!
+
+    expect(giveArmour(set, boots, 'nexus')).toContain('/give @p ')
+    expect(giveArmour(set, boots, 'nexus', 'Dave0734')).toContain('/give Dave0734 ')
+    expect(giveArmour(set, boots, 'nexus', '@a')).toContain('/give @a ')
+  })
+
   it('puts each piece in the slot it belongs in', () => {
     const slots = ARMOUR_PIECES.map((p) => p.slot)
     expect(slots).toEqual(['head', 'chest', 'legs', 'feet'])

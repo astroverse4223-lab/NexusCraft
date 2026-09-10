@@ -1988,8 +1988,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               ))}
 
               <p className="tiny dim">
-                Hand these to anybody once the pack is on the server. A player without the pack is given ordinary armour
-                and sees ordinary armour, so nothing breaks for them.
+                Sent straight through the server console, so it lands in their inventory while they are playing. A
+                player without the pack is given ordinary armour and sees ordinary armour, so nothing breaks for them
+                &mdash; but the pack has to be built and served before it looks like anything.
               </p>
             </div>
           )}
@@ -2526,8 +2527,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                     {built.offering
                       ? 'The plugin has already been told, so anyone joining is offered it now. No restart.'
                       : 'Start the server and it will offer the pack when people join.'}{' '}
-                    The link has the pack&apos;s own hash in it, so rebuilding gives a new link and nobody is
-                    left on a stale copy.
+                    The link has the pack&apos;s own hash in it, so rebuilding gives a new link and nobody is left on a
+                    stale copy.
                   </p>
                 </>
               )}

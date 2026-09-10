@@ -215,21 +215,17 @@ public final class Armoury {
     }
 
     /**
-     * A set worth dropping, or null when the pack defines none.
+     * A set to drop for something, or null when none is named.
      *
-     * Pinned by config when somebody wants a particular set to be the boss
-     * reward, and otherwise whichever is first - so a server that has just
-     * built its first pack gets working drops without anybody configuring
-     * anything, which is the difference between a feature and a feature
-     * somebody has to find.
+     * Off unless it is configured, and deliberately so. This used to fall back
+     * to the first set in the armoury, which meant building a pack with armour
+     * in it silently turned on boss drops, crate drops and a ladder prize
+     * nobody had asked for - and the whole point of these sets is that the
+     * owner hands them out as gifts. A set that arrives on its own is not a
+     * gift.
      */
     public String dropSet(String forWhat) {
-        if (sets.isEmpty()) return null;
-
-        String pinned = nexus.getConfig().getString("armouryDrops." + forWhat, "");
-        if (has(pinned)) return pinned.toLowerCase(Locale.ROOT);
-
-        return sets.keySet().iterator().next();
+        return setFor(forWhat);
     }
 
     /** Whether this is a piece of custom armour, and which set it came from. */

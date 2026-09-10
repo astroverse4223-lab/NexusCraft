@@ -265,12 +265,18 @@ export function isEmpty(draft: ResourcePackDraft): boolean {
  * player without the pack is handed ordinary armour and sees ordinary armour,
  * because a model nothing defines falls back to the item itself.
  */
-export function giveArmour(set: PackArmour, piece: (typeof ARMOUR_PIECES)[number], namespace: string): string {
+export function giveArmour(
+  set: PackArmour,
+  piece: (typeof ARMOUR_PIECES)[number],
+  namespace: string,
+  /** Who gets it: a selector or a name. The caller checks it is one of those. */
+  target = '@p'
+): string {
   const name = set.label.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
   const id = safeId(set.id)
 
   return (
-    `/give @p minecraft:${set.base}_${piece.id}[` +
+    `/give ${target} minecraft:${set.base}_${piece.id}[` +
     `minecraft:equippable={slot:"${piece.slot}",asset_id:"${namespace}:${id}"},` +
     `minecraft:item_model="${namespace}:${id}_${piece.id}",` +
     `minecraft:custom_name='{"text":"${name} ${piece.label}","italic":false}']`

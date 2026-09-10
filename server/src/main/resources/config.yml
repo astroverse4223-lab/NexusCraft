@@ -49,9 +49,10 @@ armoury: {}
 
 # Where those sets turn up on their own.
 #
-# Both are optional. Left empty, the first set in the armoury is used, so a
-# server that has just built its first pack gets working drops without anybody
-# configuring anything.
+# All off unless you name a set. Armour made in the launcher is meant to be
+# handed out by the owner - there is a button on the Armour tab that sends a
+# set straight to somebody in game - and a set that arrives on its own is not
+# a gift. These are here for when you want a set to be earned as well.
 armouryDrops:
   # Given whole to whoever did the most damage to the Warden.
   boss: ''
