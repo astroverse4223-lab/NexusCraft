@@ -230,6 +230,17 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
   /** Why the draft is not being kept, when it is not. */
   const [keepFailed, setKeepFailed] = useState<string | null>(null)
+
+  /*
+   * The saved pack this draft came from, if any.
+   *
+   * Without it every press of Save wrote a new row, so the ordinary way of
+   * working - draw the hats, save, change one, save again - left a column of
+   * identical thumbnails all called "Nexus" and no way to tell which was the
+   * newest. Saving should mean saving, and only an unsaved pack should become
+   * a new entry.
+   */
+  const [openId, setOpenId] = useState<string | null>(null)
   const [brains, setBrains] = useState<{ id: string; label: string }[]>([])
   const [brain, setBrain] = useState('')
   const [wish, setWish] = useState('')
@@ -499,11 +510,14 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
    * deleted, a version that has moved on, a preset that has changed since.
    * What is saved here is exactly what would have been built.
    */
-  const keep = async (): Promise<void> => {
+  const keep = async (): Promise<void> => await keepUnder(openId)
+
+  const keepUnder = async (id: string | null): Promise<void> => {
     if (isEmpty(draft)) return
 
     try {
-      await api.creations.save({
+      const kept = await api.creations.save({
+        id,
         kind: 'resourcepack',
         name: draft.name.trim() || 'Resource pack',
         data: draft,
@@ -511,6 +525,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         thumbnail: draft.textures[0]?.image ?? draft.items[0]?.image ?? null
       })
 
+      setOpenId(kept.id)
       setSaved(await api.creations.list('resourcepack'))
     } catch (err) {
       setError(toPayload(err))
@@ -524,8 +539,12 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     // Merged over a fresh draft, so a pack saved before a field existed opens
     // with that field empty rather than undefined.
     setDraft({ ...emptyDraft(), ...body })
+    setOpenId(entry.id)
     setPreview([])
   }
+
+  /** Keeps this as a new entry, leaving the one it was opened from alone. */
+  const saveAsNew = async (): Promise<void> => await keepUnder(null)
 
   /**
    * A few textures with the style on them, side by side with the originals.
@@ -1058,11 +1077,21 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
         <div className="row gap-8 wrap" style={{ alignItems: 'center' }}>
           <button className="btn btn-sm" disabled={nothing} onClick={() => void keep()}>
-            <Save size={14} /> Save this pack
+            <Save size={14} /> {openId ? 'Save changes' : 'Save this pack'}
           </button>
 
+          {openId && (
+            <button className="btn btn-sm" disabled={nothing} onClick={() => void saveAsNew()}>
+              Save as a copy
+            </button>
+          )}
+
           <span className="tiny dim">
-            {nothing ? 'Nothing in it yet.' : 'Kept as you work as well, so closing the launcher does not lose it.'}
+            {nothing
+              ? 'Nothing in it yet.'
+              : openId
+                ? 'Saving writes over the one you opened. Kept as you work as well.'
+                : 'Kept as you work as well, so closing the launcher does not lose it.'}
           </span>
         </div>
 
@@ -1818,7 +1847,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               Keep it
             </div>
             <button className="btn btn-primary btn-sm" disabled={isEmpty(draft)} onClick={() => void keep()}>
-              Save this pack
+              {openId ? 'Save changes' : 'Save this pack'}
             </button>
           </div>
 
