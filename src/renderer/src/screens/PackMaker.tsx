@@ -1251,11 +1251,20 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             </button>
           </div>
 
+          {/*
+            This used to end "your Desktop has the whole lot already, edit
+            those in place and import the folder back", which read as a first
+            step and is not one. Restyling already reads the jar; importing the
+            unedited folder on top of it just fills the pack with three
+            thousand copies of vanilla, and that folder is a different version
+            of the game besides.
+          */}
           <p className="small muted">
             Everything the game draws &mdash; {vanilla.length.toLocaleString()} textures in {packVersion}: blocks,
-            items, mobs, particles, paintings, menus. Search for what you want to change, or import a folder and
-            everything in it is filed by where it sits. Your Desktop has the whole lot already, in
-            <code> minecraft-textures</code> &mdash; edit those in place and import the folder back.
+            items, mobs, particles, paintings, menus. Restyling reads these straight out of the game&apos;s own files,
+            so there is nothing to import first. Search for one to change by hand, or import a folder only to bring back
+            PNGs you have edited yourself &mdash; importing unedited copies adds textures identical to the ones already
+            in the game, which changes nothing.
           </p>
 
           <input
