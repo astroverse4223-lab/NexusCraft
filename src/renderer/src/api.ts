@@ -6,14 +6,7 @@ import type { BuiltPack, PackHostStatus, ResourcePackDraft } from '@shared/resou
 import type { PackForwarding } from '@shared/resourcePacks'
 import type { TextureRecipe } from '@shared/textureRecipe'
 import type { SiteConfig, SiteStatus } from '@shared/serverSite'
-import type {
-  FireworkDesign,
-  ItemDesign,
-  LogoDesign,
-  MotdDesign,
-  RecipePack,
-  LootPack
-} from '@shared/creations'
+import type { FireworkDesign, ItemDesign, LogoDesign, MotdDesign, RecipePack, LootPack } from '@shared/creations'
 import type { OutsideCheck } from '@shared/types'
 import type {
   Account,
@@ -298,10 +291,8 @@ export const api = {
       call<InstanceSnapshot>('instances:snapshot', { id, name, note }),
     restoreSnapshot: (id: string, snapshotId: string) =>
       call<InstanceSnapshot>('instances:restoreSnapshot', { id, snapshotId }),
-    deleteSnapshot: (id: string, snapshotId: string) =>
-      call<boolean>('instances:deleteSnapshot', { id, snapshotId }),
-    diffSnapshot: (id: string, snapshotId: string) =>
-      call<SnapshotDiff>('instances:diffSnapshot', { id, snapshotId }),
+    deleteSnapshot: (id: string, snapshotId: string) => call<boolean>('instances:deleteSnapshot', { id, snapshotId }),
+    diffSnapshot: (id: string, snapshotId: string) => call<SnapshotDiff>('instances:diffSnapshot', { id, snapshotId }),
     exportPack: (
       id: string,
       outputPath: string,
@@ -351,15 +342,13 @@ export const api = {
   mods: {
     list: (instanceId: string) => call<ModInfo[]>('mods:list', { instanceId }),
     checkUpdates: (instanceId: string) => call<ModUpdate[]>('mods:checkUpdates', { instanceId }),
-    applyUpdate: (instanceId: string, update: ModUpdate) =>
-      call<boolean>('mods:applyUpdate', { instanceId, update }),
+    applyUpdate: (instanceId: string, update: ModUpdate) => call<boolean>('mods:applyUpdate', { instanceId, update }),
     changelog: (instanceId: string, update: ModUpdate) =>
       call<ModChangelog[]>('mods:changelog', { instanceId, update }),
     autoUpdateSettings: () => call<ModAutoUpdateSettings>('mods:autoUpdateSettings', {}),
     setAutoUpdateSettings: (patch: Partial<Omit<ModAutoUpdateSettings, 'lastCheck'>>) =>
       call<ModAutoUpdateSettings>('mods:setAutoUpdateSettings', { patch }),
-    bundledStatus: (instanceId: string) =>
-      call<BundledModStatus[]>('mods:bundledStatus', { instanceId }),
+    bundledStatus: (instanceId: string) => call<BundledModStatus[]>('mods:bundledStatus', { instanceId }),
     installBundled: (instanceId: string, modId: string) =>
       call<{
         id: string
@@ -371,8 +360,7 @@ export const api = {
       }>('mods:installBundled', { instanceId, modId }),
     checkAllNow: () => call<ModUpdateSweep>('mods:checkAllNow', {}),
     rollbacks: (instanceId: string) => call<ModRollback[]>('mods:rollbacks', { instanceId }),
-    rollback: (instanceId: string, fileName: string) =>
-      call<ModRollback>('mods:rollback', { instanceId, fileName }),
+    rollback: (instanceId: string, fileName: string) => call<ModRollback>('mods:rollback', { instanceId, fileName }),
     setEnabled: (instanceId: string, fileName: string, enabled: boolean) =>
       call<boolean>('mods:setEnabled', { instanceId, fileName, enabled }),
     remove: (instanceId: string, fileName: string) => call<boolean>('mods:delete', { instanceId, fileName }),
@@ -457,13 +445,9 @@ export const api = {
   companion: {
     routines: () => call<RoutineInfo[]>('companion:routines'),
     list: () => call<Companion[]>('companion:list'),
-    setMicrophone: (wanted: boolean) =>
-      call<{ wanted: boolean }>('companion:setMicrophone', { wanted }),
+    setMicrophone: (wanted: boolean) => call<{ wanted: boolean }>('companion:setMicrophone', { wanted }),
     toolSizes: () =>
-      call<{ full: number; core: number; fullTokens: number; coreTokens: number }>(
-        'companion:toolSizes',
-        {}
-      ),
+      call<{ full: number; core: number; fullTokens: number; coreTokens: number }>('companion:toolSizes', {}),
     states: () => call<CompanionState[]>('companion:states'),
     create: (name?: string) => call<Companion>('companion:create', { name }),
     remove: (id: string) => call<boolean>('companion:delete', { id }),
@@ -506,8 +490,7 @@ export const api = {
     list: () => call<Crew[]>('crew:list'),
     create: (name: string, foremanId: string, memberIds: string[]) =>
       call<Crew>('crew:create', { name, foremanId, memberIds }),
-    update: (id: string, patch: { name?: string; memberIds?: string[] }) =>
-      call<Crew>('crew:update', { id, patch }),
+    update: (id: string, patch: { name?: string; memberIds?: string[] }) => call<Crew>('crew:update', { id, patch }),
     remove: (id: string) => call<boolean>('crew:delete', { id }),
     start: (id: string) =>
       call<{ started: string[]; failed: Array<{ username: string; reason: string }> }>('crew:start', { id }),
@@ -619,9 +602,10 @@ export const api = {
     start: (id: string) => call<HostedServerState>('host:start', { id }),
     stop: (id: string) => call<HostedServerState>('host:stop', { id }),
     punishments: (serverId: string) =>
-      call<
-        { kind: string; name: string; by: string; reason: string; at: number; until: number }[]
-      >('host:punishments', { serverId }),
+      call<{ kind: string; name: string; by: string; reason: string; at: number; until: number }[]>(
+        'host:punishments',
+        { serverId }
+      ),
     knownPlayers: (serverId: string) => call<string[]>('host:knownPlayers', { serverId }),
     command: (id: string, command: string) => call<boolean>('host:command', { id, command })
   },
@@ -668,8 +652,7 @@ export const api = {
     openFolder: (instanceId: string, folderName?: string) =>
       call<boolean>('worlds:openFolder', { instanceId, folderName }),
     backup: (instanceId: string, folderName: string) => call<BackupInfo>('worlds:backup', { instanceId, folderName }),
-    map: (instanceId: string, folderName: string) =>
-      call<WorldMapData>('worlds:map', { instanceId, folderName }),
+    map: (instanceId: string, folderName: string) => call<WorldMapData>('worlds:map', { instanceId, folderName }),
     listBackups: (instanceId: string) => call<BackupInfo[]>('worlds:listBackups', { instanceId }),
     deleteBackup: (instanceId: string, fileName: string) =>
       call<boolean>('worlds:deleteBackup', { instanceId, fileName }),
@@ -683,8 +666,7 @@ export const api = {
     refresh: (force = false) => call<ServerStatus[]>('directory:refresh', { force }),
     ping: (id: string) => call<ServerStatus>('directory:ping', { id }),
     lookup: (address: string) => call<DirectoryLookup>('directory:lookup', { address }),
-    add: (name: string, address: string, port: number) =>
-      call<SavedServer>('directory:add', { name, address, port }),
+    add: (name: string, address: string, port: number) => call<SavedServer>('directory:add', { name, address, port }),
     compatibility: () => call<Record<string, DirectoryCompatibility>>('directory:compatibility'),
     joinTargets: (address: string, port: number) =>
       call<DirectoryJoinTargets>('directory:joinTargets', { address, port }),
@@ -713,15 +695,20 @@ export const api = {
 
   mapArt: {
     writeServer: (serverId: string, tiles: number[][], across: number, down: number) =>
-      call<{ world: string; ids: number[]; across: number; down: number; commands: string[] }>(
-        'mapart:writeServer',
-        { serverId, tiles, across, down }
-      ),
+      call<{ world: string; ids: number[]; across: number; down: number; commands: string[] }>('mapart:writeServer', {
+        serverId,
+        tiles,
+        across,
+        down
+      }),
     write: (instanceId: string, worldFolder: string, tiles: number[][], across: number, down: number) =>
-      call<{ world: string; ids: number[]; across: number; down: number; commands: string[] }>(
-        'mapart:write',
-        { instanceId, worldFolder, tiles, across, down }
-      )
+      call<{ world: string; ids: number[]; across: number; down: number; commands: string[] }>('mapart:write', {
+        instanceId,
+        worldFolder,
+        tiles,
+        across,
+        down
+      })
   },
 
   resourcePack: {
@@ -729,13 +716,7 @@ export const api = {
       call<BuiltPack>('resourcepack:build', { draft, minecraftVersion, path }),
     install: (instanceId: string, draft: ResourcePackDraft) =>
       call<BuiltPack>('resourcepack:install', { instanceId, draft }),
-    serve: (
-      serverId: string,
-      draft: ResourcePackDraft,
-      port: number,
-      required: boolean,
-      address?: string
-    ) =>
+    serve: (serverId: string, draft: ResourcePackDraft, port: number, required: boolean, address?: string) =>
       call<
         BuiltPack & {
           url: string
@@ -761,8 +742,7 @@ export const api = {
     openPort: (port: number) => call<PackForwarding>('resourcepack:openPort', { port }),
     closePort: (port: number) => call<PackForwarding>('resourcepack:closePort', { port }),
     portStatus: (port: number) => call<PackForwarding>('resourcepack:portStatus', { port }),
-    textures: (minecraftVersion: string) =>
-      call<string[]>('resourcepack:textures', { minecraftVersion }),
+    textures: (minecraftVersion: string) => call<string[]>('resourcepack:textures', { minecraftVersion }),
     texture: (minecraftVersion: string, path: string) =>
       call<string | null>('resourcepack:texture', { minecraftVersion, path }),
     open: (file: string) =>
@@ -774,8 +754,9 @@ export const api = {
         logo: string | null
         ignored: number
       }>('resourcepack:open', { file }),
-    remember: (draft: ResourcePackDraft) =>
-      call<{ ok: boolean }>('resourcepack:remember', { draft }),
+    saveSound: (name: string, base64: string) =>
+      call<{ path: string; bytes: number }>('resourcepack:saveSound', { name, base64 }),
+    remember: (draft: ResourcePackDraft) => call<{ ok: boolean }>('resourcepack:remember', { draft }),
     recall: () => call<ResourcePackDraft | null>('resourcepack:recall')
   },
 
@@ -788,10 +769,7 @@ export const api = {
     votifierPort: (serverId: string, open: boolean) =>
       call<PackForwarding & { port: number }>('site:votifierPort', { serverId, open }),
     votifierInfo: (serverId: string) =>
-      call<{ port: number; token: string; publicKey: string; enabled: boolean }>(
-        'site:votifierInfo',
-        { serverId }
-      )
+      call<{ port: number; token: string; publicKey: string; enabled: boolean }>('site:votifierInfo', { serverId })
   },
 
   banners: {
@@ -846,10 +824,11 @@ export const api = {
         reloadNeeded: boolean
       }>('banners:installRecipes', { serverId, pack }),
     designAdvancements: (prompt: string, companionId?: string, current?: AdvancementPack) =>
-      call<{ pack: AdvancementPack; dropped: string[]; model: string }>(
-        'banners:designAdvancements',
-        { prompt, companionId, current }
-      ),
+      call<{ pack: AdvancementPack; dropped: string[]; model: string }>('banners:designAdvancements', {
+        prompt,
+        companionId,
+        current
+      }),
     installAdvancements: (serverId: string, pack: AdvancementPack) =>
       call<{ world: string; fileCount: number }>('banners:installAdvancements', {
         serverId,
@@ -904,17 +883,13 @@ export const api = {
         pack,
         minecraftVersion
       }),
-    variations: (
-      kind: CreationKind,
-      prompt: string,
-      companionId: string,
-      count: number
-    ) => call<{ results: unknown[]; asked: number }>('banners:variations', {
-      kind,
-      prompt,
-      companionId,
-      count
-    }),
+    variations: (kind: CreationKind, prompt: string, companionId: string, count: number) =>
+      call<{ results: unknown[]; asked: number }>('banners:variations', {
+        kind,
+        prompt,
+        companionId,
+        count
+      }),
     giveDesigned: (serverId: string, command: string) =>
       call<{ command: string; sent: boolean }>('banners:giveDesigned', { serverId, command }),
     icon: (serverId: string, png: string) =>
@@ -926,13 +901,8 @@ export const api = {
 
   creations: {
     list: (kind?: CreationKind) => call<SavedCreation[]>('creations:list', { kind }),
-    save: (input: {
-      id?: string | null
-      kind: CreationKind
-      name: string
-      data: unknown
-      thumbnail?: string | null
-    }) => call<SavedCreation>('creations:save', input),
+    save: (input: { id?: string | null; kind: CreationKind; name: string; data: unknown; thumbnail?: string | null }) =>
+      call<SavedCreation>('creations:save', input),
     remove: (id: string) => call<boolean>('creations:delete', { id }),
     rename: (id: string, name: string) => call<SavedCreation>('creations:rename', { id, name })
   },

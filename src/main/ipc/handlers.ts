@@ -1,7 +1,9 @@
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { totalmem, freemem } from 'node:os'
 import { existsSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { safeId as safePackId } from '@shared/resourcePacks'
 import { handle, assertAllChannelsHandled } from './registry'
 import { checkCurseForgeUpdates, applyCurseForgeUpdate } from '../services/content/curseforgeUpdates'
 import { allBundledModStatuses, installBundledMod } from '../services/content/bundledMods'
@@ -55,26 +57,15 @@ import {
   pointServerAtPack,
   writeResourcePack
 } from '../services/content/resourcePackService'
-import {
-  packHostStatus,
-  packUrl,
-  servePack,
-  startPackHost,
-  stopPackHost
-} from '../services/content/packHost'
+import { packHostStatus, packUrl, servePack, startPackHost, stopPackHost } from '../services/content/packHost'
 import type { ResourcePackDraft } from '@shared/resourcePacks'
 import { readAdvancements, type AdvancementPack } from '@shared/advancements'
 import type { CreationKind } from '@shared/types'
-import {
-  deleteCreation,
-  listCreations,
-  renameCreation,
-  saveCreation
-} from '../services/banners/creationLibrary'
+import { deleteCreation, listCreations, renameCreation, saveCreation } from '../services/banners/creationLibrary'
 import { checkFromOutside } from '../services/servers/outsideCheck'
 import { LauncherError } from '../core/errors'
 import { createLogger } from '../core/logger'
-import { dataRoot, logsRoot } from '../core/paths'
+import { assertInside, dataRoot, ensureDir, logsRoot } from '../core/paths'
 import { writeBootstrap } from '../core/bootstrap'
 import { toast } from '../core/events'
 import { writeDiagnostics } from '../services/support/diagnostics'
@@ -109,11 +100,7 @@ import {
   ensureInstanceLayout
 } from '../services/instances/instanceService'
 import { installInstance, repairInstance } from '../services/instances/installService'
-import {
-  exportInstance,
-  importInstance,
-  inspectInstanceArchive,
-} from '../services/instances/transferService'
+import { exportInstance, importInstance, inspectInstanceArchive } from '../services/instances/transferService'
 import { launchInstance, launchStates, recentLogs, stopInstance, isRunning } from '../services/launch/launchService'
 import { autopsyAvailable, diagnoseWithModel } from '../services/launch/crashAutopsy'
 import { activeTasks, getTask } from '../services/downloads/downloadManager'
@@ -146,16 +133,8 @@ import {
   worldMap
 } from '../services/worlds/worldService'
 import { rankInstancesForServer, versionTableReady } from '../services/servers/joinMatch'
-import {
-  serverRestartSettings,
-  setServerRestartSettings,
-  nextRestartAt
-} from '../services/servers/restartScheduler'
-import {
-  findForeignInstances,
-  importForeignInstance,
-  type ForeignInstance
-} from '../services/instances/launcherImport'
+import { serverRestartSettings, setServerRestartSettings, nextRestartAt } from '../services/servers/restartScheduler'
+import { findForeignInstances, importForeignInstance, type ForeignInstance } from '../services/instances/launcherImport'
 import {
   catalogue as directoryCatalogue,
   categories as directoryCategories,
@@ -532,37 +511,27 @@ export function registerIpcHandlers(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  handle(
-    'app:pickFiles',
-    async (payload: { title?: string; extensions?: string[]; multi?: boolean } | undefined) => {
-      const window = mainWindow()
-      if (!window) return []
-      const result = await dialog.showOpenDialog(window, {
-        title: payload?.title ?? 'Choose files',
-        properties: payload?.multi === false ? ['openFile'] : ['openFile', 'multiSelections'],
-        filters: payload?.extensions?.length
-          ? [{ name: 'Supported files', extensions: payload.extensions }]
-          : undefined
-      })
-      return result.canceled ? [] : result.filePaths
-    }
-  )
+  handle('app:pickFiles', async (payload: { title?: string; extensions?: string[]; multi?: boolean } | undefined) => {
+    const window = mainWindow()
+    if (!window) return []
+    const result = await dialog.showOpenDialog(window, {
+      title: payload?.title ?? 'Choose files',
+      properties: payload?.multi === false ? ['openFile'] : ['openFile', 'multiSelections'],
+      filters: payload?.extensions?.length ? [{ name: 'Supported files', extensions: payload.extensions }] : undefined
+    })
+    return result.canceled ? [] : result.filePaths
+  })
 
-  handle(
-    'app:pickSavePath',
-    async (payload: { title?: string; defaultName?: string; extensions?: string[] }) => {
-      const window = mainWindow()
-      if (!window) return null
-      const result = await dialog.showSaveDialog(window, {
-        title: payload.title ?? 'Save as',
-        defaultPath: payload.defaultName,
-        filters: payload.extensions?.length
-          ? [{ name: 'Supported files', extensions: payload.extensions }]
-          : undefined
-      })
-      return result.canceled ? null : (result.filePath ?? null)
-    }
-  )
+  handle('app:pickSavePath', async (payload: { title?: string; defaultName?: string; extensions?: string[] }) => {
+    const window = mainWindow()
+    if (!window) return null
+    const result = await dialog.showSaveDialog(window, {
+      title: payload.title ?? 'Save as',
+      defaultPath: payload.defaultName,
+      filters: payload.extensions?.length ? [{ name: 'Supported files', extensions: payload.extensions }] : undefined
+    })
+    return result.canceled ? null : (result.filePath ?? null)
+  })
 
   handle('app:window', (payload: { action: 'minimize' | 'maximize' | 'close' }) => {
     const window = mainWindow()
@@ -582,19 +551,16 @@ export function registerIpcHandlers(): void {
     return true
   })
 
-  handle(
-    'app:reportError',
-    (payload: { source: string; message: string; stack?: string; componentStack?: string }) => {
-      // A crash in the UI used to leave nothing but a blank window. Routing it
-      // into the same log as everything else makes it diagnosable.
-      log.error(
-        `renderer failure [${payload.source}]: ${payload.message}` +
-          (payload.stack ? `\n  stack: ${payload.stack}` : '') +
-          (payload.componentStack ? `\n  components: ${payload.componentStack}` : '')
-      )
-      return true
-    }
-  )
+  handle('app:reportError', (payload: { source: string; message: string; stack?: string; componentStack?: string }) => {
+    // A crash in the UI used to leave nothing but a blank window. Routing it
+    // into the same log as everything else makes it diagnosable.
+    log.error(
+      `renderer failure [${payload.source}]: ${payload.message}` +
+        (payload.stack ? `\n  stack: ${payload.stack}` : '') +
+        (payload.componentStack ? `\n  components: ${payload.componentStack}` : '')
+    )
+    return true
+  })
 
   /**
    * Gathers everything needed to diagnose a problem into one zip.
@@ -602,21 +568,18 @@ export function registerIpcHandlers(): void {
    * Deliberately a file the user can open and read before sending it anywhere:
    * it is plain text, and everything in it has been through the log redactor.
    */
-  handle(
-    'app:diagnostics',
-    async (payload: { outputPath: string; instanceId?: string; note?: string }) => {
-      const result = await writeDiagnostics(payload.outputPath, {
-        instanceId: payload.instanceId,
-        note: payload.note
-      })
-      toast(
-        'success',
-        'Diagnostics saved',
-        `${result.files} files, ${(result.bytes / 1024).toFixed(0)} KB. Open it to see exactly what it contains.`
-      )
-      return result
-    }
-  )
+  handle('app:diagnostics', async (payload: { outputPath: string; instanceId?: string; note?: string }) => {
+    const result = await writeDiagnostics(payload.outputPath, {
+      instanceId: payload.instanceId,
+      note: payload.note
+    })
+    toast(
+      'success',
+      'Diagnostics saved',
+      `${result.files} files, ${(result.bytes / 1024).toFixed(0)} KB. Open it to see exactly what it contains.`
+    )
+    return result
+  })
 
   handle('app:systemMemory', () => {
     const recommended = recommendedRamMb()
@@ -665,8 +628,9 @@ export function registerIpcHandlers(): void {
 
   /* ----------------------------------------------------------- versions */
 
-  handle('versions:manifest', async (payload: { refresh?: boolean } | undefined) =>
-    await getManifestInfo(payload?.refresh ?? false)
+  handle(
+    'versions:manifest',
+    async (payload: { refresh?: boolean } | undefined) => await getManifestInfo(payload?.refresh ?? false)
   )
 
   handle('versions:installed', async () => {
@@ -723,8 +687,9 @@ export function registerIpcHandlers(): void {
     await deleteInstance(payload.id, payload.deleteFiles)
     return true
   })
-  handle('instances:duplicate', async (payload: { id: string; name: string }) =>
-    await duplicateInstance(payload.id, payload.name)
+  handle(
+    'instances:duplicate',
+    async (payload: { id: string; name: string }) => await duplicateInstance(payload.id, payload.name)
   )
   handle('instances:stats', async (payload: { id: string }) => await instanceStats(payload.id))
 
@@ -753,12 +718,14 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  handle('instances:inspectArchive', async (payload: { filePath: string }) =>
-    await inspectInstanceArchive(payload.filePath)
+  handle(
+    'instances:inspectArchive',
+    async (payload: { filePath: string }) => await inspectInstanceArchive(payload.filePath)
   )
 
-  handle('instances:import', async (payload: { filePath: string; name?: string }) =>
-    await importInstance(payload.filePath, payload.name)
+  handle(
+    'instances:import',
+    async (payload: { filePath: string; name?: string }) => await importInstance(payload.filePath, payload.name)
   )
 
   /* -------------------------------------------------- instance snapshots */
@@ -788,8 +755,9 @@ export function registerIpcHandlers(): void {
     return true
   })
 
-  handle('instances:diffSnapshot', async (payload: { id: string; snapshotId: string }) =>
-    await diffSnapshot(payload.id, payload.snapshotId)
+  handle(
+    'instances:diffSnapshot',
+    async (payload: { id: string; snapshotId: string }) => await diffSnapshot(payload.id, payload.snapshotId)
   )
 
   handle(
@@ -921,9 +889,7 @@ export function registerIpcHandlers(): void {
         const current = instance.java.maxRamMb
         const step = 1024
         const next =
-          fix.kind === 'more-memory'
-            ? Math.min(current + step, recommended.ceiling)
-            : Math.max(current - step, 1024)
+          fix.kind === 'more-memory' ? Math.min(current + step, recommended.ceiling) : Math.max(current - step, 1024)
 
         if (next === current) {
           throw new LauncherError('INVALID_INPUT', 'memory already at the limit', {
@@ -979,8 +945,9 @@ export function registerIpcHandlers(): void {
 
   /* --------------------------------------------------------------- java */
 
-  handle('java:list', async (payload: { refresh?: boolean } | undefined) =>
-    await detectJavaInstallations(payload?.refresh ?? false)
+  handle(
+    'java:list',
+    async (payload: { refresh?: boolean } | undefined) => await detectJavaInstallations(payload?.refresh ?? false)
   )
 
   handle('java:test', async (payload: { path: string }) => {
@@ -988,7 +955,8 @@ export function registerIpcHandlers(): void {
     if (!probed) {
       throw new LauncherError('JAVA_NOT_FOUND', `not a usable java executable: ${payload.path}`, {
         title: 'That is not a working Java runtime',
-        message: 'NexusCraft could not run that file to ask its version. Pick the java.exe inside a JRE or JDK "bin" folder.',
+        message:
+          'NexusCraft could not run that file to ask its version. Pick the java.exe inside a JRE or JDK "bin" folder.',
         actions: ['Browse to something like C:\\Program Files\\Java\\jdk-21\\bin\\java.exe']
       })
     }
@@ -1044,8 +1012,10 @@ export function registerIpcHandlers(): void {
 
   /* ------------------------------------------------ resource packs / shaders */
 
-  handle('content:list', async (payload: { instanceId: string; kind: ContentKind }) =>
-    await listContent(getInstance(payload.instanceId), payload.kind)
+  handle(
+    'content:list',
+    async (payload: { instanceId: string; kind: ContentKind }) =>
+      await listContent(getInstance(payload.instanceId), payload.kind)
   )
 
   handle('content:import', async (payload: { instanceId: string; kind: ContentKind; files: string[] }) => {
@@ -1071,17 +1041,16 @@ export function registerIpcHandlers(): void {
     async (payload: { instanceId: string; kind: 'resourcepacks' | 'shaderpacks' | 'screenshots' }) => {
       const instance = getInstance(payload.instanceId)
       const dir =
-        payload.kind === 'screenshots'
-          ? instanceSubdir(instance, 'screenshots')
-          : contentDir(instance, payload.kind)
+        payload.kind === 'screenshots' ? instanceSubdir(instance, 'screenshots') : contentDir(instance, payload.kind)
       const error = await shell.openPath(dir)
       if (error) throw new LauncherError('UNKNOWN', error)
       return true
     }
   )
 
-  handle('content:screenshots', async (payload: { instanceId: string }) =>
-    await listScreenshots(getInstance(payload.instanceId))
+  handle(
+    'content:screenshots',
+    async (payload: { instanceId: string }) => await listScreenshots(getInstance(payload.instanceId))
   )
 
   /* ----------------------------------------------------------- modrinth */
@@ -1204,7 +1173,11 @@ export function registerIpcHandlers(): void {
     // update stored before CurseForge was added.
     if (update.source === 'curseforge') await applyCurseForgeUpdate(instance, update)
     else await applyModUpdate(instance, update)
-    toast('success', `${update.modName} updated`, `Now on ${update.newVersion}. The old jar is kept so you can undo this.`)
+    toast(
+      'success',
+      `${update.modName} updated`,
+      `Now on ${update.newVersion}. The old jar is kept so you can undo this.`
+    )
     return true
   })
 
@@ -1227,8 +1200,9 @@ export function registerIpcHandlers(): void {
    * The manual "check everything now" behind the settings. Runs the same sweep
    * the timer does, so what you see here is exactly what it would have done.
    */
-  handle('mods:bundledStatus', async (payload: { instanceId: string }) =>
-    await allBundledModStatuses(getInstance(payload.instanceId))
+  handle(
+    'mods:bundledStatus',
+    async (payload: { instanceId: string }) => await allBundledModStatuses(getInstance(payload.instanceId))
   )
 
   handle('mods:installBundled', async (payload: { instanceId: string; modId: string }) => {
@@ -1288,8 +1262,9 @@ export function registerIpcHandlers(): void {
 
   handle('mods:checkAllNow', async () => await sweepForModUpdates('checked by hand'))
 
-  handle('mods:rollbacks', async (payload: { instanceId: string }) =>
-    await listRollbacks(getInstance(payload.instanceId))
+  handle(
+    'mods:rollbacks',
+    async (payload: { instanceId: string }) => await listRollbacks(getInstance(payload.instanceId))
   )
 
   handle('mods:rollback', async (payload: { instanceId: string; fileName: string }) => {
@@ -1310,34 +1285,31 @@ export function registerIpcHandlers(): void {
    * servers. Dependencies are resolved the same way, which is the part that
    * makes dropping jars in by hand miserable.
    */
-  handle(
-    'host:installModrinth',
-    async (payload: { id: string; versionId: string; kind: ContentKindId }) => {
-      const server = getHostedServer(payload.id)
-      assertServerCanUse(payload.kind, server.name)
-      const target = serverModTarget(server)
+  handle('host:installModrinth', async (payload: { id: string; versionId: string; kind: ContentKindId }) => {
+    const server = getHostedServer(payload.id)
+    assertServerCanUse(payload.kind, server.name)
+    const target = serverModTarget(server)
 
-      const result = await installVersionToDir(
-        { dir: target.dir, taskId: server.id, loader: target.loader, minecraftVersion: target.minecraftVersion },
-        payload.versionId,
-        payload.kind
+    const result = await installVersionToDir(
+      { dir: target.dir, taskId: server.id, loader: target.loader, minecraftVersion: target.minecraftVersion },
+      payload.versionId,
+      payload.kind
+    )
+
+    const total = result.installed.length + result.dependencies.length
+    if (total === 0 && result.skipped.length > 0) {
+      toast('info', 'Already on the server', `${result.skipped[0]} is already there.`)
+    } else {
+      toast(
+        'success',
+        `Added to ${server.name}`,
+        result.dependencies.length > 0
+          ? `${result.installed.join(', ')} plus ${result.dependencies.length} required dependenc${result.dependencies.length === 1 ? 'y' : 'ies'}. Restart the server to load it.`
+          : `${result.installed.join(', ')}. Restart the server to load it.`
       )
-
-      const total = result.installed.length + result.dependencies.length
-      if (total === 0 && result.skipped.length > 0) {
-        toast('info', 'Already on the server', `${result.skipped[0]} is already there.`)
-      } else {
-        toast(
-          'success',
-          `Added to ${server.name}`,
-          result.dependencies.length > 0
-            ? `${result.installed.join(', ')} plus ${result.dependencies.length} required dependenc${result.dependencies.length === 1 ? 'y' : 'ies'}. Restart the server to load it.`
-            : `${result.installed.join(', ')}. Restart the server to load it.`
-        )
-      }
-      return result
     }
-  )
+    return result
+  })
 
   handle(
     'host:installCurseForge',
@@ -1396,7 +1368,7 @@ export function registerIpcHandlers(): void {
         message:
           `"${server.name}" has "Verify players with Mojang" switched off, which is what lets an AI companion ` +
           'join without its own Minecraft account. Opening it to the internet as well means anyone who finds ' +
-          'the address can join under any name they like — including yours, or an operator\'s.',
+          "the address can join under any name they like — including yours, or an operator's.",
         actions: [
           'Turn "Verify players with Mojang" back on, and forward the port',
           'Or keep it off and play over your local network only',
@@ -1409,8 +1381,7 @@ export function registerIpcHandlers(): void {
     if (!gateway) {
       throw new LauncherError('NETWORK_ERROR', 'no UPnP gateway on this network', {
         title: 'No router offered to forward the port',
-        message:
-          'Nothing on this network answered a UPnP search. Routers often ship with it switched off.',
+        message: 'Nothing on this network answered a UPnP search. Routers often ship with it switched off.',
         actions: [
           'Turn on UPnP in the router settings and try again',
           `Or forward TCP port ${server.port} to this machine by hand`
@@ -1467,9 +1438,7 @@ export function registerIpcHandlers(): void {
    * accepted until a search failed much later for reasons the settings screen
    * had not mentioned.
    */
-  handle('curseforge:verify', async (payload: { key?: string } | undefined) =>
-    await verifyCurseForgeKey(payload?.key)
-  )
+  handle('curseforge:verify', async (payload: { key?: string } | undefined) => await verifyCurseForgeKey(payload?.key))
 
   /* --------------------------------------------------------- data packs */
 
@@ -1504,8 +1473,10 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  handle('datapacks:installed', async (payload: { instanceId: string; worldFolder: string }) =>
-    await listInstalledDataPacks(getInstance(payload.instanceId), payload.worldFolder)
+  handle(
+    'datapacks:installed',
+    async (payload: { instanceId: string; worldFolder: string }) =>
+      await listInstalledDataPacks(getInstance(payload.instanceId), payload.worldFolder)
   )
 
   handle('datapacks:remove', async (payload: { instanceId: string; worldFolder: string; fileName: string }) => {
@@ -1515,12 +1486,7 @@ export function registerIpcHandlers(): void {
 
   handle(
     'datapacks:export',
-    async (payload: {
-      instanceId: string
-      packId: string
-      options: DataPackOptionValues
-      outputPath: string
-    }) => {
+    async (payload: { instanceId: string; packId: string; options: DataPackOptionValues; outputPath: string }) => {
       const result = await exportDataPack(
         getInstance(payload.instanceId),
         payload.packId,
@@ -1660,8 +1626,9 @@ export function registerIpcHandlers(): void {
     return map
   })
 
-  handle('worlds:listBackups', async (payload: { instanceId: string }) =>
-    await listBackups(getInstance(payload.instanceId))
+  handle(
+    'worlds:listBackups',
+    async (payload: { instanceId: string }) => await listBackups(getInstance(payload.instanceId))
   )
 
   handle('worlds:deleteBackup', async (payload: { instanceId: string; fileName: string }) => {
@@ -1721,8 +1688,9 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  handle('directory:refresh', async (payload: { force?: boolean } | undefined) =>
-    await refreshDirectory(payload?.force ?? false)
+  handle(
+    'directory:refresh',
+    async (payload: { force?: boolean } | undefined) => await refreshDirectory(payload?.force ?? false)
   )
 
   handle('directory:ping', async (payload: { id: string }) => await pingDirectoryServer(payload.id))
@@ -1845,8 +1813,7 @@ export function registerIpcHandlers(): void {
       throw new LauncherError('NETWORK_ERROR', 'the server did not answer a ping', {
         title: 'That server is not answering',
         message:
-          status?.error ??
-          'The launcher could not reach it just now, so it cannot tell which version to join with.',
+          status?.error ?? 'The launcher could not reach it just now, so it cannot tell which version to join with.',
         actions: ['Press Refresh and try again', 'Check the address is still right']
       })
     }
@@ -1870,8 +1837,9 @@ export function registerIpcHandlers(): void {
         throw new LauncherError('INVALID_INPUT', 'the server did not report a usable version', {
           title: `${payload.address} did not say which version it runs`,
           message:
-            (status.versionName ? `It answered "${status.versionName}", which names its software rather than a ` +
-              'Minecraft version. ' : '') +
+            (status.versionName
+              ? `It answered "${status.versionName}", which names its software rather than a ` + 'Minecraft version. '
+              : '') +
             'Without a version the launcher cannot tell which of your instances would work, and guessing wrong ' +
             'fails during connection with an error that does not explain itself.',
           actions: [
@@ -1928,29 +1896,20 @@ export function registerIpcHandlers(): void {
 
   handle('banners:brains', () => bannerBrains())
 
-  handle('banners:design', async (payload: { prompt: string; companionId: string }) =>
-    await designBanner(payload)
+  handle('banners:design', async (payload: { prompt: string; companionId: string }) => await designBanner(payload))
+
+  handle('banners:designIcon', async (payload: { prompt: string; companionId: string }) => await designIcon(payload))
+
+  handle('banners:designMotd', async (payload: { prompt: string; companionId: string }) => await designMotd(payload))
+
+  handle('banners:designLogo', async (payload: { prompt: string; companionId: string }) => await designLogo(payload))
+
+  handle(
+    'banners:designFirework',
+    async (payload: { prompt: string; companionId: string }) => await designFirework(payload)
   )
 
-  handle('banners:designIcon', async (payload: { prompt: string; companionId: string }) =>
-    await designIcon(payload)
-  )
-
-  handle('banners:designMotd', async (payload: { prompt: string; companionId: string }) =>
-    await designMotd(payload)
-  )
-
-  handle('banners:designLogo', async (payload: { prompt: string; companionId: string }) =>
-    await designLogo(payload)
-  )
-
-  handle('banners:designFirework', async (payload: { prompt: string; companionId: string }) =>
-    await designFirework(payload)
-  )
-
-  handle('banners:designItem', async (payload: { prompt: string; companionId: string }) =>
-    await designItem(payload)
-  )
+  handle('banners:designItem', async (payload: { prompt: string; companionId: string }) => await designItem(payload))
 
   handle('banners:applyMotd', (payload: { serverId: string; design: MotdDesign }) => {
     const result = applyMotd(payload.serverId, payload.design)
@@ -2006,14 +1965,12 @@ export function registerIpcHandlers(): void {
 
   handle(
     'banners:designRecipes',
-    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
-      await designRecipes(payload)
+    async (payload: { prompt: string; companionId: string; current?: unknown }) => await designRecipes(payload)
   )
 
   handle(
     'banners:designLoot',
-    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
-      await designLoot(payload)
+    async (payload: { prompt: string; companionId: string; current?: unknown }) => await designLoot(payload)
   )
 
   /**
@@ -2038,8 +1995,7 @@ export function registerIpcHandlers(): void {
 
   handle(
     'banners:designAdvancements',
-    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
-      await designAdvancements(payload)
+    async (payload: { prompt: string; companionId: string; current?: unknown }) => await designAdvancements(payload)
   )
 
   const checkedAdvancements = (raw: unknown): AdvancementPack => {
@@ -2054,10 +2010,7 @@ export function registerIpcHandlers(): void {
   }
 
   handle('banners:installAdvancements', async (payload: { serverId: string; pack: unknown }) => {
-    const result = await installAdvancementPack(
-      payload.serverId,
-      checkedAdvancements(payload.pack)
-    )
+    const result = await installAdvancementPack(payload.serverId, checkedAdvancements(payload.pack))
 
     toast('success', 'Advancements installed', `Written into ${result.world}.`)
     return result
@@ -2072,11 +2025,7 @@ export function registerIpcHandlers(): void {
         checkedAdvancements(payload.pack)
       )
 
-      toast(
-        'success',
-        'Advancements installed',
-        `Written into ${result.world}. Re-enter the world to see them.`
-      )
+      toast('success', 'Advancements installed', `Written into ${result.world}. Re-enter the world to see them.`)
       return result
     }
   )
@@ -2084,11 +2033,7 @@ export function registerIpcHandlers(): void {
   handle(
     'banners:exportAdvancements',
     async (payload: { path: string; pack: unknown; minecraftVersion: string }) =>
-      await exportAdvancementPack(
-        payload.path,
-        checkedAdvancements(payload.pack),
-        payload.minecraftVersion
-      )
+      await exportAdvancementPack(payload.path, checkedAdvancements(payload.pack), payload.minecraftVersion)
   )
 
   /* ------------------------------------------------------- resource packs */
@@ -2099,20 +2044,13 @@ export function registerIpcHandlers(): void {
       await writeResourcePack(payload.draft, payload.minecraftVersion, payload.path)
   )
 
-  handle(
-    'resourcepack:install',
-    async (payload: { instanceId: string; draft: ResourcePackDraft }) => {
-      const built = await installResourcePack(getInstance(payload.instanceId), payload.draft)
+  handle('resourcepack:install', async (payload: { instanceId: string; draft: ResourcePackDraft }) => {
+    const built = await installResourcePack(getInstance(payload.instanceId), payload.draft)
 
-      toast(
-        'success',
-        'Resource pack installed',
-        'Turn it on under Options, Resource Packs the next time you play.'
-      )
+    toast('success', 'Resource pack installed', 'Turn it on under Options, Resource Packs the next time you play.')
 
-      return built
-    }
-  )
+    return built
+  })
 
   /**
    * Builds the pack, starts the listener, and points the server at it.
@@ -2182,16 +2120,11 @@ export function registerIpcHandlers(): void {
        */
       const lan = localNetworkAddress()
       const reachable = await canFetch(url)
-      const alternative =
-        !reachable && lan && !url.includes(lan) ? packUrl(lan, payload.port) : null
+      const alternative = !reachable && lan && !url.includes(lan) ? packUrl(lan, payload.port) : null
 
       const usable = alternative !== null && (await canFetch(alternative))
 
-      toast(
-        'success',
-        'Pack is being served',
-        'Restart the server and players will be offered it when they join.'
-      )
+      toast('success', 'Pack is being served', 'Restart the server and players will be offered it when they join.')
 
       return {
         ...built,
@@ -2220,8 +2153,7 @@ export function registerIpcHandlers(): void {
     if (!gateway) {
       throw new LauncherError('NETWORK_ERROR', 'no UPnP gateway on this network', {
         title: 'No router offered to forward the port',
-        message:
-          'Nothing on this network answered a UPnP search. Routers often ship with it off.',
+        message: 'Nothing on this network answered a UPnP search. Routers often ship with it off.',
         actions: [
           'Turn on UPnP in the router settings and try again',
           `Or forward TCP port ${payload.port} to this machine by hand`
@@ -2379,12 +2311,14 @@ export function registerIpcHandlers(): void {
     return { port, ...(await forwardingStatus(port, host)) }
   })
 
-  handle('host:punishments', async (payload: { serverId: string }) =>
-    await punishments(hostedServerDir(getHostedServer(payload.serverId).id))
+  handle(
+    'host:punishments',
+    async (payload: { serverId: string }) => await punishments(hostedServerDir(getHostedServer(payload.serverId).id))
   )
 
-  handle('host:knownPlayers', async (payload: { serverId: string }) =>
-    await knownPlayers(hostedServerDir(getHostedServer(payload.serverId).id))
+  handle(
+    'host:knownPlayers',
+    async (payload: { serverId: string }) => await knownPlayers(hostedServerDir(getHostedServer(payload.serverId).id))
   )
 
   handle('site:votifierInfo', async (payload: { serverId: string }) => {
@@ -2396,15 +2330,11 @@ export function registerIpcHandlers(): void {
     vanillaTextures(payload.minecraftVersion)
   )
 
-  handle(
-    'resourcepack:texture',
-    async (payload: { minecraftVersion: string; path: string }) =>
-      vanillaTexture(payload.minecraftVersion, payload.path)
+  handle('resourcepack:texture', async (payload: { minecraftVersion: string; path: string }) =>
+    vanillaTexture(payload.minecraftVersion, payload.path)
   )
 
-  handle('resourcepack:open', async (payload: { file: string }) =>
-    await readResourcePack(payload.file)
-  )
+  handle('resourcepack:open', async (payload: { file: string }) => await readResourcePack(payload.file))
 
   /*
    * The working draft, kept without anybody pressing save.
@@ -2415,6 +2345,32 @@ export function registerIpcHandlers(): void {
    * Saving deliberately still matters for keeping several; this is only so
    * that shutting the lid does not cost you the one you are working on.
    */
+  /**
+   * Keeps a sound the launcher can still find later.
+   *
+   * Sounds used to be referenced where the user happened to have them, so a
+   * pack broke when a file was moved, renamed or tidied away - the builder has
+   * an error for exactly that. Converted audio has to be written somewhere
+   * regardless, so everything lands in one folder the launcher owns and a
+   * saved pack stays whole.
+   */
+  handle('resourcepack:saveSound', async (payload: { name: string; base64: string }) => {
+    const folder = ensureDir(join(dataRoot(), 'packsounds'))
+
+    /*
+     * The name is squeezed into a resource id before it is used as a filename,
+     * so nothing a user types can climb out of that folder or collide with a
+     * path separator.
+     */
+    const stem = safePackId(payload.name) || 'sound'
+    const file = assertInside(folder, join(folder, `${stem}-${Date.now().toString(36)}.ogg`))
+
+    const bytes = Buffer.from(payload.base64, 'base64')
+    await writeFile(file, bytes)
+
+    return { path: file, bytes: bytes.length }
+  })
+
   handle('resourcepack:remember', async (payload: { draft: unknown }) => {
     db().kvSet('packDraft', JSON.stringify(payload.draft))
     return { ok: true }
@@ -2433,8 +2389,7 @@ export function registerIpcHandlers(): void {
 
   handle(
     'banners:designRecipe',
-    async (payload: { prompt: string; companionId: string; current?: unknown }) =>
-      await designRecipe(payload)
+    async (payload: { prompt: string; companionId: string; current?: unknown }) => await designRecipe(payload)
   )
 
   handle('resourcepack:hostStatus', async () => packHostStatus())
@@ -2444,19 +2399,16 @@ export function registerIpcHandlers(): void {
     return packHostStatus()
   })
 
-  handle(
-    'resourcepack:attach',
-    async (payload: { serverId: string; url: string; sha1: string; required: boolean }) => {
-      await pointServerAtPack(hostedServerDir(getHostedServer(payload.serverId).id), {
-        url: payload.url,
-        sha1: payload.sha1,
-        required: payload.required
-      })
+  handle('resourcepack:attach', async (payload: { serverId: string; url: string; sha1: string; required: boolean }) => {
+    await pointServerAtPack(hostedServerDir(getHostedServer(payload.serverId).id), {
+      url: payload.url,
+      sha1: payload.sha1,
+      required: payload.required
+    })
 
-      toast('success', 'Server points at the pack', 'Restart it for the change to take.')
-      return { ok: true }
-    }
-  )
+    toast('success', 'Server points at the pack', 'Restart it for the change to take.')
+    return { ok: true }
+  })
 
   handle('resourcepack:detach', async (payload: { serverId: string }) => {
     await pointServerAtPack(hostedServerDir(getHostedServer(payload.serverId).id), null)
@@ -2491,13 +2443,7 @@ export function registerIpcHandlers(): void {
 
   handle(
     'mapart:write',
-    async (payload: {
-      instanceId: string
-      worldFolder: string
-      tiles: number[][]
-      across: number
-      down: number
-    }) => {
+    async (payload: { instanceId: string; worldFolder: string; tiles: number[][]; across: number; down: number }) => {
       const result = await writeMapArt(
         getInstance(payload.instanceId),
         payload.worldFolder,
@@ -2530,69 +2476,52 @@ export function registerIpcHandlers(): void {
     return result
   })
 
-  handle(
-    'banners:installLootWorld',
-    async (payload: { instanceId: string; worldFolder: string; pack: unknown }) => {
-      const checked = readLoot(payload.pack)
-      if (!checked) {
-        throw new LauncherError('INVALID_INPUT', 'no usable loot rules', {
-          title: 'Nothing in that pack would work',
-          message: 'Every rule in it names something the game does not have.'
-        })
-      }
-
-      const result = await installLootPackIntoWorld(
-        getInstance(payload.instanceId),
-        payload.worldFolder,
-        checked.pack
-      )
-      lootToast(result)
-      return result
+  handle('banners:installLootWorld', async (payload: { instanceId: string; worldFolder: string; pack: unknown }) => {
+    const checked = readLoot(payload.pack)
+    if (!checked) {
+      throw new LauncherError('INVALID_INPUT', 'no usable loot rules', {
+        title: 'Nothing in that pack would work',
+        message: 'Every rule in it names something the game does not have.'
+      })
     }
-  )
 
-  handle(
-    'banners:exportLoot',
-    async (payload: { path: string; pack: unknown; minecraftVersion: string }) => {
-      const checked = readLoot(payload.pack)
-      if (!checked) {
-        throw new LauncherError('INVALID_INPUT', 'no usable loot rules', {
-          title: 'Nothing in that pack would work',
-          message: 'Every rule in it names something the game does not have.'
-        })
-      }
-      return await exportLootPack(payload.path, checked.pack, payload.minecraftVersion)
+    const result = await installLootPackIntoWorld(getInstance(payload.instanceId), payload.worldFolder, checked.pack)
+    lootToast(result)
+    return result
+  })
+
+  handle('banners:exportLoot', async (payload: { path: string; pack: unknown; minecraftVersion: string }) => {
+    const checked = readLoot(payload.pack)
+    if (!checked) {
+      throw new LauncherError('INVALID_INPUT', 'no usable loot rules', {
+        title: 'Nothing in that pack would work',
+        message: 'Every rule in it names something the game does not have.'
+      })
     }
-  )
+    return await exportLootPack(payload.path, checked.pack, payload.minecraftVersion)
+  })
 
-  handle(
-    'banners:installRecipesWorld',
-    async (payload: { instanceId: string; worldFolder: string; pack: unknown }) => {
-      // Checked here for the same reason the server one is: what arrives is
-      // whatever the window sent, and this writes files into a world.
-      const checked = readRecipes(payload.pack)
-      if (!checked) {
-        throw new LauncherError('INVALID_INPUT', 'no usable recipes', {
-          title: 'Nothing in that pack would work',
-          message: 'Every recipe in it names something the game does not have.'
-        })
-      }
-
-      const result = await installRecipePackIntoWorld(
-        getInstance(payload.instanceId),
-        payload.worldFolder,
-        checked.pack
-      )
-
-      toast(
-        'success',
-        'Recipes installed',
-        `${result.fileCount - 1} recipes written into ${result.world}. Re-enter the world to use them.`
-      )
-
-      return result
+  handle('banners:installRecipesWorld', async (payload: { instanceId: string; worldFolder: string; pack: unknown }) => {
+    // Checked here for the same reason the server one is: what arrives is
+    // whatever the window sent, and this writes files into a world.
+    const checked = readRecipes(payload.pack)
+    if (!checked) {
+      throw new LauncherError('INVALID_INPUT', 'no usable recipes', {
+        title: 'Nothing in that pack would work',
+        message: 'Every recipe in it names something the game does not have.'
+      })
     }
-  )
+
+    const result = await installRecipePackIntoWorld(getInstance(payload.instanceId), payload.worldFolder, checked.pack)
+
+    toast(
+      'success',
+      'Recipes installed',
+      `${result.fileCount - 1} recipes written into ${result.world}. Re-enter the world to use them.`
+    )
+
+    return result
+  })
 
   handle('banners:installRecipes', async (payload: { serverId: string; pack: unknown }) => {
     /*
@@ -2621,21 +2550,18 @@ export function registerIpcHandlers(): void {
     return result
   })
 
-  handle(
-    'banners:exportRecipes',
-    async (payload: { path: string; pack: unknown; minecraftVersion: string }) => {
-      const checked = readRecipes(payload.pack)
-      if (!checked) {
-        throw new LauncherError('INVALID_INPUT', 'no usable recipes', {
-          title: 'Nothing in that pack would work',
-          message: 'Every recipe in it names something the game does not have.'
-        })
-      }
-      const result = await exportRecipePack(payload.path, checked.pack, payload.minecraftVersion)
-      toast('success', 'Pack saved', result.path)
-      return result
+  handle('banners:exportRecipes', async (payload: { path: string; pack: unknown; minecraftVersion: string }) => {
+    const checked = readRecipes(payload.pack)
+    if (!checked) {
+      throw new LauncherError('INVALID_INPUT', 'no usable recipes', {
+        title: 'Nothing in that pack would work',
+        message: 'Every recipe in it names something the game does not have.'
+      })
     }
-  )
+    const result = await exportRecipePack(payload.path, checked.pack, payload.minecraftVersion)
+    toast('success', 'Pack saved', result.path)
+    return result
+  })
 
   /* ------------------------------------------------------------- library */
 
@@ -2643,13 +2569,7 @@ export function registerIpcHandlers(): void {
 
   handle(
     'creations:save',
-    (payload: {
-      id?: string | null
-      kind: CreationKind
-      name: string
-      data: unknown
-      thumbnail?: string | null
-    }) => {
+    (payload: { id?: string | null; kind: CreationKind; name: string; data: unknown; thumbnail?: string | null }) => {
       const saved = saveCreation(payload)
       toast('success', 'Saved', `"${saved.name}" is in your library.`)
       return saved
@@ -2658,9 +2578,7 @@ export function registerIpcHandlers(): void {
 
   handle('creations:delete', (payload: { id: string }) => deleteCreation(payload.id))
 
-  handle('creations:rename', (payload: { id: string; name: string }) =>
-    renameCreation(payload.id, payload.name)
-  )
+  handle('creations:rename', (payload: { id: string; name: string }) => renameCreation(payload.id, payload.name))
 
   handle('banners:giveDesigned', async (payload: { serverId: string; command: string }) => {
     const result = await giveDesigned(payload.serverId, payload.command)
@@ -2682,11 +2600,7 @@ export function registerIpcHandlers(): void {
       return result
     }
 
-    toast(
-      'info',
-      'The server is not running',
-      'Start it and try again, or copy the command and run it yourself.'
-    )
+    toast('info', 'The server is not running', 'Start it and try again, or copy the command and run it yourself.')
 
     return result
   })
@@ -2709,28 +2623,22 @@ export function registerIpcHandlers(): void {
     return { path: saved }
   })
 
-  handle(
-    'banners:give',
-    async (payload: { serverId: string; target: string; design: BannerDesign }) => {
-      const result = await giveBanner(payload.serverId, payload.target, payload.design)
+  handle('banners:give', async (payload: { serverId: string; target: string; design: BannerDesign }) => {
+    const result = await giveBanner(payload.serverId, payload.target, payload.design)
 
-      if (result.sent) toast('success', 'Banner sent', `Handed to ${payload.target} in game.`)
-      else if (result.refused) toast('error', 'The server would not run that', result.refused)
-      else
-        toast(
-          'info',
-          'The server is not running',
-          'Start it and try again, or copy the command and run it yourself.'
-        )
-      return result
-    }
-  )
+    if (result.sent) toast('success', 'Banner sent', `Handed to ${payload.target} in game.`)
+    else if (result.refused) toast('error', 'The server would not run that', result.refused)
+    else toast('info', 'The server is not running', 'Start it and try again, or copy the command and run it yourself.')
+    return result
+  })
 
   /* -------------------------------------------------------------- skins */
 
   handle('skins:list', () => listSkins())
-  handle('skins:import', async (payload: { filePath: string; name: string; variant: 'classic' | 'slim' }) =>
-    await importSkin(payload.filePath, payload.name, payload.variant)
+  handle(
+    'skins:import',
+    async (payload: { filePath: string; name: string; variant: 'classic' | 'slim' }) =>
+      await importSkin(payload.filePath, payload.name, payload.variant)
   )
   handle('skins:delete', async (payload: { id: string }) => {
     await deleteSkin(payload.id)
@@ -2860,7 +2768,11 @@ export function registerIpcHandlers(): void {
    * placing several thousand blocks in their world.
    */
   handle('companion:importSchematic', async (payload: { filePath: string }) => {
-    const name = payload.filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? 'Imported structure'
+    const name =
+      payload.filePath
+        .split(/[\\/]/)
+        .pop()
+        ?.replace(/\.[^.]+$/, '') ?? 'Imported structure'
     const loaded = await loadSchematic(payload.filePath, name)
 
     const id = `import:${randomUUID()}`
@@ -2906,12 +2818,7 @@ export function registerIpcHandlers(): void {
    */
   handle(
     'blueprints:export',
-    async (payload: {
-      blueprintId: string
-      instanceId?: string
-      serverId?: string
-      format: 'schem' | 'nbt'
-    }) => {
+    async (payload: { blueprintId: string; instanceId?: string; serverId?: string; format: 'schem' | 'nbt' }) => {
       const imported = getImport(payload.blueprintId)
       const entry = imported ? null : findLibraryBlueprint(payload.blueprintId)
       if (!imported && !entry) {
@@ -2976,8 +2883,7 @@ export function registerIpcHandlers(): void {
     if (instance.loader === 'vanilla') {
       throw new LauncherError('INVALID_INPUT', 'litematica needs a mod loader', {
         title: 'That instance has no mod loader',
-        message:
-          `Litematica is a client mod, so it needs Fabric, Forge or NeoForge. "${instance.name}" is vanilla.`,
+        message: `Litematica is a client mod, so it needs Fabric, Forge or NeoForge. "${instance.name}" is vanilla.`,
         actions: ['Make a Fabric instance on the same Minecraft version', 'Then set Litematica up on that one']
       })
     }
@@ -3032,10 +2938,7 @@ export function registerIpcHandlers(): void {
         message:
           `${missing.join(' and ')} ${missing.length === 1 ? 'has' : 'have'} no release for this Minecraft version yet. ` +
           'Litematica usually follows a new Minecraft release by a few weeks.',
-        actions: [
-          'Export as .nbt and use a structure block in the meantime',
-          'Or have a companion build it instead'
-        ]
+        actions: ['Export as .nbt and use a structure block in the meantime', 'Or have a companion build it instead']
       })
     }
 
@@ -3382,14 +3285,12 @@ export function registerIpcHandlers(): void {
           ? 'neoforge'
           : server.software === 'forge'
             ? 'forge'
-            : 'vanilla' 
+            : 'vanilla'
 
     // Whatever was asked for, else anything already suitable.
     let instance = payload.instanceId
       ? getInstance(payload.instanceId)
-      : listInstances().find(
-          (entry) => entry.minecraftVersion === server.minecraftVersion && entry.loader === loader
-        )
+      : listInstances().find((entry) => entry.minecraftVersion === server.minecraftVersion && entry.loader === loader)
 
     if (!instance) {
       log.info(`no client for "${server.name}"; making one on ${server.minecraftVersion} ${loader}`)
@@ -3398,7 +3299,11 @@ export function registerIpcHandlers(): void {
         minecraftVersion: server.minecraftVersion,
         loader
       })
-      toast('info', 'Made a client for this server', `${instance.name} — matching ${server.minecraftVersion} ${loader}.`)
+      toast(
+        'info',
+        'Made a client for this server',
+        `${instance.name} — matching ${server.minecraftVersion} ${loader}.`
+      )
     }
 
     /*
@@ -3412,7 +3317,7 @@ export function registerIpcHandlers(): void {
         if (synced.copied.length > 0) {
           toast(
             'success',
-            'Matched the server\'s mods',
+            "Matched the server's mods",
             `Copied ${synced.copied.length} into ${instance.name}: ${synced.copied.slice(0, 3).join(', ')}${synced.copied.length > 3 ? '…' : ''}`
           )
         }

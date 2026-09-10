@@ -34,6 +34,7 @@ import type { Instance, LauncherErrorPayload, SavedCreation } from '@shared/type
 import { api, toPayload } from '../api'
 import { renderIconArt } from '../lib/iconArt'
 import { restyle } from '../lib/restyle'
+import { toOggVorbis } from '../lib/toOgg'
 import { RECIPE_PRESETS, type TextureRecipe } from '@shared/textureRecipe'
 import { ErrorView, Spinner } from '../components/ui'
 import { useStore } from '../store/useStore'
@@ -161,6 +162,19 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
   const draft = useStore((state) => state.resourcePack)
   const setDraft = useStore((state) => state.setResourcePack)
 
+  /**
+   * Merges into the draft as it is now, not as it was when the work started.
+   *
+   * Everything on this screen that touches many textures is slow - importing
+   * a folder is three thousand file reads, restyling one is three thousand
+   * canvases - and each of them was building its result from the `draft` its
+   * closure captured before any of that began. Two of them overlapping meant
+   * whichever finished last wrote its own stale copy over the other, and the
+   * only evidence was a pack that came out looking exactly like vanilla.
+   */
+  const mergeDraft = (make: (current: ResourcePackDraft) => Partial<ResourcePackDraft>): void =>
+    setDraft(make(useStore.getState().resourcePack))
+
   const [targets, setTargets] = useState<Target[]>([])
   const [targetId, setTargetId] = useState('')
 
@@ -200,6 +214,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
   const [hunt, setHunt] = useState('')
   const [aiming, setAiming] = useState<string | null>(null)
   const texPick = useRef<HTMLInputElement>(null)
+  const soundPick = useRef<HTMLInputElement>(null)
   const bulkPick = useRef<HTMLInputElement>(null)
   const folderPick = useRef<HTMLInputElement>(null)
   const [filed, setFiled] = useState<{ took: number; missed: string[] } | null>(null)
@@ -227,6 +242,12 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
   const [tab, setTab] = useState<PackTab>('textures')
   const top = useRef<HTMLDivElement>(null)
+
+  /** Which destructive button has been pressed once, so nothing goes on one click. */
+  const [confirming, setConfirming] = useState<'pack' | 'textures' | null>(null)
+
+  /** What is being converted, and how far along, so a long track is not a freeze. */
+  const [converting, setConverting] = useState<{ name: string; done: number } | null>(null)
 
   /** Why the draft is not being kept, when it is not. */
   const [keepFailed, setKeepFailed] = useState<string | null>(null)
@@ -286,9 +307,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
       const texture: PackTexture = { path, image }
 
-      setDraft({
-        textures: [...draft.textures.filter((t) => t.path !== path), texture]
-      })
+      mergeDraft((current) => ({
+        textures: [...current.textures.filter((t) => t.path !== path), texture]
+      }))
     } catch (err) {
       setError(toPayload(err))
     }
@@ -360,9 +381,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
     if (added.length > 0) {
       const paths = new Set(added.map((t) => t.path))
-      setDraft({
-        textures: [...draft.textures.filter((t) => !paths.has(t.path)), ...added]
-      })
+      mergeDraft((current) => ({
+        textures: [...current.textures.filter((t) => !paths.has(t.path)), ...added]
+      }))
     }
 
     setFiled({ took: added.length, missed })
@@ -484,11 +505,11 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
       const touched = new Set(done.map((t) => t.path))
 
-      setDraft({
+      mergeDraft((current) => ({
         name: style.name,
         description: style.name + ' — everything restyled',
-        textures: [...draft.textures.filter((t) => !touched.has(t.path)), ...done]
-      })
+        textures: [...current.textures.filter((t) => !touched.has(t.path)), ...done]
+      }))
 
       setOutcome(
         `${done.length} textures restyled as ${style.name}. ` +
@@ -532,6 +553,29 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     }
   }
 
+  /**
+   * Back to an empty pack.
+   *
+   * The kept draft is overwritten rather than left alone: it is restored on
+   * open whenever nothing is in hand, so clearing the screen without clearing
+   * that would put all three thousand textures straight back the next time
+   * this tab was opened, which is not what starting over means.
+   *
+   * Nothing saved is touched. This empties what is in front of you, and the
+   * library keeps whatever was put in it.
+   */
+  const startOver = (): void => {
+    setDraft(emptyDraft())
+    setOpenId(null)
+    setBuilt(null)
+    setPreview([])
+    setConfirming(null)
+
+    void api.resourcePack.remember(emptyDraft()).catch(() => {
+      /* A draft that will not clear is not worth interrupting somebody over. */
+    })
+  }
+
   const reopen = (entry: SavedCreation): void => {
     const body = entry.data as Partial<ResourcePackDraft> | null
     if (!body) return
@@ -541,6 +585,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     setDraft({ ...emptyDraft(), ...body })
     setOpenId(entry.id)
     setPreview([])
+    setConfirming(null)
   }
 
   /** Keeps this as a new entry, leaving the one it was opened from alone. */
@@ -643,9 +688,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
       const touched = new Set(done.map((t) => t.path))
 
-      setDraft({
-        textures: [...draft.textures.filter((t) => !touched.has(t.path)), ...done]
-      })
+      mergeDraft((current) => ({
+        textures: [...current.textures.filter((t) => !touched.has(t.path)), ...done]
+      }))
 
       setOutcome(`${done.length} ${folder} textures restyled as ${style.name}.`)
     } catch (err) {
@@ -668,9 +713,9 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
       const image = await restyle(original, style)
 
-      setDraft({
-        textures: [...draft.textures.filter((t) => t.path !== path), { path, image }]
-      })
+      mergeDraft((current) => ({
+        textures: [...current.textures.filter((t) => t.path !== path), { path, image }]
+      }))
     } catch (err) {
       setError(toPayload(err))
     } finally {
@@ -739,7 +784,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         replaces: false
       }
 
-      setDraft({ items: [...draft.items.filter((i) => i.id !== spec.id), item] })
+      mergeDraft((current) => ({ items: [...current.items.filter((i) => i.id !== spec.id), item] }))
     } catch (err) {
       setError(toPayload(err))
     } finally {
@@ -780,7 +825,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
       // Replaces whatever was already filed under that id, rather than adding
       // a second one the pack would then have two definitions for.
-      setDraft({ items: [...draft.items.filter((i) => i.id !== spec.id), item] })
+      mergeDraft((current) => ({ items: [...current.items.filter((i) => i.id !== spec.id), item] }))
     } catch (err) {
       setError(toPayload(err))
     }
@@ -874,7 +919,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
         replaces: false
       }
 
-      setDraft({ items: [...draft.items, item] })
+      mergeDraft((current) => ({ items: [...current.items, item] }))
     } catch (err) {
       setError(toPayload(err))
     }
@@ -901,34 +946,55 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
   /* ------------------------------------------------------------ sounds -- */
 
-  const addSound = async (): Promise<void> => {
-    try {
-      const picked = await api.app.pickFiles({
-        title: 'Choose an .ogg file',
-        extensions: ['ogg'],
-        multi: false
-      })
+  /**
+   * Adds audio in whatever format it arrives in.
+   *
+   * Read through a file input rather than the native picker, because the
+   * conversion needs the bytes and the renderer cannot open a path off disk.
+   * Whatever comes out the far end is Ogg Vorbis in a folder the launcher
+   * owns, so a saved pack no longer breaks when the original is moved or
+   * tidied away - which the builder had an error for and no answer to.
+   */
+  const addSounds = async (files: File[]): Promise<void> => {
+    const added: PackSound[] = []
 
-      for (const file of picked) {
-        const label =
-          file
-            .split(/[\\/]/)
-            .pop()
-            ?.replace(/\.[^.]+$/, '') ?? 'sound'
+    for (const file of files) {
+      const label = file.name.replace(/\.[^.]+$/, '') || 'sound'
 
-        const sound: PackSound = {
+      try {
+        setConverting({ name: file.name, done: 0 })
+
+        const result = await toOggVorbis(file, (done) => setConverting({ name: file.name, done }))
+
+        /*
+         * To base64 in blocks. Spreading a four megabyte array into
+         * String.fromCharCode at once overflows the argument limit and throws
+         * a RangeError that says nothing about audio.
+         */
+        const raw = new Uint8Array(result.bytes)
+        let binary = ''
+        for (let at = 0; at < raw.length; at += 8192) {
+          binary += String.fromCharCode(...raw.subarray(at, at + 8192))
+        }
+
+        const kept = await api.resourcePack.saveSound(label, btoa(binary))
+
+        added.push({
           id: safeId(label),
           label,
           event: 'music_disc.cat',
-          file,
+          file: kept.path,
           stream: true
-        }
-
-        setDraft({ sounds: [...draft.sounds, sound] })
+        })
+      } catch (err) {
+        setError(toPayload(err))
+      } finally {
+        setConverting(null)
       }
-    } catch (err) {
-      setError(toPayload(err))
     }
+
+    // Once, so adding several does not drop all but the last.
+    if (added.length > 0) mergeDraft((current) => ({ sounds: [...current.sounds, ...added] }))
   }
 
   const changeSound = (at: number, next: Partial<PackSound>): void => {
@@ -1085,6 +1151,16 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               Save as a copy
             </button>
           )}
+
+          <button
+            className="btn btn-sm"
+            disabled={nothing}
+            title="Empty this pack and begin again. Nothing saved is touched."
+            onClick={() => (confirming === 'pack' ? startOver() : setConfirming('pack'))}
+            style={confirming === 'pack' ? { color: 'var(--danger)' } : undefined}
+          >
+            {confirming === 'pack' ? 'Empty it — sure?' : 'Start over'}
+          </button>
 
           <span className="tiny dim">
             {nothing
@@ -1369,7 +1445,26 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
 
           {draft.textures.length > 0 && (
             <>
-              <div className="section-title">Replaced &middot; {draft.textures.length}</div>
+              <div className="row gap-8" style={{ alignItems: 'center' }}>
+                <div className="section-title" style={{ flex: 1 }}>
+                  Replaced &middot; {draft.textures.length.toLocaleString()}
+                </div>
+
+                <button
+                  className="btn btn-sm"
+                  title="Put every one of these back to how Mojang drew it"
+                  onClick={() =>
+                    confirming === 'textures'
+                      ? (setDraft({ textures: [] }), setConfirming(null))
+                      : setConfirming('textures')
+                  }
+                  style={confirming === 'textures' ? { color: 'var(--danger)' } : undefined}
+                >
+                  {confirming === 'textures'
+                    ? `Remove all ${draft.textures.length.toLocaleString()} — sure?`
+                    : 'Remove all'}
+                </button>
+              </div>
               <div className="row gap-8 wrap">
                 {draft.textures.map((texture) => (
                   <div key={texture.path} className="row gap-6" style={{ alignItems: 'center' }} title={texture.path}>
@@ -1673,15 +1768,49 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             <div className="section-title" style={{ flex: 1 }}>
               Sounds and music discs
             </div>
-            <button className="btn btn-sm" onClick={() => void addSound()}>
-              <Music size={14} /> Add an .ogg
+            <button className="btn btn-sm" disabled={converting !== null} onClick={() => soundPick.current?.click()}>
+              {converting ? <Spinner /> : <Music size={14} />} Add a sound
             </button>
+
+            <input
+              ref={soundPick}
+              type="file"
+              accept="audio/*,.ogg,.mp3,.wav,.flac,.m4a,.aac,.opus"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? [])
+                if (files.length > 0) void addSounds(files)
+                e.target.value = ''
+              }}
+            />
           </div>
+
+          {converting && (
+            <div className="col gap-4">
+              <div className="row gap-8 between">
+                <span className="tiny dim truncate">Converting {converting.name}</span>
+                <span className="tiny dim">{Math.round(converting.done * 100)}%</span>
+              </div>
+              <div style={{ height: 6, borderRadius: 3, background: 'var(--panel-flat)' }}>
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${Math.round(converting.done * 100)}%`,
+                    borderRadius: 3,
+                    background: 'var(--accent)',
+                    transition: 'width 0.2s'
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           {draft.sounds.length === 0 ? (
             <p className="small muted">
-              Pick a sound the game already plays and put your own audio under it. Minecraft only plays{' '}
-              <strong>.ogg</strong> — mp3 and wav are ignored, so convert first.
+              Pick a sound the game already plays and put your own audio under it. Drop in an mp3, a wav, a flac or an
+              m4a and it is converted here — Ogg Vorbis is the only thing Minecraft plays, and even an .ogg holding Opus
+              is silent in game, so those are re-encoded too.
             </p>
           ) : (
             <div className="col gap-8">
@@ -2075,6 +2204,26 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               <p className="small muted">
                 {packSummary(built.contents)} &mdash; {(built.bytes / 1024).toFixed(0)}KB.
               </p>
+
+              {/*
+                A pack can be built, served, downloaded and applied perfectly
+                and change nothing, because a texture "replaced" with an
+                identical copy of the original is still the original. Said here
+                rather than discovered by standing in a world looking at three
+                thousand unchanged blocks.
+              */}
+              {built.contents.unchanged !== null && built.contents.unchanged > 0 && (
+                <p
+                  className="small"
+                  style={{
+                    color: built.contents.unchanged === built.contents.textures ? 'var(--danger)' : 'var(--warning)'
+                  }}
+                >
+                  {built.contents.unchanged === built.contents.textures
+                    ? `Every one of these ${built.contents.textures.toLocaleString()} textures is identical to the game's own, so this pack will look exactly like vanilla. Pick a look under Restyle them and run it before building.`
+                    : `${built.contents.unchanged.toLocaleString()} of ${built.contents.textures.toLocaleString()} textures are identical to the game's own and will change nothing.`}
+                </p>
+              )}
 
               {url && (
                 <>

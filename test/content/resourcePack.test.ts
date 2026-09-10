@@ -8,10 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir() } }))
 
 import { guessResourceFormat } from '../../src/main/services/content/datapackService'
-import {
-  pointServerAtPack,
-  writeResourcePack
-} from '../../src/main/services/content/resourcePackService'
+import { pointServerAtPack, writeResourcePack } from '../../src/main/services/content/resourcePackService'
 import { emptyDraft } from '../../src/shared/resourcePacks'
 
 /**
@@ -129,11 +126,7 @@ describe('a custom item', () => {
 
   it('overwrites the vanilla texture when asked to replace', async () => {
     const dest = join(root, 'pack.zip')
-    await writeResourcePack(
-      { ...emptyDraft(), items: [{ ...item, replaces: true }] },
-      '26.2',
-      dest
-    )
+    await writeResourcePack({ ...emptyDraft(), items: [{ ...item, replaces: true }] }, '26.2', dest)
 
     const inside = names(open(dest))
 
@@ -143,29 +136,39 @@ describe('a custom item', () => {
 
   it('tidies a name that is not a legal resource location', async () => {
     const dest = join(root, 'pack.zip')
-    await writeResourcePack(
-      { ...emptyDraft(), items: [{ ...item, id: 'Grand Line CHAMPION!' }] },
-      '26.2',
-      dest
-    )
+    await writeResourcePack({ ...emptyDraft(), items: [{ ...item, id: 'Grand Line CHAMPION!' }] }, '26.2', dest)
 
     // Upper case and spaces are dropped by the game with no warning at all.
     expect(names(open(dest))).toContain('assets/nexus/textures/item/grand_line_champion.png')
   })
 })
 
+/*
+ * A real Ogg Vorbis header.
+ *
+ * These fixtures used to write the string "not really ogg, but bytes" into a
+ * file named .ogg, which was fine while the builder only looked at the
+ * extension. It now reads the codec out of the stream - because an Ogg holding
+ * Opus is silent in game and a filename cannot tell you that - so the fixtures
+ * have to be the thing they claim to be.
+ */
+const OGG_VORBIS = Buffer.from([
+  0x4f, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x5e, 0x69, 0x42, 0x00,
+  0x00, 0x00, 0x00, 0x20, 0x75, 0xff, 0xd3, 0x01, 0x1e, 0x01, 0x76, 0x6f, 0x72, 0x62, 0x69, 0x73, 0x00, 0x00, 0x00,
+  0x00, 0x01, 0x44, 0xac, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xb8,
+  0x01, 0x4f, 0x67, 0x67, 0x53, 0x00, 0x00
+])
+
 describe('sounds', () => {
   it('writes the ogg and points an event at it', async () => {
     const ogg = join(root, 'song.ogg')
-    writeFileSync(ogg, 'not really ogg, but bytes')
+    writeFileSync(ogg, OGG_VORBIS)
 
     const dest = join(root, 'pack.zip')
     await writeResourcePack(
       {
         ...emptyDraft(),
-        sounds: [
-          { id: 'my_song', label: 'My song', event: 'music_disc.cat', file: ogg, stream: true }
-        ]
+        sounds: [{ id: 'my_song', label: 'My song', event: 'music_disc.cat', file: ogg, stream: true }]
       },
       '26.2',
       dest
@@ -181,7 +184,7 @@ describe('sounds', () => {
 
   it('names only the events being changed, so the rest of the game is untouched', async () => {
     const ogg = join(root, 'song.ogg')
-    writeFileSync(ogg, 'bytes')
+    writeFileSync(ogg, OGG_VORBIS)
 
     const dest = join(root, 'pack.zip')
     await writeResourcePack(
@@ -216,6 +219,32 @@ describe('sounds', () => {
     ).rejects.toThrow(/ogg/i)
   })
 
+  /*
+   * The one a filename cannot catch.
+   *
+   * An Ogg carrying Opus has the .ogg extension and the OggS magic bytes, so
+   * every check short of reading the codec passes it - and Minecraft, which
+   * decodes with stb_vorbis, then plays nothing at all and logs nothing.
+   */
+  it('refuses an .ogg that turns out to be Opus', async () => {
+    const opus = Buffer.from(OGG_VORBIS)
+    opus.write('OpusHead', 28, 'latin1')
+
+    const file = join(root, 'sneaky.ogg')
+    writeFileSync(file, opus)
+
+    await expect(
+      writeResourcePack(
+        {
+          ...emptyDraft(),
+          sounds: [{ id: 'a', label: 'a', event: 'music.menu', file, stream: true }]
+        },
+        '26.2',
+        join(root, 'pack.zip')
+      )
+    ).rejects.toThrow(/silent in game/i)
+  })
+
   it('says so when the file has gone since it was added', async () => {
     await expect(
       writeResourcePack(
@@ -241,18 +270,12 @@ describe('sounds', () => {
 describe('the menu', () => {
   it('writes all six panorama faces where the title screen looks', async () => {
     const dest = join(root, 'pack.zip')
-    await writeResourcePack(
-      { ...emptyDraft(), panorama: new Array(6).fill(PNG) },
-      '26.2',
-      dest
-    )
+    await writeResourcePack({ ...emptyDraft(), panorama: new Array(6).fill(PNG) }, '26.2', dest)
 
     const inside = names(open(dest))
 
     for (let at = 0; at < 6; at++) {
-      expect(inside).toContain(
-        `assets/minecraft/textures/gui/title/background/panorama_${at}.png`
-      )
+      expect(inside).toContain(`assets/minecraft/textures/gui/title/background/panorama_${at}.png`)
     }
   })
 
@@ -266,9 +289,7 @@ describe('the menu', () => {
 
 describe('the built file', () => {
   it('refuses a pack with nothing in it', async () => {
-    await expect(
-      writeResourcePack(emptyDraft(), '26.2', join(root, 'pack.zip'))
-    ).rejects.toThrow()
+    await expect(writeResourcePack(emptyDraft(), '26.2', join(root, 'pack.zip'))).rejects.toThrow()
   })
 
   it('reports a sha1 that is really the file', async () => {
@@ -287,10 +308,7 @@ describe('pointing a server at a pack', () => {
   }
 
   beforeEach(() => {
-    writeFileSync(
-      join(root, 'server.properties'),
-      '#Minecraft server properties\nmotd=hello\nview-distance=10\n'
-    )
+    writeFileSync(join(root, 'server.properties'), '#Minecraft server properties\nmotd=hello\nview-distance=10\n')
   })
 
   it('writes the url, the hash and whether it is required', async () => {

@@ -241,6 +241,38 @@ export function packSummary(contents: BuiltPack['contents']): string {
   return parts.length > 0 ? parts.join(', ') : 'nothing'
 }
 
+/**
+ * Whether these bytes are an Ogg file carrying Vorbis.
+ *
+ * Minecraft decodes sound with stb_vorbis and nothing else, so ".ogg" is only
+ * half an answer: an Ogg file holding Opus has the right extension, the right
+ * magic bytes, and is silent in the game with no error anywhere. An Ogg page
+ * starts "OggS" and the first packet of the stream names its codec - Vorbis
+ * writes a 0x01 then "vorbis", Opus writes "OpusHead".
+ */
+export function isOggVorbis(bytes: Uint8Array): boolean {
+  if (bytes.length < 35) return false
+
+  const text = (from: number, to: number): string => String.fromCharCode(...bytes.subarray(from, to))
+
+  return text(0, 4) === 'OggS' && text(29, 35) === 'vorbis'
+}
+
+/** What a file is, so a failure can name the format rather than shrug. */
+export function describeAudio(name: string, bytes: Uint8Array): string {
+  if (isOggVorbis(bytes)) return 'Ogg Vorbis'
+
+  const text = (from: number, to: number): string => String.fromCharCode(...bytes.subarray(from, to))
+
+  if (text(0, 4) === 'OggS') return text(28, 36) === 'OpusHead' ? 'Ogg Opus' : 'Ogg'
+  if (text(0, 4) === 'RIFF') return 'wav'
+  if (text(0, 3) === 'ID3' || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) return 'mp3'
+  if (text(0, 4) === 'fLaC') return 'flac'
+  if (text(4, 8) === 'ftyp') return 'm4a'
+
+  return name.split('.').pop()?.toLowerCase() ?? 'unknown'
+}
+
 export interface BuiltPack {
   /** Where the zip was written. */
   path: string
@@ -251,6 +283,16 @@ export interface BuiltPack {
   commands: string[]
   contents: {
     textures: number
+
+    /**
+     * How many of those textures are byte-for-byte the game's own.
+     *
+     * Null when it could not be checked. A pack whose textures are all
+     * unchanged builds, serves, downloads and applies perfectly and looks
+     * exactly like vanilla, so this is the difference between a working pack
+     * and an afternoon spent looking for a bug in the delivery.
+     */
+    unchanged: number | null
     items: number
     sounds: number
     panorama: boolean

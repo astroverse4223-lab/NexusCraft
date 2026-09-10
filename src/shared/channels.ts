@@ -282,6 +282,7 @@ export const IPC_CHANNELS = [
   'resourcepack:textures',
   'resourcepack:texture',
   'resourcepack:open',
+  'resourcepack:saveSound',
   'resourcepack:remember',
   'resourcepack:recall',
   'banners:designRecipe',

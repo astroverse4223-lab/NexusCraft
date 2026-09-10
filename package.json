@@ -33,6 +33,7 @@
     "minecraft-data": "^3.113.2",
     "mineflayer": "^4.37.1",
     "mineflayer-pathfinder": "^2.4.5",
+    "vorbis-encoder-js": "^1.0.2",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },

@@ -790,6 +790,20 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
       .regex(/^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/)
   }),
   'resourcepack:open': z.object({ file: path }),
+  'resourcepack:saveSound': z.object({
+    name: z.string().min(1).max(64),
+
+    /*
+     * Base64 rather than a Uint8Array, matching how every image in a pack
+     * already crosses this boundary. The ceiling is 32MB encoded, which is
+     * about 24MB of audio - far longer than any music disc, and short of the
+     * point where holding it as a string is the problem.
+     */
+    base64: z
+      .string()
+      .min(1)
+      .max(32 * 1024 * 1024)
+  }),
   'resourcepack:remember': z.object({ draft: resourcePackDraft }),
   'resourcepack:recall': z.void(),
   'banners:designRecipe': z.object({

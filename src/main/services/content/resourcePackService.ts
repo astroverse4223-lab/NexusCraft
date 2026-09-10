@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { crc32 } from 'node:zlib'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
@@ -10,7 +11,9 @@ import {
   type PackSound,
   type PackTexture,
   type ResourcePackDraft,
+  describeAudio,
   isEmpty,
+  isOggVorbis,
   safeId
 } from '@shared/resourcePacks'
 import type { Instance } from '@shared/types'
@@ -147,7 +150,28 @@ async function soundFiles(sounds: PackSound[], zip: AdmZip): Promise<void> {
     }
 
     const id = safeId(sound.id)
-    zip.addFile(`assets/minecraft/sounds/${NAMESPACE}/${id}.ogg`, await readFile(sound.file))
+    const audio = await readFile(sound.file)
+
+    /*
+     * The last gate, because the extension is not the format.
+     *
+     * The game decodes with stb_vorbis, so an Ogg carrying Opus passes every
+     * check a filename can make and is then silent in the world with nothing
+     * logged anywhere. Everything added through the launcher is converted on
+     * the way in; this catches a pack opened from disk or saved before that
+     * conversion existed.
+     */
+    if (!isOggVorbis(audio)) {
+      throw new LauncherError('INVALID_INPUT', `not vorbis: ${sound.file}`, {
+        title: 'That sound would be silent in game',
+        message:
+          `${basename(sound.file)} is ${describeAudio(basename(sound.file), audio)}, not Ogg ` +
+          'Vorbis. Minecraft only decodes Vorbis, and plays nothing at all for the rest.',
+        actions: ['Remove it and add it again, which converts it']
+      })
+    }
+
+    zip.addFile(`assets/minecraft/sounds/${NAMESPACE}/${id}.ogg`, audio)
 
     events[sound.event] = {
       sounds: [{ name: `${NAMESPACE}/${id}`, stream: sound.stream }]
@@ -188,6 +212,50 @@ async function buildZip(draft: ResourcePackDraft, minecraftVersion: string): Pro
 }
 
 /** Builds the pack and writes it wherever it was asked to go. */
+/**
+ * How many of these are byte-for-byte what the game already draws.
+ *
+ * A pack can be built, served, downloaded and applied perfectly and change
+ * nothing at all, because "replacing" a texture with an identical copy of the
+ * original is a thing the app will happily let you do - importing the folder
+ * of extracted vanilla textures without editing them does exactly that. The
+ * symptom is somebody standing in their world looking at 3,400 unchanged
+ * blocks with no idea which of the ten steps went wrong.
+ *
+ * Compared by CRC out of the jar's own index rather than by decompressing it,
+ * so checking three thousand costs nothing worth measuring.
+ */
+function unchangedFromVanilla(textures: PackTexture[], minecraftVersion: string): number | null {
+  if (typeof crc32 !== 'function') return null
+
+  try {
+    /*
+     * Inside the try, not above it. versionJarPath needs the launcher's data
+     * root, which throws outright when it has not been set up - so resolving
+     * it first turns "cannot check" into "cannot build", which is the same
+     * mistake packFormatOf made in this file once already.
+     */
+    const jar = versionJarPath(minecraftVersion)
+    if (!existsSync(jar)) return null
+
+    const zip = new AdmZip(jar)
+    let unchanged = 0
+
+    for (const texture of textures) {
+      const path = texture.path.replace(/\.png$/i, '').replace(/^\/+/, '')
+      const entry = zip.getEntry(`assets/minecraft/textures/${path}.png`)
+      if (!entry) continue
+
+      if (entry.header.crc >>> 0 === crc32(fromDataUrl(texture.image)) >>> 0) unchanged += 1
+    }
+
+    return unchanged
+  } catch (err) {
+    log.warn(`could not compare against vanilla: ${(err as Error).message}`)
+    return null
+  }
+}
+
 export async function writeResourcePack(
   draft: ResourcePackDraft,
   minecraftVersion: string,
@@ -224,6 +292,7 @@ export async function writeResourcePack(
     commands: draft.items.filter((i) => !i.replaces).map((i) => giveLine(i)),
     contents: {
       textures: draft.textures.length,
+      unchanged: unchangedFromVanilla(draft.textures, minecraftVersion),
       items: draft.items.length,
       sounds: draft.sounds.length,
       panorama: draft.panorama !== null,
@@ -298,18 +367,11 @@ export async function pointServerAtPack(
 }
 
 /** Into the instance's own resourcepacks folder, where it can be turned on. */
-export async function installResourcePack(
-  instance: Instance,
-  draft: ResourcePackDraft
-): Promise<BuiltPack> {
+export async function installResourcePack(instance: Instance, draft: ResourcePackDraft): Promise<BuiltPack> {
   const folder = instanceSubdir(instance, 'resourcepacks')
   await mkdir(folder, { recursive: true })
 
-  return await writeResourcePack(
-    draft,
-    instance.minecraftVersion,
-    join(folder, `${safeId(draft.name)}.zip`)
-  )
+  return await writeResourcePack(draft, instance.minecraftVersion, join(folder, `${safeId(draft.name)}.zip`))
 }
 
 /**
