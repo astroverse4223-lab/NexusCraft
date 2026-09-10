@@ -5,6 +5,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { safeId as safePackId } from '@shared/resourcePacks'
 import { handle, assertAllChannelsHandled } from './registry'
+import { checkDomain, tidyDomain } from '../services/servers/domainService'
 import { checkCurseForgeUpdates, applyCurseForgeUpdate } from '../services/content/curseforgeUpdates'
 import { allBundledModStatuses, installBundledMod } from '../services/content/bundledMods'
 import * as kokoro from '../services/voice/kokoro'
@@ -2344,6 +2345,53 @@ export function registerIpcHandlers(): void {
     toast('success', `Vote port ${port} is open`, 'Vote sites can reach the server now.')
 
     return { port, ...(await forwardingStatus(port, host)) }
+  })
+
+  /**
+   * The address players are told to type.
+   *
+   * Written once and used by the website, the invite link and the share panel,
+   * which each used to hold their own copy of it - three boxes that agreed
+   * only until somebody edited one. Nothing about the server itself changes:
+   * it binds where `reachability` says and listens on `port` regardless. This
+   * is a label.
+   */
+  handle('host:setDomain', async (payload: { serverId: string; domain: string }) => {
+    const server = getHostedServer(payload.serverId)
+    const domain = tidyDomain(payload.domain)
+
+    saveHostedServer({ ...server, id: server.id, publicAddress: domain || null })
+
+    /*
+     * The website is told as well, since it prints the join address on a page
+     * handed to strangers and is the one place a stale address is most costly.
+     */
+    const site = getSiteConfig(server.id, server.name)
+    saveSiteConfig({ ...site, joinAddress: domain ? `${domain}:${server.port}` : '' })
+
+    toast(
+      'success',
+      domain ? 'Address set' : 'Address cleared',
+      domain ? `Players are told to join ${domain}:${server.port}.` : "Back to handing out this machine's own address."
+    )
+
+    return { address: domain ? `${domain}:${server.port}` : null }
+  })
+
+  /**
+   * Whether that domain actually points here.
+   *
+   * The launcher cannot create a DNS record - that lives at whoever sold the
+   * domain - so this reads instead of writes, and says which of the four
+   * silent failures is the one happening.
+   */
+  handle('host:checkDomain', async (payload: { serverId: string; domain: string }) => {
+    const server = getHostedServer(payload.serverId)
+
+    const gateway = await discoverGateway()
+    const external = gateway ? await externalAddress(gateway) : null
+
+    return await checkDomain(payload.domain, external, server.port)
   })
 
   /**

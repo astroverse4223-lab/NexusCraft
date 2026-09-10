@@ -1,5 +1,7 @@
 import { ServerAdmin } from './ServerAdmin'
 import { ServerSitePanel } from './ServerSite'
+import { DiscordPanel } from '../components/DiscordPanel'
+import { DomainPanel } from '../components/DomainPanel'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
@@ -1472,7 +1474,19 @@ export function HostServerScreen(): JSX.Element {
                       <RelayTunnel serverId={selected.id} onlineMode={selected.onlineMode} />
                     </div>
                   </div>
+                  <DomainPanel serverId={selected.id} port={selected.port} current={selected.publicAddress ?? null} />
+
                   <ServerSitePanel serverId={selected.id} />
+
+                  {/*
+                    Beside the website and the vote links, because it answers
+                    the same question they do - how anybody hears about this
+                    server when they are not already in it - and because it
+                    writes a setting rather than sending a command, so it has
+                    to stay reachable while the server is stopped. That is
+                    exactly when somebody sets one up for the first time.
+                  */}
+                  <DiscordPanel serverId={selected.id} />
                 </>
               )}
 

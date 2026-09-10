@@ -293,6 +293,8 @@ export const IPC_CHANNELS = [
   'site:status',
   'site:votifierPort',
   'site:votifierInfo',
+  'host:setDomain',
+  'host:checkDomain',
   'host:discordWebhook',
   'host:punishments',
   'host:knownPlayers',

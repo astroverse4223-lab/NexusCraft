@@ -2,7 +2,7 @@ import { Ban, Gavel, LogOut, MicOff, ShieldCheck, Clock } from 'lucide-react'
 import { type JSX, useEffect, useRef, useState } from 'react'
 import type { LauncherErrorPayload } from '@shared/types'
 import { api, toPayload } from '../api'
-import { ErrorView, Spinner } from '../components/ui'
+import { ErrorView } from '../components/ui'
 
 /**
  * Running the server without joining it.
@@ -76,10 +76,6 @@ export function ServerAdmin({
 
   const [amount, setAmount] = useState(1000)
 
-  /** The Discord webhook, and whether it has just been saved. */
-  const [webhook, setWebhook] = useState('')
-  const [savingHook, setSavingHook] = useState(false)
-  const [hookDone, setHookDone] = useState<string | null>(null)
   const [rank, setRank] = useState('VIP')
   const [key, setKey] = useState('common')
 
@@ -113,35 +109,6 @@ export function ServerAdmin({
       setTimeout(() => void refresh(), 400)
     } catch (err) {
       setError(toPayload(err))
-    }
-  }
-
-  /**
-   * Writes the webhook into the plugin's config and tells the server.
-   *
-   * Worth a box rather than an instruction to edit a YAML file, because the
-   * failure mode is silent: the plugin logs one line and gives up, so a url
-   * with a character missing looks exactly like a feed that was never turned
-   * on.
-   */
-  const saveWebhook = async (): Promise<void> => {
-    setSavingHook(true)
-    setHookDone(null)
-
-    try {
-      const result = await api.host.discordWebhook(serverId, webhook.trim())
-
-      setHookDone(
-        webhook.trim() === ''
-          ? 'Feed turned off.'
-          : result.told
-            ? 'Saved, and the server is posting to it now.'
-            : 'Saved. It starts posting when the server does.'
-      )
-    } catch (err) {
-      setError(toPayload(err))
-    } finally {
-      setSavingHook(false)
     }
   }
 
@@ -332,79 +299,6 @@ export function ServerAdmin({
               Goes out as a server message, not as you. Useful for telling everybody a restart is coming, or that the
               Warden is about to rise.
             </p>
-          </div>
-
-          {/* ------------------------------------------------------- discord */}
-
-          <div className="panel panel-pad col gap-12">
-            <div className="section-title">Discord</div>
-
-            <p className="small muted">
-              Chat, joins, and the big moments &mdash; the Warden rising, somebody finishing the challenge ladder
-              &mdash; posted into a channel. It goes one way: your server talks to Discord, not back. That needs no bot
-              and no hosting, only a link.
-            </p>
-
-            <div className="row gap-8 wrap">
-              <input
-                className="input"
-                style={{ flex: '1 1 320px' }}
-                value={webhook}
-                type="password"
-                placeholder="https://discord.com/api/webhooks/..."
-                onChange={(e) => setWebhook(e.target.value.trim())}
-              />
-
-              <button className="btn btn-primary btn-sm" disabled={savingHook} onClick={() => void saveWebhook()}>
-                {savingHook && <Spinner />} Save
-              </button>
-
-              {webhook !== '' && (
-                <button
-                  className="btn btn-sm"
-                  disabled={savingHook}
-                  onClick={() => {
-                    setWebhook('')
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {hookDone && (
-              <p className="small" style={{ color: 'var(--good, #6ee7a0)', margin: 0 }}>
-                {hookDone}
-              </p>
-            )}
-
-            <details>
-              <summary className="small" style={{ cursor: 'pointer' }}>
-                Where to get one
-              </summary>
-
-              <ol className="small muted" style={{ margin: '8px 0 0', paddingLeft: 20, lineHeight: 1.7 }}>
-                <li>
-                  In Discord, press <strong>+</strong> down the left, <strong>Create My Own</strong>, then{' '}
-                  <strong>For me and my friends</strong>. Name it whatever you like.
-                </li>
-                <li>
-                  Right-click the channel you want the messages in &mdash; <code>#general</code> is fine &mdash; and
-                  pick <strong>Edit Channel</strong>.
-                </li>
-                <li>
-                  <strong>Integrations</strong> &rarr; <strong>Webhooks</strong> &rarr; <strong>New Webhook</strong>.
-                </li>
-                <li>
-                  <strong>Copy Webhook URL</strong>, and paste it above.
-                </li>
-              </ol>
-
-              <p className="tiny dim" style={{ marginTop: 8 }}>
-                Anybody with that link can post to the channel, so treat it like a password &mdash; it is kept in the
-                server&apos;s own config and never sent anywhere but Discord.
-              </p>
-            </details>
           </div>
 
           {/* ------------------------------------------------------ anybody */}

@@ -49,13 +49,7 @@ import { createTask } from '../downloads/downloadManager'
 import { ensureVersionJson } from '../minecraft/versionService'
 import { resolveJavaForVersion } from '../java/javaService'
 import { getSettings } from '../settings/settingsService'
-import {
-  analyseModsIn,
-  deleteModIn,
-  importModsIn,
-  setModEnabledIn,
-  type ModTarget
-} from '../mods/modService'
+import { analyseModsIn, deleteModIn, importModsIn, setModEnabledIn, type ModTarget } from '../mods/modService'
 import { installVersionToDir } from '../content/modrinthService'
 import { instanceSubdir } from '../instances/instanceService'
 import { SOFTWARE, launchPlan, provision, runServerInstaller, softwareLabel } from './serverSoftware'
@@ -391,7 +385,11 @@ export async function installHostedServer(id: string): Promise<HostedServer> {
     await runServerInstaller(dir, plan.fileName, version.javaVersion?.majorVersion ?? 17, javaTask)
   }
 
-  const next: HostedServer = { ...server, installedVersion: server.minecraftVersion, softwareVersion: plan.softwareVersion }
+  const next: HostedServer = {
+    ...server,
+    installedVersion: server.minecraftVersion,
+    softwareVersion: plan.softwareVersion
+  }
   db().put(Collections.hostedServers, next.id, next)
   emit('host:changed', listHostedServers())
 
@@ -423,10 +421,7 @@ function clampWhole(value: number, low: number, high: number): number {
  * line message has always done it.
  */
 function escapeProperty(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/\r/g, '')
-    .replace(/\n/g, '\\n')
+  return value.replace(/\\/g, '\\\\').replace(/\r/g, '').replace(/\n/g, '\\n')
 }
 
 async function writeServerProperties(server: HostedServer): Promise<void> {
@@ -583,7 +578,8 @@ export async function startHostedServer(id: string): Promise<HostedServerState> 
   if (!server.eulaAcceptedAt) {
     throw new LauncherError('INVALID_INPUT', 'the Minecraft EULA has not been accepted', {
       title: 'Accept the Minecraft EULA first',
-      message: 'Mojang requires every server operator to agree to the End User Licence Agreement before the server will run.',
+      message:
+        'Mojang requires every server operator to agree to the End User Licence Agreement before the server will run.',
       actions: [`Read it at ${MINECRAFT_EULA_URL}`, 'Then tick the box on the server to accept']
     })
   }
@@ -721,8 +717,7 @@ function interpret(id: string, text: string): void {
   }
 
   const left =
-    /\]: ([A-Za-z0-9_]{3,16}) left the game/.exec(text) ??
-    /\]: ([A-Za-z0-9_]{3,16}) lost connection/.exec(text)
+    /\]: ([A-Za-z0-9_]{3,16}) left the game/.exec(text) ?? /\]: ([A-Za-z0-9_]{3,16}) lost connection/.exec(text)
 
   if (left) {
     setState(id, { players: entry.state.players.filter((p) => p !== left[1]) })
@@ -1026,9 +1021,27 @@ export async function shareDetails(id: string): Promise<ServerShareDetails> {
   const server = getHostedServer(id)
   const localAddress = connectAddress(server)
 
+  /*
+   * A domain the owner has set beats anything discovered.
+   *
+   * They bought it precisely so people are handed a name rather than a number,
+   * and a panel that keeps showing the number is a panel that gets ignored.
+   * The port is appended unless they already wrote one, because a bare domain
+   * only works if they have also set an SRV record and the launcher cannot
+   * know that from here.
+   */
+  const named = (server.publicAddress ?? '').trim()
+
   const gateway = await discoverGateway()
   const external = gateway ? await externalAddress(gateway) : null
-  const publicAddress = external ? `${external}:${server.port}` : null
+
+  const publicAddress = named
+    ? named.includes(':')
+      ? named
+      : `${named}:${server.port}`
+    : external
+      ? `${external}:${server.port}`
+      : null
 
   let reachable: boolean | null = null
   let note: string | null = null

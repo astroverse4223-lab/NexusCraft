@@ -886,6 +886,23 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     open: z.boolean()
   }),
   'site:votifierInfo': z.object({ serverId: id }),
+  /*
+   * A hostname, or empty to go back to the machine's own address.
+   *
+   * Deliberately loose about the shape - a domain can be almost anything - but
+   * strict about what it is not: no scheme, no path, no spaces. The check that
+   * matters happens against real DNS a moment later.
+   */
+  'host:setDomain': z.object({
+    serverId: id,
+    domain: z
+      .string()
+      .max(253)
+      .refine((v) => v === '' || /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v), {
+        message: 'not a hostname'
+      })
+  }),
+  'host:checkDomain': z.object({ serverId: id, domain: z.string().min(1).max(253) }),
   'host:discordWebhook': z.object({
     serverId: id,
 

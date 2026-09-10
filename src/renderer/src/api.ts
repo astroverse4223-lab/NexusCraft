@@ -8,6 +8,7 @@ import type { TextureRecipe } from '@shared/textureRecipe'
 import type { SiteConfig, SiteStatus } from '@shared/serverSite'
 import type { FireworkDesign, ItemDesign, LogoDesign, MotdDesign, RecipePack, LootPack } from '@shared/creations'
 import type { OutsideCheck } from '@shared/types'
+import type { DomainCheck } from '@shared/types'
 import type {
   Account,
   AppSettings,
@@ -601,6 +602,9 @@ export const api = {
     acceptEula: (id: string) => call<HostedServer>('host:acceptEula', { id }),
     start: (id: string) => call<HostedServerState>('host:start', { id }),
     stop: (id: string) => call<HostedServerState>('host:stop', { id }),
+    setDomain: (serverId: string, domain: string) =>
+      call<{ address: string | null }>('host:setDomain', { serverId, domain }),
+    checkDomain: (serverId: string, domain: string) => call<DomainCheck>('host:checkDomain', { serverId, domain }),
     discordWebhook: (serverId: string, url: string) =>
       call<{ written: boolean; told: boolean }>('host:discordWebhook', { serverId, url }),
     punishments: (serverId: string) =>

@@ -423,6 +423,16 @@ export interface HostedServer {
   onlineMode: boolean
   /** Which network interface the server binds to. */
   reachability: ServerReachability
+  /**
+   * The address players are told to type, when it is not this machine's IP.
+   *
+   * Only ever a label: the server still binds to whatever `reachability` says
+   * and still listens on `port`. What this changes is what the website, the
+   * invite link and the share panel hand out - which used to be three separate
+   * boxes holding three copies of the same thing, disagreeing the moment one
+   * of them was edited.
+   */
+  publicAddress?: string | null
   memoryMb: number
   motd: string
   difficulty: 'peaceful' | 'easy' | 'normal' | 'hard'
@@ -516,6 +526,8 @@ export interface ModpackServerInstallResult {
 
 export interface SaveHostedServerInput {
   id: string | null
+  /** See HostedServer.publicAddress. Left out, whatever is stored is kept. */
+  publicAddress?: string | null
   name: string
   minecraftVersion: string
   software: ServerSoftware
@@ -562,14 +574,7 @@ export interface ServerStatus {
 
 /** Broad groupings the Discover screen filters by. */
 export type DirectoryCategory =
-  | 'minigames'
-  | 'survival'
-  | 'skyblock'
-  | 'anarchy'
-  | 'prison'
-  | 'adventure'
-  | 'creative'
-  | 'modded'
+  'minigames' | 'survival' | 'skyblock' | 'anarchy' | 'prison' | 'adventure' | 'creative' | 'modded'
 
 /**
  * A public server offered in the Discover screen.
@@ -1029,7 +1034,14 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: LauncherErro
 
 /* -------------------------------------------------------------- ipc events */
 
-import type { CameraFrame, Companion, CompanionEvent, CompanionStatus, CompanionUsage, CompanionWork } from './companion'
+import type {
+  CameraFrame,
+  Companion,
+  CompanionEvent,
+  CompanionStatus,
+  CompanionUsage,
+  CompanionWork
+} from './companion'
 
 export interface EventMap {
   'companion:event': CompanionEvent
@@ -1079,7 +1091,7 @@ export interface EventMap {
     detail: string
     output: string[]
   }
-  'toast': { kind: 'info' | 'success' | 'warning' | 'error'; title: string; message?: string }
+  toast: { kind: 'info' | 'success' | 'warning' | 'error'; title: string; message?: string }
 }
 
 /** Everything an invite link carries about the server it points at. */
@@ -1101,6 +1113,32 @@ export interface ServerInvite {
  * Distinct from `ServerShareDetails.reachable`, which is the same question
  * asked from inside the house and therefore cannot answer it.
  */
+export interface DomainCheck {
+  domain: string
+
+  /** What an A lookup returned, empty when nothing resolved. */
+  addresses: string[]
+
+  /** What this machine's public IP is, when it could be worked out. */
+  expected: string | null
+
+  /** An SRV record for Minecraft, when one exists. */
+  srv: { target: string; port: number } | null
+
+  /**
+   * Whether players can type the bare domain with no port.
+   *
+   * True only with an SRV record. Without one the port has to be typed, which
+   * is the difference between "play.example.com" and "play.example.com:25566"
+   * and the single most common thing people get wrong after buying a domain.
+   */
+  bare: boolean
+
+  /** What to do about it, in the order somebody would do it. */
+  verdict: 'ok' | 'wrong-ip' | 'not-found' | 'no-public-ip'
+  note: string
+}
+
 export interface OutsideCheck {
   reachable: boolean
   address: string | null
