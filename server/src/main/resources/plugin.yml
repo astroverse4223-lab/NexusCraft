@@ -1,0 +1,351 @@
+name: Nexus
+version: '${version}'
+main: dev.nexuscraft.nexus.Nexus
+api-version: '1.21'
+description: A minigame network - hub, queue, parties, stats, and BedWars.
+authors: [NexusCraft]
+
+commands:
+  hub:
+    description: Back to the hub.
+    aliases: [lobby, leave]
+  party:
+    description: Play with friends.
+    usage: /party invite|accept|leave|list|kick <player>
+  stats:
+    description: Your record, or somebody else's.
+    usage: /stats [player]
+  leaderboard:
+    description: The best players on the server.
+    aliases: [lb, top]
+  shop:
+    description: Buy things.
+  pwarp:
+    description: Go to a player's warp, or set your own.
+    usage: /pwarp [name] | set <name> [note] | delete <name> | mine
+  pwarps:
+    description: Every warp players have set.
+    aliases: [warplist]
+  arena:
+    description: Ten waves and a boss, alone or with your party.
+    aliases: [mobarena]
+  challenges:
+    description: What to do next on your island.
+    aliases: [challenge]
+  skills:
+    description: How good you have got at things.
+    aliases: [skill]
+  shops:
+    description: The shops you are running.
+    aliases: [myshops]
+  sell:
+    description: Sell what you are carrying.
+    usage: /sell all
+  balance:
+    description: How much money you have.
+    aliases: [bal, money]
+  newisland:
+    description: Wipe your island and start it again.
+    usage: /newisland confirm
+    aliases: [resetisland]
+  is:
+    description: Your island, and everybody else's.
+    usage: /is [invite|accept|kick|leave|team|top|visit|upgrades] <player>
+    aliases: [island]
+  mine:
+    description: Go to your prison mine.
+  rankup:
+    description: Buy the next prison rank.
+  warp:
+    description: Go to a world.
+    usage: /warp survival|prison|creative|hub
+  daily:
+    description: Claim your daily reward.
+  quests:
+    description: Today's three tasks.
+    aliases: [quest]
+  keys:
+    description: How many crate keys you are carrying.
+  vault:
+    description: Collect what is waiting for you.
+  cosmetics:
+    description: Trails and hats.
+    aliases: [cosmetic, wardrobe]
+  jobs:
+    description: Take a job and get paid for what you do.
+    aliases: [job]
+  deals:
+    description: The trader's three deals today.
+  boss:
+    description: When the world boss next rises. /boss go to get there.
+    usage: /boss [go]
+    aliases: [warden]
+  feed:
+    description: What has been happening on the server.
+    aliases: [lately, news]
+  skin:
+    description: Change how you look on this server.
+    aliases: [skins]
+  dropper:
+    description: The dropper shafts, and your times.
+    usage: /dropper [number]
+    aliases: [shafts]
+  parkour:
+    description: The parkour courses, and your times.
+    usage: /parkour [number]
+    aliases: [courses]
+  vote:
+    description: Where to vote, and what it is worth.
+    aliases: [votes]
+  tpa:
+    description: Ask to teleport to somebody.
+    usage: /tpa <player>
+  tpahere:
+    description: Ask somebody to come to you.
+    usage: /tpahere <player>
+  tpaccept:
+    description: Let them come.
+    aliases: [tpyes]
+  tpdeny:
+    description: Turn them down.
+    aliases: [tpno]
+  back:
+    description: Go back to where you were, or where you died.
+  rtp:
+    description: Drop somewhere random out in the wild.
+    aliases: [wild]
+  r:
+    description: Reply to the last private message.
+    aliases: [reply]
+  mute:
+    description: Stop somebody talking, for a while.
+    usage: /mute <player> <30m|2h|7d|forever> [reason]
+    permission: nexus.admin
+  unmute:
+    description: Let them talk again.
+    usage: /unmute <player>
+    permission: nexus.admin
+  tempban:
+    description: Ban somebody for a set length of time.
+    usage: /tempban <player> <30m|2h|7d|forever> [reason]
+    permission: nexus.admin
+  unban:
+    description: Lift a ban.
+    usage: /unban <player>
+    permission: nexus.admin
+  warn:
+    description: Put somebody on notice, on the record.
+    usage: /warn <player> <reason>
+    permission: nexus.admin
+  history:
+    description: Everything that has happened to one player.
+    usage: /history <player>
+    permission: nexus.admin
+  menu:
+    description: Everything the server can do, on one page.
+  guide:
+    description: A tour of the server.
+    aliases: [tutorial]
+  kit:
+    description: Take a kit.
+    usage: /kit [name]
+  kits:
+    description: The kits you can take.
+  ah:
+    description: Buy and sell to other players.
+    usage: /ah [sell <price>|mine]
+    aliases: [auction]
+  prestige:
+    description: Give it all up for a permanent bonus.
+    usage: /prestige confirm
+  season:
+    description: This season's standings.
+  achievements:
+    description: Everything there is to have done here.
+    aliases: [achievement, ach]
+  pets:
+    description: Something to follow you around.
+    aliases: [pet]
+  bounty:
+    description: Put money on somebody's head.
+    usage: /bounty <player> <amount>
+  bounties:
+    description: Who has a price on them.
+    aliases: [wanted]
+  play:
+    description: Queue for a game.
+    usage: /play <game>
+    aliases: [queue]
+  claim:
+    description: Claim land, by the chunk or with the wand.
+    usage: /claim [wand]
+  unclaim:
+    description: Give up the claim you are standing on.
+  claiminfo:
+    description: Who owns this land.
+  claims:
+    description: Your claims and how many you have left.
+    aliases: [claimlist]
+  trust:
+    description: Let somebody build on your land.
+    usage: /trust <player>
+  untrust:
+    description: Take that back.
+    usage: /untrust <player>
+  inspect:
+    description: Click a block to see who touched it.
+    permission: nexus.admin
+  sethome:
+    description: Remember where you are standing.
+    usage: /sethome [name]
+  home:
+    description: Go back to a home.
+    usage: /home [name]
+  delhome:
+    description: Forget a home.
+    usage: /delhome <name>
+  homes:
+    description: The homes you have set.
+    aliases: [homelist]
+  afk:
+    description: Mark yourself away.
+  rate:
+    description: Score the build you are looking at, one to five.
+    usage: /rate <1-5>
+  pixeltext:
+    description: Write words on a wall in front of you.
+    usage: /pixeltext <colour> [scale] <words>
+    aliases: [ptext]
+  pixel:
+    description: Put pixel art up as a wall in front of you.
+    usage: /pixel <name> [scale]
+    aliases: [pixelart]
+  blueprint:
+    description: Place a structure to build on, as a frame or finished.
+    usage: /blueprint <kind> [frame|full] [palette]
+    aliases: [bp]
+  dig:
+    description: The dig site - dig, sell, and buy better gear.
+    usage: /dig [sell|pack|shovel]
+    aliases: [digsite]
+  dungeon:
+    description: Where the nearest dungeon is, and whether it is cleared.
+    aliases: [dungeons]
+  guild:
+    description: A party that outlives the session.
+    usage: /guild create|invite|deposit|sethome|top
+    aliases: [g, clan]
+  gc:
+    description: Talk to your guild.
+    usage: /gc <message>
+    aliases: [guildchat]
+  plot:
+    description: Your patch of the creative world.
+    usage: /plot auto|claim|home|visit|trust|clear|info
+    aliases: [plots, p]
+  build:
+    description: Unlock the lobby so you can build in it, and go creative.
+    permission: nexus.admin
+  buildhelp:
+    description: Every building command, listed.
+    aliases: [bhelp]
+    permission: nexus.admin
+  wand:
+    description: The selection tool for building.
+    permission: nexus.admin
+  pos1:
+    description: Corner one, where you stand.
+    permission: nexus.admin
+  pos2:
+    description: Corner two, where you stand.
+    permission: nexus.admin
+  sel:
+    description: How big the selection is.
+    permission: nexus.admin
+  set:
+    description: Fill the selection with a block.
+    usage: /set <block>
+    permission: nexus.admin
+  replace:
+    description: Swap one block for another inside the selection.
+    usage: /replace <from> <to>
+    permission: nexus.admin
+  walls:
+    description: The four sides of the selection.
+    usage: /walls <block>
+    permission: nexus.admin
+  shell:
+    description: Every outside face of the selection.
+    usage: /shell <block>
+    permission: nexus.admin
+  hollow:
+    description: Empty the middle of the selection.
+    permission: nexus.admin
+  copy:
+    description: Copy the selection, relative to where you stand.
+    permission: nexus.admin
+  paste:
+    description: Paste what you copied, from where you stand.
+    permission: nexus.admin
+  undo:
+    description: Put back what the last edit replaced.
+    permission: nexus.admin
+  redo:
+    description: Put back what undo took away.
+    permission: nexus.admin
+  stack:
+    description: Repeat the selection along a direction.
+    usage: /stack <n> [direction]
+    permission: nexus.admin
+  move:
+    description: Shift what is in the selection.
+    usage: /move <n> [direction]
+    permission: nexus.admin
+  expand:
+    description: Grow the selection without clicking again.
+    usage: /expand <n> [direction]
+    permission: nexus.admin
+  contract:
+    description: Shrink the selection.
+    usage: /contract <n> [direction]
+    permission: nexus.admin
+  count:
+    description: What the selection is made of.
+    permission: nexus.admin
+  sphere:
+    description: A ball of blocks where you stand.
+    usage: /sphere <block> <radius> [hollow]
+    permission: nexus.admin
+  cyl:
+    description: A cylinder where you stand.
+    usage: /cyl <block> <radius> [height] [hollow]
+    permission: nexus.admin
+  pyramid:
+    description: A stepped pyramid where you stand.
+    usage: /pyramid <block> <size> [hollow]
+    permission: nexus.admin
+  line:
+    description: A straight line between the two corners.
+    usage: /line <block>
+    permission: nexus.admin
+  overlay:
+    description: Lay a block on top of the ground in the selection.
+    usage: /overlay <block>
+    permission: nexus.admin
+  drain:
+    description: Take the water and lava out of everything nearby.
+    usage: /drain <radius>
+    permission: nexus.admin
+  up:
+    description: Go up, standing on a block placed under you.
+    usage: /up <n>
+    permission: nexus.admin
+  nexus:
+    description: Operator commands.
+    usage: /nexus build|setnpc|setportal|setrank|rollback|lookup|check|save
+    permission: nexus.admin
+
+permissions:
+  nexus.admin:
+    description: Run the server.
+    default: op

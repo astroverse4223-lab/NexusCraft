@@ -1,0 +1,54 @@
+/*
+ * Nexus — the server side.
+ *
+ * A Paper plugin rather than a Fabric mod, and that is the whole point: people
+ * join this with an unmodified Minecraft client. No launcher, no modpack, no
+ * install. It is the difference between a server you can send someone a link to
+ * and one you have to talk them through.
+ *
+ * Shaded into a single jar with no dependencies of its own, because a plugin
+ * that asks the operator to go and fetch three more jars is a plugin that does
+ * not get installed.
+ */
+plugins {
+    id 'java'
+}
+
+group = 'dev.nexuscraft'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'papermc'
+        url = 'https://repo.papermc.io/repository/maven-public/'
+    }
+}
+
+dependencies {
+    // compileOnly: the server already has it. Bundling Paper into the plugin
+    // would be several hundred megabytes of the thing it is being loaded into.
+    compileOnly 'io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+processResources {
+    filesMatching('plugin.yml') {
+        expand version: project.version
+    }
+}
+
+jar {
+    archiveBaseName = 'nexus'
+    archiveVersion = project.version
+}
