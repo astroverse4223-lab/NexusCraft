@@ -284,6 +284,44 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     setFiled({ took: added.length, missed })
   }
 
+  /**
+   * Writes the pack out as a file, wherever you want it.
+   *
+   * The one route that does not depend on this launcher staying open. Served
+   * from here, the pack lives exactly as long as the app does - which is fine
+   * while you are building it and no use at all once the server is somewhere
+   * else. A file can go on any host, and then server.properties points at a
+   * url that answers whether or not this machine is on.
+   */
+  const exportZip = async (): Promise<void> => {
+    if (isEmpty(draft)) return
+
+    try {
+      const where = await api.app.pickSavePath({
+        title: 'Save the resource pack',
+        defaultName: `${draft.name.trim() || 'pack'}.zip`,
+        extensions: ['zip']
+      })
+
+      if (!where) return
+
+      setBusy(true)
+
+      const made = await api.resourcePack.build(draft, instance.minecraftVersion, where)
+
+      setBuilt(made)
+      setUrl('')
+      setOutcome(
+        `Written to ${where}. Its SHA-1 is ${made.sha1} - a server needs that ` +
+          'alongside the url, or every player downloads it again on every join.'
+      )
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   /** Opens a .zip somebody already made, as far as this app understands it. */
   const openZip = async (): Promise<void> => {
     try {
@@ -1808,6 +1846,15 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
               )}
             </>
           )}
+
+          <button
+            className="btn"
+            disabled={busy || nothing}
+            title={nothing ? 'There is nothing in the pack yet' : 'Write it out as a .zip'}
+            onClick={() => void exportZip()}
+          >
+            {busy && <Spinner />} Save as a file
+          </button>
 
           <button
             className="btn btn-primary"

@@ -1,3 +1,4 @@
+import { ServerAdmin } from './ServerAdmin'
 import { ServerSitePanel } from './ServerSite'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -1161,6 +1162,13 @@ export function HostServerScreen(): JSX.Element {
                   </p>
                 )}
               </div>
+
+              {/* ------------------------------------------------ moderation */}
+              <ServerAdmin
+                serverId={selected.id}
+                players={state?.players ?? []}
+                running={state?.status === 'running'}
+              />
 
               {/* -------------------------------------------------- website */}
               <ServerSitePanel serverId={selected.id} />
