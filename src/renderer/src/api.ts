@@ -618,6 +618,11 @@ export const api = {
     acceptEula: (id: string) => call<HostedServer>('host:acceptEula', { id }),
     start: (id: string) => call<HostedServerState>('host:start', { id }),
     stop: (id: string) => call<HostedServerState>('host:stop', { id }),
+    punishments: (serverId: string) =>
+      call<
+        { kind: string; name: string; by: string; reason: string; at: number; until: number }[]
+      >('host:punishments', { serverId }),
+    knownPlayers: (serverId: string) => call<string[]>('host:knownPlayers', { serverId }),
     command: (id: string, command: string) => call<boolean>('host:command', { id, command })
   },
 

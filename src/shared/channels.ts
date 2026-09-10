@@ -292,6 +292,8 @@ export const IPC_CHANNELS = [
   'site:status',
   'site:votifierPort',
   'site:votifierInfo',
+  'host:punishments',
+  'host:knownPlayers',
   'banners:designAdvancements',
   'banners:installAdvancements',
   'banners:installAdvancementsWorld',

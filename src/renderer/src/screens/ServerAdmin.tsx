@@ -1,5 +1,5 @@
 import { Ban, Gavel, LogOut, MicOff, ShieldCheck, Clock } from 'lucide-react'
-import { type JSX, useRef, useState } from 'react'
+import { type JSX, useEffect, useRef, useState } from 'react'
 import type { LauncherErrorPayload } from '@shared/types'
 import { api, toPayload } from '../api'
 import { ErrorView } from '../components/ui'
@@ -15,6 +15,17 @@ import { ErrorView } from '../components/ui'
  * Nothing is invented: every button sends the command the plugin already has,
  * so what happens here and what happens in chat are the same thing.
  */
+
+/** The ranks the plugin knows, in the order they climb. */
+const RANKS = ['PLAYER', 'VIP', 'MVP', 'ADMIN', 'OWNER']
+
+/** Events the plugin can fire on demand. */
+const EVENTS = [
+  { id: 'airdrop', label: 'Airdrop' },
+  { id: 'happyhour', label: 'Double money' },
+  { id: 'meteors', label: 'Meteors' },
+  { id: 'horde', label: 'Horde' }
+]
 
 /** How long a punishment lasts, in the form the plugin reads. */
 const SPANS = [
@@ -45,10 +56,46 @@ export function ServerAdmin({
 
   const [announcement, setAnnouncement] = useState('')
 
+  const [punished, setPunished] = useState<
+    { kind: string; name: string; by: string; reason: string; at: number; until: number }[]
+  >([])
+
+  /** Everybody the server has seen, so somebody who left can still be dealt with. */
+  const [known, setKnown] = useState<string[]>([])
+  const [who, setWho] = useState('')
+
+  const [amount, setAmount] = useState(1000)
+  const [rank, setRank] = useState('VIP')
+  const [key, setKey] = useState('common')
+
+  const refresh = async (): Promise<void> => {
+    try {
+      setPunished(await api.host.punishments(serverId))
+    } catch {
+      setPunished([])
+    }
+
+    try {
+      setKnown(await api.host.knownPlayers(serverId))
+    } catch {
+      setKnown([])
+    }
+  }
+
+  useEffect(() => {
+    void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverId, running])
+
   const run = async (command: string, tell: string): Promise<void> => {
     try {
       await api.host.command(serverId, command)
       setSaid(tell)
+
+      // The plugin writes punishments.yml as it goes, so the list is only ever
+      // one read behind - and a ban that does not appear looks like one that
+      // did not happen.
+      setTimeout(() => void refresh(), 400)
     } catch (err) {
       setError(toPayload(err))
     }
@@ -241,6 +288,264 @@ export function ServerAdmin({
         <p className="tiny dim">
           Goes out as a server message, not as you. Useful for telling everybody a restart is
           coming, or that the Warden is about to rise.
+        </p>
+      </div>
+
+      {/* ------------------------------------------------------ anybody */}
+
+      <div className="panel panel-pad col gap-12">
+        <div className="section-title">Anybody else</div>
+
+        <p className="small muted">
+          Most moderation happens after somebody has gone &mdash; they say something and log
+          off. Type a name, or pick one the server has seen before.
+        </p>
+
+        <div className="row gap-8 wrap">
+          <input
+            className="input"
+            style={{ flex: '1 1 200px' }}
+            value={who}
+            list="known-players"
+            placeholder="a player's name"
+            onChange={(e) => setWho(e.target.value.trim().slice(0, 16))}
+          />
+          <datalist id="known-players">
+            {known.slice(0, 200).map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+
+          <button
+            className="btn btn-sm"
+            disabled={!who}
+            onClick={() => void run(`tempban ${who} ${span} ${reason()}`, `Banned ${who}.`)}
+          >
+            <Ban size={13} /> Ban
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={!who}
+            onClick={() => void run(`mute ${who} ${span} ${reason()}`, `Muted ${who}.`)}
+          >
+            <MicOff size={13} /> Mute
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={!who}
+            onClick={() => void run(`history ${who}`, `History for ${who} is in the console.`)}
+          >
+            History
+          </button>
+        </div>
+
+        <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
+          <div className="field" style={{ width: 130 }}>
+            <label className="field-label">Money</label>
+            <input
+              className="input"
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(Number(e.target.value) || 0)}
+            />
+          </div>
+          <button
+            className="btn btn-sm"
+            disabled={!who || amount === 0}
+            onClick={() => void run(`nexus pay ${who} ${amount}`, `Paid ${who}.`)}
+          >
+            Pay
+          </button>
+
+          <div className="field" style={{ width: 120 }}>
+            <label className="field-label">Rank</label>
+            <select className="select" value={rank} onChange={(e) => setRank(e.target.value)}>
+              {RANKS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            className="btn btn-sm"
+            disabled={!who}
+            onClick={() => void run(`nexus setrank ${who} ${rank}`, `${who} is now ${rank}.`)}
+          >
+            Set rank
+          </button>
+
+          {/*
+            * A key has a tier, and the player has to be on.
+            *
+            * `givekey` wants <player> <common|rare|legendary>, and refuses
+            * outright for anybody offline - so a button that sent only a name
+            * would have quietly printed a usage line into the console and
+            * looked, from here, exactly like it had worked.
+            */}
+          <div className="field" style={{ width: 120 }}>
+            <label className="field-label">Key</label>
+            <select className="select" value={key} onChange={(e) => setKey(e.target.value)}>
+              <option value="common">Common</option>
+              <option value="rare">Rare</option>
+              <option value="legendary">Legendary</option>
+            </select>
+          </div>
+          <button
+            className="btn btn-sm"
+            disabled={!who || !players.includes(who)}
+            title={
+              who && !players.includes(who)
+                ? 'They have to be online for a key'
+                : 'Give them a crate key'
+            }
+            onClick={() => void run(`nexus givekey ${who} ${key}`, `Gave ${who} a ${key} key.`)}
+          >
+            Crate key
+          </button>
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------ the undoing */}
+
+      <div className="panel panel-pad col gap-12">
+        <div className="row gap-8" style={{ alignItems: 'center' }}>
+          <div className="section-title" style={{ flex: 1 }}>
+            Banned and muted
+          </div>
+          <button className="btn btn-sm" onClick={() => void refresh()}>
+            Refresh
+          </button>
+        </div>
+
+        {punished.length === 0 ? (
+          <p className="small muted">Nobody is banned or muted.</p>
+        ) : (
+          <div className="col gap-8">
+            {punished.map((entry, at) => (
+              <div key={entry.name + at} className="row gap-8 wrap" style={{ alignItems: 'center' }}>
+                <span
+                  className="tiny"
+                  style={{
+                    color: entry.kind === 'ban' ? 'var(--danger)' : 'var(--warning)',
+                    width: 44
+                  }}
+                >
+                  {entry.kind}
+                </span>
+
+                <span className="small" style={{ flex: '1 1 110px' }}>
+                  {entry.name}
+                </span>
+
+                <span className="tiny dim truncate" style={{ flex: '2 1 160px' }}>
+                  {entry.reason} &mdash; by {entry.by}
+                </span>
+
+                <span className="tiny dim">
+                  {entry.until === 0
+                    ? 'forever'
+                    : 'until ' + new Date(entry.until).toLocaleString()}
+                </span>
+
+                <button
+                  className="btn btn-sm"
+                  onClick={() =>
+                    void run(
+                      `${entry.kind === 'ban' ? 'unban' : 'unmute'} ${entry.name}`,
+                      `Lifted the ${entry.kind} on ${entry.name}.`
+                    )
+                  }
+                >
+                  Lift it
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ------------------------------------------------------ the server */}
+
+      <div className="panel panel-pad col gap-12">
+        <div className="section-title">Run something</div>
+
+        <div className="row gap-6 wrap">
+          <button className="btn btn-sm" onClick={() => void run('nexus backup', 'Backing up.')}>
+            Back up now
+          </button>
+          <button className="btn btn-sm" onClick={() => void run('save-all', 'World saved.')}>
+            Save the world
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => void run('nexus startboss', 'The Warden is rising.')}
+          >
+            Start the boss
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => void run('nexus chatgame', 'Asked a question.')}
+          >
+            Chat game
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => void run('nexus pack', 'Re-read the resource pack.')}
+          >
+            Reload the pack
+          </button>
+          <button className="btn btn-sm" onClick={() => void run('nexus npcs', 'Greeters put back.')}>
+            Put the bots back
+          </button>
+        </div>
+
+        <div className="section-title">Fire an event</div>
+
+        <div className="row gap-6 wrap">
+          {EVENTS.map((event) => (
+            <button
+              key={event.id}
+              className="btn btn-sm"
+              onClick={() => void run(`nexus event ${event.id}`, `${event.label} started.`)}
+            >
+              {event.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="section-title">The world</div>
+
+        <div className="row gap-6 wrap">
+          <button className="btn btn-sm" onClick={() => void run('time set day', 'Daytime.')}>
+            Day
+          </button>
+          <button className="btn btn-sm" onClick={() => void run('time set night', 'Night.')}>
+            Night
+          </button>
+          <button className="btn btn-sm" onClick={() => void run('weather clear', 'Clear skies.')}>
+            Clear
+          </button>
+          <button className="btn btn-sm" onClick={() => void run('weather rain', 'Raining.')}>
+            Rain
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => void run('whitelist on', 'Whitelist on - only listed players can join.')}
+          >
+            Whitelist on
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => void run('whitelist off', 'Whitelist off - anybody can join.')}
+          >
+            Whitelist off
+          </button>
+        </div>
+
+        <p className="tiny dim">
+          Time and weather apply to the world the console counts as default, which is the hub.
+          Everything else is server-wide.
         </p>
       </div>
 

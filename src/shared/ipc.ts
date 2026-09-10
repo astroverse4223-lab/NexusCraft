@@ -826,6 +826,8 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     open: z.boolean()
   }),
   'site:votifierInfo': z.object({ serverId: id }),
+  'host:punishments': z.object({ serverId: id }),
+  'host:knownPlayers': z.object({ serverId: id }),
 
   'banners:designLoot': z.object({
     prompt: z.string().min(1).max(2000),

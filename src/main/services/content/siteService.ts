@@ -393,3 +393,78 @@ export async function votifierInfo(serverDir: string): Promise<VotifierInfo> {
 
   return { port: votifierPortOf(serverDir), token, publicKey, enabled }
 }
+
+/* ------------------------------------------------------------- moderation */
+
+export interface Punished {
+  kind: string
+  name: string
+  by: string
+  reason: string
+  at: number
+  until: number
+}
+
+/**
+ * Who is banned or muted, read from what the plugin wrote.
+ *
+ * The panel could hand out punishments and had no way to see or undo one,
+ * which is half a moderation tool - and the wrong half, because a ban you
+ * cannot lift is the mistake that costs you a player permanently.
+ */
+export async function punishments(serverDir: string): Promise<Punished[]> {
+  const file = join(serverDir, ...NEXUS, 'punishments.yml')
+  if (!existsSync(file)) return []
+
+  try {
+    const yaml = require('yaml')
+    const parsed = yaml.parse(await readFile(file, 'utf8')) as Record<
+      string,
+      Record<string, unknown>
+    > | null
+
+    const now = Date.now()
+
+    return Object.values(parsed ?? {})
+      .map((row) => ({
+        kind: String(row?.kind ?? ''),
+        name: String(row?.name ?? ''),
+        by: String(row?.by ?? ''),
+        reason: String(row?.reason ?? ''),
+        at: Number(row?.at ?? 0),
+        until: Number(row?.until ?? 0)
+      }))
+      // Expired ones are history, not something anybody needs to lift.
+      .filter((row) => row.name && (row.until === 0 || row.until > now))
+  } catch (err) {
+    log.warn(`could not read punishments.yml: ${(err as Error).message}`)
+    return []
+  }
+}
+
+/**
+ * Everybody the server has ever seen, most recent first.
+ *
+ * Moderation mostly happens after somebody has left - they say something and
+ * log off - so a panel that can only act on who is online right now is one
+ * that is empty exactly when it is needed.
+ */
+export async function knownPlayers(serverDir: string): Promise<string[]> {
+  const file = join(serverDir, 'usercache.json')
+  if (!existsSync(file)) return []
+
+  try {
+    const rows = JSON.parse(await readFile(file, 'utf8')) as {
+      name?: string
+      expiresOn?: string
+    }[]
+
+    return rows
+      .map((row) => String(row?.name ?? ''))
+      .filter(Boolean)
+      .reverse()
+  } catch (err) {
+    log.warn(`could not read usercache.json: ${(err as Error).message}`)
+    return []
+  }
+}

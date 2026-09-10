@@ -313,6 +313,8 @@ import { clearPresence, showIdlePresence } from '../services/presence/presenceSe
 import { externalAddress } from '../services/servers/portForwarding'
 import { localNetworkAddress } from '../services/servers/hostService'
 import {
+  knownPlayers,
+  punishments,
   getSiteConfig,
   renderSite,
   saveSiteConfig,
@@ -2376,6 +2378,14 @@ export function registerIpcHandlers(): void {
 
     return { port, ...(await forwardingStatus(port, host)) }
   })
+
+  handle('host:punishments', async (payload: { serverId: string }) =>
+    await punishments(hostedServerDir(getHostedServer(payload.serverId).id))
+  )
+
+  handle('host:knownPlayers', async (payload: { serverId: string }) =>
+    await knownPlayers(hostedServerDir(getHostedServer(payload.serverId).id))
+  )
 
   handle('site:votifierInfo', async (payload: { serverId: string }) => {
     const dir = hostedServerDir(getHostedServer(payload.serverId).id)
