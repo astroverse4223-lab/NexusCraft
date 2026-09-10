@@ -36,7 +36,7 @@ public final class Completions {
             "rollback", "lookup", "ignoreclaims", "endseason",
             "backup", "backups", "votekey", "rebuild",
             "setrank", "pay", "givekey", "coins",
-            "addskin", "removeskin", "pack", "save", "armour");
+            "addskin", "removeskin", "pack", "save", "armour", "reload");
 
     private static final List<String> GUILD = List.of(
             "create", "invite", "accept", "leave", "kick", "promote", "demote",

@@ -372,8 +372,7 @@ function giveLine(item: PackItem): string {
 }
 
 /** Where the plugin keeps its settings, when the plugin is installed at all. */
-const pluginConfig = (serverDir: string): string =>
-  join(serverDir, 'plugins', 'Nexus', 'config.yml')
+const pluginConfig = (serverDir: string): string => join(serverDir, 'plugins', 'Nexus', 'config.yml')
 
 /**
  * Points the plugin at the pack, and tells it what armour the pack defines.
@@ -422,6 +421,35 @@ export async function pointPluginAtPack(
     return true
   } catch (err) {
     log.warn(`could not write the plugin config: ${(err as Error).message}`)
+    return false
+  }
+}
+
+/**
+ * Writes one setting into the plugin's config, keeping its comments.
+ *
+ * Exists so the launcher can offer a box to paste a Discord webhook into
+ * rather than telling somebody to find a YAML file, count the indentation and
+ * not break it. The plugin re-reads every setting on use, so a `nexus reload`
+ * afterwards is enough - nobody has to restart a server to turn a feed on.
+ */
+export async function setPluginSetting(
+  serverDir: string,
+  path: string[],
+  value: string | boolean | number
+): Promise<boolean> {
+  const file = pluginConfig(serverDir)
+  if (!existsSync(file)) return false
+
+  try {
+    const doc = parseDocument(await readFile(file, 'utf8'))
+    doc.setIn(path, value)
+    await writeFile(file, doc.toString(), 'utf8')
+
+    log.info(`plugin config: ${path.join('.')} set`)
+    return true
+  } catch (err) {
+    log.warn(`could not write ${path.join('.')}: ${(err as Error).message}`)
     return false
   }
 }

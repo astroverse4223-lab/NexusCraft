@@ -886,6 +886,25 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
     open: z.boolean()
   }),
   'site:votifierInfo': z.object({ serverId: id }),
+  'host:discordWebhook': z.object({
+    serverId: id,
+
+    /*
+     * Discord's own shape, or empty to turn the feed off.
+     *
+     * Checked here rather than in the panel because a webhook that is nearly
+     * right fails as one swallowed HTTP error in a log nobody reads - the
+     * plugin logs once and gives up, deliberately, so a wrong url looks
+     * exactly like a feed that is simply switched off.
+     */
+    url: z
+      .string()
+      .max(300)
+      .refine(
+        (v) => v === '' || /^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(v),
+        { message: 'not a Discord webhook url' }
+      )
+  }),
   'host:punishments': z.object({ serverId: id }),
   'host:knownPlayers': z.object({ serverId: id }),
 

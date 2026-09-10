@@ -2826,6 +2826,23 @@ public final class Nexus extends JavaPlugin {
                 return true;
             }
 
+            /*
+             * Re-read the config without a restart.
+             *
+             * Everything that reads a setting reads it out of the config each
+             * time rather than caching it, so this is genuinely all it takes -
+             * and it is what lets the launcher write a webhook or a pack url
+             * into the file and have it take effect while people are playing.
+             */
+            case "reload" -> {
+                reloadConfig();
+                packs.reload();
+                armoury.reload();
+
+                sender.sendMessage(Text.good("Config re-read."));
+                return true;
+            }
+
             case "pack" -> {
                 packs.reload();
 

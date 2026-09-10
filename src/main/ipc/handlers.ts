@@ -56,6 +56,7 @@ import {
   vanillaTextures,
   pointPluginAtPack,
   pointServerAtPack,
+  setPluginSetting,
   writeResourcePack
 } from '../services/content/resourcePackService'
 import { packHostStatus, packUrl, servePack, startPackHost, stopPackHost } from '../services/content/packHost'
@@ -2115,16 +2116,9 @@ export function registerIpcHandlers(): void {
        * be told to re-read without a restart, which server.properties cannot -
        * so it takes the job and the vanilla setting is cleared.
        */
-      const pluginTook = await pointPluginAtPack(
-        dir,
-        { url, required: payload.required },
-        payload.draft.armour
-      )
+      const pluginTook = await pointPluginAtPack(dir, { url, required: payload.required }, payload.draft.armour)
 
-      await pointServerAtPack(
-        dir,
-        pluginTook ? null : { url, sha1: built.sha1, required: payload.required }
-      )
+      await pointServerAtPack(dir, pluginTook ? null : { url, sha1: built.sha1, required: payload.required })
 
       /*
        * And told, if it is up. Without this the config is right and the
@@ -2350,6 +2344,43 @@ export function registerIpcHandlers(): void {
     toast('success', `Vote port ${port} is open`, 'Vote sites can reach the server now.')
 
     return { port, ...(await forwardingStatus(port, host)) }
+  })
+
+  /**
+   * Turns the Discord feed on, without anybody opening a YAML file.
+   *
+   * The plugin reads this setting on every use rather than caching it, so a
+   * reload is genuinely all it takes and nobody has to restart a server full
+   * of people to start posting to a channel.
+   */
+  handle('host:discordWebhook', async (payload: { serverId: string; url: string }) => {
+    const server = getHostedServer(payload.serverId)
+    const dir = hostedServerDir(server.id)
+
+    const written = await setPluginSetting(dir, ['discord', 'webhook'], payload.url)
+
+    if (!written) {
+      throw new LauncherError('NOT_FOUND', 'no plugin config', {
+        title: 'That server has no Nexus plugin',
+        message:
+          'The Discord feed comes from the plugin, and this server has not run with it yet. ' +
+          'Start it once so the plugin writes its settings, then try again.'
+      })
+    }
+
+    let told = false
+    if (isHostedServerRunning(server.id)) {
+      sendHostedServerCommand(server.id, 'nexus reload')
+      told = true
+    }
+
+    toast(
+      'success',
+      payload.url ? 'Discord feed on' : 'Discord feed off',
+      told ? 'The server has been told.' : 'It will pick this up when it starts.'
+    )
+
+    return { written, told }
   })
 
   handle(
