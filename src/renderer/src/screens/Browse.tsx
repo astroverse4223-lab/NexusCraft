@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Boxes, Check, Download, ExternalLink, Key, Package, Search, Sparkles, Palette, Users } from 'lucide-react'
+import {
+  AlertTriangle,
+  Boxes,
+  Check,
+  Download,
+  ExternalLink,
+  Key,
+  Package,
+  Search,
+  Sparkles,
+  Palette,
+  Users
+} from 'lucide-react'
 import type { ContentKindId, Instance, LauncherErrorPayload, ModrinthProject, ModrinthVersion } from '@shared/types'
 import { api, toPayload } from '../api'
 import { useInfiniteScroll } from '../components/useInfiniteScroll'
@@ -134,8 +146,7 @@ export function BrowseTab({
            */
           instanceId: target.id || null
         }
-        const result =
-          source === 'curseforge' ? await api.curseforge.search(input) : await api.modrinth.search(input)
+        const result = source === 'curseforge' ? await api.curseforge.search(input) : await api.modrinth.search(input)
         if (id !== requestId.current) return
         setProjects((current) => {
           if (offset === 0 || current === null) return result.projects
@@ -214,10 +225,7 @@ export function BrowseTab({
 
         <div className="row gap-8">
           <div className="tabs">
-            <button
-              className={`tab ${source === 'modrinth' ? 'active' : ''}`}
-              onClick={() => setSource('modrinth')}
-            >
+            <button className={`tab ${source === 'modrinth' ? 'active' : ''}`} onClick={() => setSource('modrinth')}>
               Modrinth
             </button>
             <button
@@ -352,7 +360,7 @@ export function BrowseTab({
                 style={{ textAlign: 'left', alignItems: 'stretch' }}
                 onClick={() => setSelected(project)}
               >
-                <div className="row gap-11">
+                <div className="row gap-10">
                   {project.iconDataUrl ? (
                     <img
                       src={project.iconDataUrl}
@@ -409,10 +417,10 @@ export function BrowseTab({
           </div>
 
           {/*
-            * The sentinel. Empty and outside the grid, so it cannot be mistaken
-            * for a card or leave a gap in the layout — it only has to cross the
-            * viewport for the next page to be fetched.
-            */}
+           * The sentinel. Empty and outside the grid, so it cannot be mistaken
+           * for a card or leave a gap in the layout — it only has to cross the
+           * viewport for the next page to be fetched.
+           */}
           {hasMore && <div ref={sentinel} style={{ height: 1 }} aria-hidden />}
 
           {loadingMore && (
@@ -422,10 +430,10 @@ export function BrowseTab({
           )}
 
           {/*
-            * Both catalogues stop paging well short of their own totals — the
-            * IPC schema caps offset at 5000 and CurseForge refuses past 10000 —
-            * so say the search needs narrowing rather than looking broken.
-            */}
+           * Both catalogues stop paging well short of their own totals — the
+           * IPC schema caps offset at 5000 and CurseForge refuses past 10000 —
+           * so say the search needs narrowing rather than looking broken.
+           */}
           {!hasMore && loaded >= PAGE_SIZE && (
             <div className="tiny dim center" style={{ padding: '20px 0' }}>
               {loaded >= total
@@ -653,9 +661,7 @@ function InstallDialog({
                   <span className="truncate" style={{ fontWeight: 600 }}>
                     {version.versionNumber}
                   </span>
-                  {version.versionType !== 'release' && (
-                    <span className="pill warning">{version.versionType}</span>
-                  )}
+                  {version.versionType !== 'release' && <span className="pill warning">{version.versionType}</span>}
                   {version.requiredDependencies > 0 && (
                     <span className="pill" title="Required dependencies are installed automatically">
                       +{version.requiredDependencies} dep{version.requiredDependencies === 1 ? '' : 's'}

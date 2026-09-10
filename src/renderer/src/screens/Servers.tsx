@@ -1,18 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import {
-  Check,
-  Copy,
-  Download,
-  Pencil,
-  Play,
-  Plus,
-  RefreshCw,
-  Server,
-  Star,
-  Trash2,
-  Users,
-  Wifi
-} from 'lucide-react'
+import { Check, Copy, Download, Pencil, Play, Plus, RefreshCw, Server, Star, Trash2, Users, Wifi } from 'lucide-react'
 import type { LauncherErrorPayload, SavedServer, ServerStatus } from '@shared/types'
 import { api, toPayload } from '../api'
 import { useStore, selectedInstance } from '../store/useStore'
@@ -78,9 +65,7 @@ export function ServersScreen(): JSX.Element {
   }
 
   async function join(server: SavedServer): Promise<void> {
-    const target = server.preferredInstanceId
-      ? instances.find((i) => i.id === server.preferredInstanceId)
-      : instance
+    const target = server.preferredInstanceId ? instances.find((i) => i.id === server.preferredInstanceId) : instance
     if (!target) {
       setError({
         code: 'NOT_FOUND',
@@ -126,7 +111,11 @@ export function ServersScreen(): JSX.Element {
         </div>
         <div className="row gap-8">
           {instance && (
-            <button className="btn" onClick={() => void importFromInstance()} title="Import from this instance's servers.dat">
+            <button
+              className="btn"
+              onClick={() => void importFromInstance()}
+              title="Import from this instance's servers.dat"
+            >
               <Download size={15} /> Import
             </button>
           )}
@@ -189,7 +178,10 @@ export function ServersScreen(): JSX.Element {
               onEdit={() => setEditing(server)}
               onDelete={() => setDeleting(server)}
               onFavorite={() => {
-                void api.servers.favorite(server.id, !server.favorite).then(load).catch((err) => setError(toPayload(err)))
+                void api.servers
+                  .favorite(server.id, !server.favorite)
+                  .then(load)
+                  .catch((err) => setError(toPayload(err)))
               }}
             />
           ))}
@@ -252,7 +244,7 @@ function ServerCard({
   return (
     <div className="panel panel-hover" style={{ overflow: 'hidden' }}>
       <div className="panel-pad col gap-12">
-        <div className="row gap-11">
+        <div className="row gap-10">
           {status?.faviconDataUrl ? (
             <img
               src={status.faviconDataUrl}
@@ -297,7 +289,11 @@ function ServerCard({
             title={server.favorite ? 'Remove from favourites' : 'Add to favourites'}
             onClick={onFavorite}
           >
-            <Star size={15} fill={server.favorite ? 'var(--warning)' : 'none'} style={server.favorite ? { color: 'var(--warning)' } : undefined} />
+            <Star
+              size={15}
+              fill={server.favorite ? 'var(--warning)' : 'none'}
+              style={server.favorite ? { color: 'var(--warning)' } : undefined}
+            />
           </button>
         </div>
 
@@ -487,7 +483,9 @@ function ServerEditor({
           maxLength={64}
           onChange={(event) => setVersion(event.target.value)}
         />
-        <p className="field-hint">Just a note for yourself. The real version is read from the server when it responds.</p>
+        <p className="field-hint">
+          Just a note for yourself. The real version is read from the server when it responds.
+        </p>
       </div>
 
       <div className="field">

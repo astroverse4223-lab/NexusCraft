@@ -1079,14 +1079,35 @@ textarea {
   display: flex;
   flex-direction: column;
 }
+/*
+ * Every step, because a missing one is silent.
+ *
+ * gap-2, gap-6, gap-10 and gap-14 were used across the app and defined
+ * nowhere, so they did nothing at all: a `.col gap-14` got no gap and its
+ * panels sat flush against each other, and a `.row gap-6` quietly kept the
+ * ten pixels `.row` sets for itself. Nothing errors, nothing warns, and the
+ * number in the markup is simply not the number on the screen.
+ */
+.gap-2 {
+  gap: 2px;
+}
 .gap-4 {
   gap: 4px;
+}
+.gap-6 {
+  gap: 6px;
 }
 .gap-8 {
   gap: 8px;
 }
+.gap-10 {
+  gap: 10px;
+}
 .gap-12 {
   gap: 12px;
+}
+.gap-14 {
+  gap: 14px;
 }
 .gap-16 {
   gap: 16px;
@@ -1166,6 +1187,28 @@ textarea {
   text-transform: uppercase;
   color: var(--text-dim);
   margin-bottom: 12px;
+}
+
+/*
+ * A gap and a margin are two ways of saying the same thing, and together they
+ * say it twice. `.panel.col.gap-12` already puts twelve pixels under the
+ * heading and the margin made it twenty-four, which is what left every short
+ * panel looking like it had lost its contents.
+ *
+ * The margin stays on the bare `.section-title`, because the places that are
+ * not flex containers have nothing else holding the heading off its content.
+ */
+.gap-8 > .section-title {
+  margin-bottom: 2px;
+}
+
+.gap-10 > .section-title,
+.gap-12 > .section-title,
+.gap-14 > .section-title,
+.gap-16 > .section-title,
+.gap-20 > .section-title,
+.gap-24 > .section-title {
+  margin-bottom: 0;
 }
 
 .tabs {

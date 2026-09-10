@@ -90,7 +90,10 @@ export function DataPacksTab({ instance }: { instance: Instance }): JSX.Element 
   }, [instance.id])
 
   useEffect(() => {
-    void api.datapacks.list().then(setPacks).catch((err) => setError(toPayload(err)))
+    void api.datapacks
+      .list()
+      .then(setPacks)
+      .catch((err) => setError(toPayload(err)))
   }, [])
 
   useEffect(() => {
@@ -101,7 +104,6 @@ export function DataPacksTab({ instance }: { instance: Instance }): JSX.Element 
     if (!world) return setInstalled([])
     try {
       setInstalled(await api.datapacks.installed(instance.id, world))
-
     } catch {
       setInstalled([])
     }
@@ -170,67 +172,69 @@ export function DataPacksTab({ instance }: { instance: Instance }): JSX.Element 
             <div key={category}>
               <div className="section-title">{category}</div>
               <div className="card-grid">
-                {packs.filter((p) => p.category === category).map((pack) => {
-            const Icon = ICONS[pack.icon] ?? Sparkles
-            const already = installed.find((i) => i.fileName === `${pack.id}.zip`)
-            return (
-              <div key={pack.id} className="panel panel-hover panel-pad col gap-12">
-                <div className="row gap-11">
-                  <div
-                    style={{
-                      width: 42,
-                      height: 42,
-                      borderRadius: 12,
-                      background: 'var(--accent-dim)',
-                      color: 'var(--accent)',
-                      display: 'grid',
-                      placeItems: 'center',
-                      flexShrink: 0
-                    }}
-                  >
-                    <Icon size={19} />
-                  </div>
-                  <div className="flex-1" style={{ minWidth: 0 }}>
-                    <div className="row gap-8">
-                      <span className="truncate" style={{ fontWeight: 650 }}>
-                        {pack.name}
-                      </span>
-                      {already && <span className="pill success">Installed</span>}
-                    </div>
-                    <div className="tiny dim">{pack.tagline}</div>
-                  </div>
-                </div>
+                {packs
+                  .filter((p) => p.category === category)
+                  .map((pack) => {
+                    const Icon = ICONS[pack.icon] ?? Sparkles
+                    const already = installed.find((i) => i.fileName === `${pack.id}.zip`)
+                    return (
+                      <div key={pack.id} className="panel panel-hover panel-pad col gap-12">
+                        <div className="row gap-10">
+                          <div
+                            style={{
+                              width: 42,
+                              height: 42,
+                              borderRadius: 12,
+                              background: 'var(--accent-dim)',
+                              color: 'var(--accent)',
+                              display: 'grid',
+                              placeItems: 'center',
+                              flexShrink: 0
+                            }}
+                          >
+                            <Icon size={19} />
+                          </div>
+                          <div className="flex-1" style={{ minWidth: 0 }}>
+                            <div className="row gap-8">
+                              <span className="truncate" style={{ fontWeight: 650 }}>
+                                {pack.name}
+                              </span>
+                              {already && <span className="pill success">Installed</span>}
+                            </div>
+                            <div className="tiny dim">{pack.tagline}</div>
+                          </div>
+                        </div>
 
-                <p className="tiny dim" style={{ minHeight: 46, lineHeight: 1.5 }}>
-                  {pack.description}
-                </p>
+                        <p className="tiny dim" style={{ minHeight: 46, lineHeight: 1.5 }}>
+                          {pack.description}
+                        </p>
 
-                <div className="row gap-8">
-                  <button
-                    className="btn btn-primary btn-sm flex-1"
-                    disabled={!world}
-                    onClick={() => setConfiguring(pack)}
-                  >
-                    <Sparkles size={13} /> {already ? 'Reconfigure' : 'Set up'}
-                  </button>
-                  {already && (
-                    <button
-                      className="btn btn-ghost btn-icon"
-                      title="Remove from this world"
-                      onClick={() => {
-                        void api.datapacks
-                          .remove(instance.id, world, already.fileName)
-                          .then(refreshInstalled)
-                          .catch((err) => setError(toPayload(err)))
-                      }}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                </div>
-              </div>
-                  )
-                })}
+                        <div className="row gap-8">
+                          <button
+                            className="btn btn-primary btn-sm flex-1"
+                            disabled={!world}
+                            onClick={() => setConfiguring(pack)}
+                          >
+                            <Sparkles size={13} /> {already ? 'Reconfigure' : 'Set up'}
+                          </button>
+                          {already && (
+                            <button
+                              className="btn btn-ghost btn-icon"
+                              title="Remove from this world"
+                              onClick={() => {
+                                void api.datapacks
+                                  .remove(instance.id, world, already.fileName)
+                                  .then(refreshInstalled)
+                                  .catch((err) => setError(toPayload(err)))
+                              }}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
               </div>
             </div>
           ))}
@@ -296,10 +300,7 @@ function ConfigureDialog({
     }
   }, [instance.id, pack.id, values])
 
-  const functionFiles = useMemo(
-    () => (preview?.files ?? []).filter((f) => f.path.endsWith('.mcfunction')),
-    [preview]
-  )
+  const functionFiles = useMemo(() => (preview?.files ?? []).filter((f) => f.path.endsWith('.mcfunction')), [preview])
 
   async function install(): Promise<void> {
     setBusy(true)
@@ -372,9 +373,7 @@ function ConfigureDialog({
                   min={option.min}
                   max={option.max}
                   value={Number(values[option.key])}
-                  onChange={(event) =>
-                    setValues((v) => ({ ...v, [option.key]: Number(event.target.value) }))
-                  }
+                  onChange={(event) => setValues((v) => ({ ...v, [option.key]: Number(event.target.value) }))}
                 />
               )}
               {option.type === 'select' && (
