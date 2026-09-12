@@ -1,8 +1,9 @@
 import { type JSX, useEffect, useMemo, useRef, useState } from 'react'
-import { Eraser, Layers, Pipette, RotateCw, Save, Send, Trash2 } from 'lucide-react'
+import { Boxes, Eraser, Layers, Pipette, RotateCw, Save, Send, Trash2, Undo2 } from 'lucide-react'
 import type { PaletteBlock } from '@shared/blocks'
 import type { HostedServer, HostedServerState, Instance, LauncherErrorPayload } from '@shared/types'
 import { api, toPayload } from '../api'
+import { BlockCanvas } from '../components/BlockCanvas'
 import { ErrorView, Spinner } from '../components/ui'
 
 /**
@@ -29,6 +30,9 @@ interface Cell {
 const MAX_SIDE = 48
 const MAX_LAYERS = 24
 
+/** How many steps back the studio remembers. */
+const UNDO_DEPTH = 60
+
 export function StudioScreen({ instance }: { instance: Instance }): JSX.Element {
   const [palette, setPalette] = useState<PaletteBlock[] | null>(null)
   const [group, setGroup] = useState('Stone')
@@ -42,6 +46,27 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
 
   const [cells, setCells] = useState<Cell[]>([])
   const [erasing, setErasing] = useState(false)
+
+  /*
+   * Which way the build is being looked at.
+   *
+   * Solid is the one to open on - it is the build, and you can see whether it
+   * works. The flat layers stay because there are things they are better at:
+   * laying an exact floor, working inside a roof, anywhere the block you want
+   * to click is behind another one.
+   */
+  const [view, setView] = useState<'solid' | 'flat'>('solid')
+
+  /*
+   * What the build looked like before each of the last few edits.
+   *
+   * Placing a block against the wrong face is a thing you do constantly in a
+   * view you can turn, and without this the only way back is to find the block
+   * again and break it. Snapshots rather than a list of changes, because a
+   * build is a few thousand small objects and the whole history of a long
+   * session still costs less than one texture.
+   */
+  const [history, setHistory] = useState<Cell[][]>([])
 
   /** Held while dragging, so a wall is one stroke rather than forty clicks. */
   const painting = useRef(false)
@@ -90,6 +115,27 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
     })()
   }, [serverId])
 
+  /*
+   * Ctrl+Z, but not while a field has the caret.
+   *
+   * The name box is a text input on the same screen, and taking the undo it
+   * would otherwise get would mean a typo there could only be fixed by hand.
+   */
+  useEffect(() => {
+    const key = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return
+
+      const on = document.activeElement?.tagName
+      if (on === 'INPUT' || on === 'TEXTAREA' || on === 'SELECT') return
+
+      event.preventDefault()
+      undo()
+    }
+
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  })
+
   useEffect(() => {
     const up = (): void => {
       painting.current = false
@@ -113,6 +159,24 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
     return map
   }, [palette])
 
+  /**
+   * Remembers the build as it stands, before something changes it.
+   *
+   * Taken once when an action starts rather than once per block, so dragging a
+   * forty block wall is one step back rather than forty. It is also the only
+   * way that is correct: during a fast drag several cells are painted before
+   * React renders again, and anything counting changes would lose some.
+   */
+  const snapshot = (): void => {
+    setHistory((past) => [...past.slice(-UNDO_DEPTH + 1), cells])
+  }
+
+  const undo = (): void => {
+    if (history.length === 0) return
+    setCells(history[history.length - 1])
+    setHistory((past) => past.slice(0, -1))
+  }
+
   const put = (x: number, z: number): void => {
     const key = `${x},${layer},${z}`
 
@@ -122,6 +186,19 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
     })
   }
 
+  /** A block placed against a face in the solid view. */
+  const place = (cell: Cell): void => {
+    const key = `${cell.x},${cell.y},${cell.z}`
+    snapshot()
+    setCells((was) => [...was.filter((one) => `${one.x},${one.y},${one.z}` !== key), cell])
+  }
+
+  const breakAt = (x: number, y: number, z: number): void => {
+    const key = `${x},${y},${z}`
+    snapshot()
+    setCells((was) => was.filter((one) => `${one.x},${one.y},${one.z}` !== key))
+  }
+
   /** Picks up whatever is under the cursor, the way an eyedropper does. */
   const pick = (x: number, z: number): void => {
     const here = at.get(`${x},${layer},${z}`)
@@ -129,6 +206,7 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
   }
 
   const turn = (): void => {
+    snapshot()
     setCells((was) => was.map((cell) => ({ ...cell, x: depth - 1 - cell.z, z: cell.x })))
 
     const wasWidth = width
@@ -194,6 +272,10 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
     }
   }
 
+  const held = (palette ?? []).find((entry) => entry.id === block)
+  const heldFace = held?.texture
+  const heldLabel = held?.label ?? block
+
   const shown = (palette ?? []).filter((entry) => entry.group === group)
 
   return (
@@ -221,83 +303,164 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
                 <input className="input" value={name} onChange={(e) => setName(e.target.value.slice(0, 48))} />
               </div>
 
-              <div className="field" style={{ width: 104 }}>
-                <label className="field-label">
-                  <Layers size={11} /> Layer
-                </label>
-                <select className="select" value={layer} onChange={(e) => setLayer(Number(e.target.value))}>
-                  {Array.from({ length: layers }, (_, i) => (
-                    <option key={i} value={i}>
-                      {i === 0 ? 'ground' : `+${i}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {view === 'flat' && (
+                <>
+                  <div className="field" style={{ width: 104 }}>
+                    <label className="field-label">
+                      <Layers size={11} /> Layer
+                    </label>
+                    <select className="select" value={layer} onChange={(e) => setLayer(Number(e.target.value))}>
+                      {Array.from({ length: layers }, (_, i) => (
+                        <option key={i} value={i}>
+                          {i === 0 ? 'ground' : `+${i}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <button
-                className={`btn btn-sm${erasing ? ' btn-primary' : ''}`}
-                onClick={() => setErasing(!erasing)}
-                title="Click cells to clear them"
-              >
-                <Eraser size={14} /> Erase
-              </button>
+                  <button
+                    className={`btn btn-sm${erasing ? ' btn-primary' : ''}`}
+                    onClick={() => setErasing(!erasing)}
+                    title="Click cells to clear them"
+                  >
+                    <Eraser size={14} /> Erase
+                  </button>
+                </>
+              )}
+
+              {/* The two ways of looking at the same build. */}
+              <div className="seg">
+                <button
+                  className={`seg-btn${view === 'solid' ? ' on' : ''}`}
+                  onClick={() => setView('solid')}
+                  title="Build in three dimensions"
+                >
+                  <Boxes size={13} /> Solid
+                </button>
+                <button
+                  className={`seg-btn${view === 'flat' ? ' on' : ''}`}
+                  onClick={() => setView('flat')}
+                  title="One layer at a time, from above"
+                >
+                  <Layers size={13} /> Layers
+                </button>
+              </div>
 
               <button className="btn btn-sm" onClick={turn} title="A quarter turn clockwise">
                 <RotateCw size={14} /> Turn
               </button>
 
-              <button className="btn btn-sm" disabled={cells.length === 0} onClick={() => setCells([])}>
+              <button className="btn btn-sm" disabled={history.length === 0} onClick={undo} title="Ctrl+Z">
+                <Undo2 size={14} /> Undo
+              </button>
+
+              <button
+                className="btn btn-sm"
+                disabled={cells.length === 0}
+                onClick={() => {
+                  snapshot()
+                  setCells([])
+                }}
+              >
                 <Trash2 size={14} /> Clear
               </button>
             </div>
 
-            {/*
+            {view === 'solid' ? (
+              <div className="block-canvas-wrap">
+                <BlockCanvas
+                  cells={cells}
+                  palette={palette ?? []}
+                  width={width}
+                  depth={depth}
+                  layers={layers}
+                  block={block}
+                  onPlace={place}
+                  onBreak={breakAt}
+                  onPick={setBlock}
+                />
+
+                <div className="block-hint">
+                  <span>
+                    <b>Left</b> break
+                  </span>
+                  <span>
+                    <b>Right</b> place
+                  </span>
+                  <span>
+                    <b>Middle</b> pick
+                  </span>
+                  <span>
+                    <b>Drag</b> turn
+                  </span>
+                  <span>
+                    <b>Scroll</b> zoom
+                  </span>
+                </div>
+
+                {heldFace && (
+                  <div className="block-held">
+                    <i style={{ backgroundImage: `url(${heldFace})` }} />
+                    {heldLabel}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                {/*
               Drag to paint. A wall is forty blocks and clicking forty times is
               how a tool stops being used - so the mouse being down is enough,
               and the window-level mouseup means letting go outside the grid
               still ends the stroke.
             */}
-            <div
-              className="studio-grid"
-              style={{ gridTemplateColumns: `repeat(${width}, 1fr)` }}
-              onMouseLeave={() => (painting.current = false)}
-            >
-              {Array.from({ length: depth }, (_, z) =>
-                Array.from({ length: width }, (_, x) => {
-                  const here = at.get(`${x},${layer},${z}`)
-                  const below = layer > 0 ? at.get(`${x},${layer - 1},${z}`) : undefined
-                  const face = here ? faceFor.get(here.block) : undefined
-                  const under = below ? faceFor.get(below.block) : undefined
+                <div
+                  className="studio-grid"
+                  style={{ gridTemplateColumns: `repeat(${width}, 1fr)` }}
+                  onMouseLeave={() => (painting.current = false)}
+                >
+                  {Array.from({ length: depth }, (_, z) =>
+                    Array.from({ length: width }, (_, x) => {
+                      const here = at.get(`${x},${layer},${z}`)
+                      const below = layer > 0 ? at.get(`${x},${layer - 1},${z}`) : undefined
+                      const face = here ? faceFor.get(here.block) : undefined
+                      const under = below ? faceFor.get(below.block) : undefined
 
-                  return (
-                    <button
-                      key={`${x}-${z}`}
-                      className="studio-cell"
-                      title={here ? here.block : `${x}, ${z}`}
-                      onMouseDown={(e) => {
-                        if (e.altKey) {
-                          pick(x, z)
-                          return
-                        }
-                        painting.current = true
-                        put(x, z)
-                      }}
-                      onMouseEnter={() => {
-                        if (painting.current) put(x, z)
-                      }}
-                      style={{
-                        backgroundImage: face ? `url(${face})` : under ? `url(${under})` : undefined,
-                        opacity: face ? 1 : under ? 0.28 : 1
-                      }}
-                    />
-                  )
-                })
-              )}
-            </div>
+                      return (
+                        <button
+                          key={`${x}-${z}`}
+                          className="studio-cell"
+                          title={here ? here.block : `${x}, ${z}`}
+                          onMouseDown={(e) => {
+                            if (e.altKey) {
+                              pick(x, z)
+                              return
+                            }
+                            // Once per stroke, not once per cell.
+                            snapshot()
+                            painting.current = true
+                            put(x, z)
+                          }}
+                          onMouseEnter={() => {
+                            if (painting.current) put(x, z)
+                          }}
+                          style={{
+                            backgroundImage: face ? `url(${face})` : under ? `url(${under})` : undefined,
+                            opacity: face ? 1 : under ? 0.28 : 1
+                          }}
+                        />
+                      )
+                    })
+                  )}
+                </div>
+              </>
+            )}
 
             <p className="tiny dim">
               {width} by {depth}, {layers} layers &middot; {cells.length} block
-              {cells.length === 1 ? '' : 's'} &middot; drag to paint, alt-click to pick up a block. North is up.
+              {cells.length === 1 ? '' : 's'} &middot;{' '}
+              {view === 'solid'
+                ? 'right-click a face to build against it. North is towards the far edge.'
+                : 'drag to paint, alt-click to pick up a block. North is up.'}
             </p>
           </div>
         </div>

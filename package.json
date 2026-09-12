@@ -33,6 +33,7 @@
     "minecraft-data": "^3.113.2",
     "mineflayer": "^4.37.1",
     "mineflayer-pathfinder": "^2.4.5",
+    "three": "^0.169.0",
     "vorbis-encoder-js": "^1.0.2",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
@@ -49,6 +50,7 @@
     "@types/node": "^22.14.0",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
+    "@types/three": "^0.169.0",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^2.1.9",
     "electron": "^33.4.11",

@@ -26,6 +26,14 @@ interface Candidate {
   group: string
   /** Only when the texture is not named after the block. */
   texture?: string
+  /**
+   * What the underside uses, when it is neither the top nor the side.
+   *
+   * Only the blocks that sit on the ground need this. A log's ends match, and
+   * so do a hay bale's, but grass over dirt is dirt underneath - and reading
+   * the top texture for it would put a lid of turf on the bottom of the world.
+   */
+  under?: string
 }
 
 const WOODS = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak']
@@ -104,8 +112,8 @@ function candidates(): Candidate[] {
     { id: 'dirt', group: 'Ground' },
     { id: 'coarse_dirt', group: 'Ground' },
     { id: 'rooted_dirt', group: 'Ground' },
-    { id: 'podzol', group: 'Ground', texture: 'podzol_side' },
-    { id: 'grass_block', group: 'Ground', texture: 'grass_block_side' },
+    { id: 'podzol', group: 'Ground', texture: 'podzol_side', under: 'dirt' },
+    { id: 'grass_block', group: 'Ground', texture: 'grass_block_side', under: 'dirt' },
     { id: 'sand', group: 'Ground' },
     { id: 'red_sand', group: 'Ground' },
     { id: 'gravel', group: 'Ground' },
@@ -139,7 +147,7 @@ function candidates(): Candidate[] {
     { id: 'redstone_block', group: 'Metal and gem' },
 
     { id: 'bookshelf', group: 'Bits' },
-    { id: 'crafting_table', group: 'Bits', texture: 'crafting_table_front' },
+    { id: 'crafting_table', group: 'Bits', texture: 'crafting_table_front', under: 'oak_planks' },
     { id: 'furnace', group: 'Bits', texture: 'furnace_front' },
     { id: 'hay_block', group: 'Bits', texture: 'hay_block_side' },
     { id: 'note_block', group: 'Bits' },
@@ -197,21 +205,56 @@ export function blockPalette(minecraftVersion: string): PaletteBlock[] {
     const out: PaletteBlock[] = []
     let missing = 0
 
+    /** A texture as a data url, or nothing if this version has no such file. */
+    const read = (name: string): string | undefined => {
+      const entry = zip.getEntry(`assets/minecraft/textures/block/${name}.png`)
+      return entry ? 'data:image/png;base64,' + entry.getData().toString('base64') : undefined
+    }
+
     for (const candidate of candidates()) {
       const name = candidate.texture ?? candidate.id
-      const entry = zip.getEntry(`assets/minecraft/textures/block/${name}.png`)
+      const side = read(name)
 
-      if (!entry) {
+      if (!side) {
         missing += 1
         continue
       }
 
-      out.push({
+      /*
+       * Which faces differ is asked of the jar rather than listed here.
+       * The naming is consistent - `_top`, `_bottom`, `_side` beside the block
+       * - so the file being there is the answer, and it stays the answer when
+       * a version adds a wood or changes a texture out from under us.
+       */
+      const top = read(`${candidate.id}_top`)
+      const under = candidate.under ? read(candidate.under) : undefined
+
+      const block: PaletteBlock = {
         id: candidate.id,
         label: label(candidate.id),
         group: candidate.group,
-        texture: 'data:image/png;base64,' + entry.getData().toString('base64')
-      })
+        texture: side
+      }
+
+      if (top) block.top = top
+
+      // Falls back to the top, which is right for anything with two matching
+      // ends: a log's rings, a hay bale's cut, a quartz pillar's cap.
+      const bottom = read(`${candidate.id}_bottom`) ?? under
+      if (bottom) block.bottom = bottom
+
+      /*
+       * Grass is the one block stored without its colour. The top is a grey
+       * mask and so is the fringe down the sides, both tinted as the game
+       * draws them, so they are passed on as-is and coloured by the renderer.
+       */
+      if (candidate.id === 'grass_block') {
+        block.tintTop = true
+        const overlay = read('grass_block_side_overlay')
+        if (overlay) block.overlay = overlay
+      }
+
+      out.push(block)
     }
 
     if (missing > 0) {

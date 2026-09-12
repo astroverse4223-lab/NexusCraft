@@ -1661,6 +1661,131 @@ textarea {
   border-color: var(--accent);
 }
 
+/*
+ * A pair of buttons that pick between two views of one thing.
+ *
+ * Not `.tabs`, which is page furniture and sized to be the first thing you
+ * see. This sits in a row of small buttons and has to weigh the same as them,
+ * so it is the same height and marks the chosen one by filling it rather than
+ * by the quiet rule underneath that tabs use.
+ */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background 0.16s,
+    color 0.16s;
+}
+
+.seg-btn:hover {
+  color: var(--text);
+}
+
+.seg-btn.on {
+  background: var(--panel-hover);
+  box-shadow: var(--edge);
+  color: var(--text);
+}
+
+/*
+ * The three-dimensional half of the studio.
+ *
+ * The sky is a gradient rather than a flat fill so there is some sense of up
+ * before a single block is placed - on an empty canvas the grid and the
+ * horizon are the only things telling you which way you are looking.
+ */
+/* Holds the view and the two readouts that sit over its corners. */
+.block-canvas-wrap {
+  position: relative;
+}
+
+.block-canvas {
+  position: relative;
+  width: 100%;
+  height: clamp(360px, 58vh, 720px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--bg-3), var(--bg-0));
+  cursor: crosshair;
+  /* The right button builds, so the browser menu must not open on it. */
+  user-select: none;
+}
+
+.block-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The controls, said once, over the corner of the view. */
+.block-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  font-size: 11px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.block-hint b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The block a click would put down, shown where the eye already is. */
+.block-held {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.block-held i {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background-size: cover;
+  image-rendering: pixelated;
+}
+
 /* Where the server can be reached, meant to be read and copied. */
 .host-address {
   font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
