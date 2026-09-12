@@ -1550,6 +1550,17 @@ textarea {
   }
 }
 
+/* One written-down warning, ruled off from the next so a run of them reads. */
+.trouble-line {
+  align-items: baseline;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.trouble-line:nth-child(odd) {
+  background: var(--panel-flat);
+}
+
 /* Where the server can be reached, meant to be read and copied. */
 .host-address {
   font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);

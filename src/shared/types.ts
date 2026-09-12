@@ -1138,6 +1138,14 @@ export interface ServerInvite {
  * Distinct from `ServerShareDetails.reachable`, which is the same question
  * asked from inside the house and therefore cannot answer it.
  */
+/** One warning the launcher wrote down, as the Settings panel reads it. */
+export interface Trouble {
+  at: string
+  level: 'WARN' | 'ERROR'
+  scope: string
+  message: string
+}
+
 export interface DomainCheck {
   domain: string
 

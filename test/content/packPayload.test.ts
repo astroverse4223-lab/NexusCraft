@@ -56,6 +56,48 @@ describe('sending a pack to the main process', () => {
     expect(parsed.success).toBe(true)
   })
 
+  /*
+   * The same shape of mistake, twice more.
+   *
+   * items was 64 and sounds was 32. A 26.2 jar has 796 item textures and the
+   * eight cosmetic hats are items too, so a pack replacing a category of them
+   * went over without trying - and going over is silent, because the call is
+   * refused at the boundary and the screen simply does nothing.
+   */
+  it('takes a pack that replaces a category of items', () => {
+    const parsed = IpcRequestSchemas['resourcepack:remember'].safeParse({
+      draft: {
+        ...emptyDraft(),
+        items: Array.from({ length: 800 }, (_, i) => ({
+          id: `thing_${i}`,
+          label: `Thing ${i}`,
+          base: 'minecraft:stick',
+          image: png,
+          replaces: false
+        }))
+      }
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
+  it('takes an album of music discs', () => {
+    const parsed = IpcRequestSchemas['resourcepack:remember'].safeParse({
+      draft: {
+        ...emptyDraft(),
+        sounds: Array.from({ length: 60 }, (_, i) => ({
+          id: `track_${i}`,
+          label: `Track ${i}`,
+          event: 'music_disc.cat',
+          file: 'C:/sounds/track.ogg',
+          stream: true
+        }))
+      }
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
   it('still refuses a draft with no plausible end', () => {
     const parsed = IpcRequestSchemas['resourcepack:remember'].safeParse({
       draft: draftWith(50_000)

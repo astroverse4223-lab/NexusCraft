@@ -20,6 +20,7 @@ export const IPC_CHANNELS = [
   'app:systemMemory',
   'app:reportError',
   'app:diagnostics',
+  'app:recentTrouble',
 
   /* settings */
   'settings:get',

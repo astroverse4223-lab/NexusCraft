@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import type { JavaInstallation, LauncherErrorPayload } from '@shared/types'
 import { THEMES } from '@shared/types'
+import { TroublePanel } from '../components/TroublePanel'
 import { api, toPayload, type MemoryInfo } from '../api'
 import { ModAutoUpdate } from '../components/ModAutoUpdate'
 import { useStore, selectedInstance } from '../store/useStore'
@@ -722,6 +723,12 @@ export function SettingsScreen(): JSX.Element {
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {tab === 'about' && (
+        <div className="mb-16">
+          <TroublePanel />
         </div>
       )}
 

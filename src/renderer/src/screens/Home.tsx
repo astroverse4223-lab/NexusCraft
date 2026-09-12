@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Boxes, Clock, Cpu, HardDrive, Play, Server, Sparkles, Globe2 } from 'lucide-react'
+import { Boxes, Clock, Cpu, Play, Server, Sparkles, Globe2 } from 'lucide-react'
 import type { SavedServer, ServerStatus } from '@shared/types'
 import { api } from '../api'
 import { useStore, activeAccount, selectedInstance } from '../store/useStore'
 import { Onboarding } from './Onboarding'
 import { EmptyState, Spinner } from '../components/ui'
 import { SkinFace } from '../components/SkinView'
+import { ServerCard } from '../components/ServerCard'
 import { formatDuration, formatRelative, LOADER_COLORS, LOADER_LABELS } from '../format'
 
 export function HomeScreen(): JSX.Element {
@@ -81,7 +82,23 @@ function Dashboard(): JSX.Element {
         <StatTile icon={<Server size={17} />} label="Saved servers" value={loading ? '…' : String(servers.length)} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+      {/*
+        Above the two columns, because it is the one thing on this screen that
+        changes on its own. Everything else here is a list of what you have;
+        this is what is happening.
+      */}
+      <div className="mb-16">
+        <ServerCard />
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)',
+          gap: 16,
+          alignItems: 'start'
+        }}
+      >
         <section>
           <div className="section-title">Recently played</div>
           {recent.length === 0 ? (
@@ -138,9 +155,7 @@ function Dashboard(): JSX.Element {
                       <div className="row gap-8 tiny dim mt-8">
                         <span>{instance.minecraftVersion}</span>
                         <span>·</span>
-                        <span style={{ color: LOADER_COLORS[instance.loader] }}>
-                          {LOADER_LABELS[instance.loader]}
-                        </span>
+                        <span style={{ color: LOADER_COLORS[instance.loader] }}>{LOADER_LABELS[instance.loader]}</span>
                         <span>·</span>
                         <span>{formatRelative(instance.lastPlayedAt)}</span>
                       </div>
@@ -267,7 +282,9 @@ function ServerRow({ server, status }: { server: SavedServer; status?: ServerSta
               : 'Not checked'}
         </div>
       </div>
-      <span className={`dot ${status?.online === true ? 'online' : status?.online === false ? 'offline' : 'unknown'}`} />
+      <span
+        className={`dot ${status?.online === true ? 'online' : status?.online === false ? 'offline' : 'unknown'}`}
+      />
     </button>
   )
 }

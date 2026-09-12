@@ -101,7 +101,16 @@ const resourcePackDraft = z.object({
         replaces: z.boolean()
       })
     )
-    .max(64),
+    /*
+     * Room for a pack, not for a handful.
+     *
+     * This was 64, which is the same shape of mistake the texture cap made:
+     * a 26.2 jar has 796 item textures, the eight cosmetic hats are items
+     * too, and a pack that replaces a category of them runs past sixty-four
+     * without trying. Going over does not warn - the call is refused at the
+     * IPC boundary and the screen goes quiet.
+     */
+    .max(1024),
   sounds: z
     .array(
       z.object({
@@ -112,7 +121,8 @@ const resourcePackDraft = z.object({
         stream: z.boolean()
       })
     )
-    .max(32),
+    /* Was 32, which one album of music discs would have exceeded. */
+    .max(256),
   textures: z
     .array(
       z.object({
@@ -199,6 +209,7 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   }),
   'app:window': z.object({ action: z.enum(['minimize', 'maximize', 'close']) }),
   'app:systemMemory': z.void(),
+  'app:recentTrouble': z.object({ limit: z.number().int().min(1).max(500) }).optional(),
   'app:diagnostics': z.object({
     outputPath: path,
     instanceId: id.optional(),

@@ -8,7 +8,7 @@ import type { TextureRecipe } from '@shared/textureRecipe'
 import type { SiteConfig, SiteStatus } from '@shared/serverSite'
 import type { FireworkDesign, ItemDesign, LogoDesign, MotdDesign, RecipePack, LootPack } from '@shared/creations'
 import type { OutsideCheck } from '@shared/types'
-import type { DomainCheck } from '@shared/types'
+import type { DomainCheck, Trouble } from '@shared/types'
 import type {
   Account,
   AppSettings,
@@ -236,6 +236,8 @@ export const api = {
       call<string | null>('app:pickSavePath', opts),
     window: (action: 'minimize' | 'maximize' | 'close') => call<boolean>('app:window', { action }),
     memory: () => call<MemoryInfo>('app:systemMemory'),
+    recentTrouble: (limit?: number) =>
+      call<Trouble[]>('app:recentTrouble', limit === undefined ? undefined : { limit }),
     diagnostics: (outputPath: string, opts: { instanceId?: string; note?: string } = {}) =>
       call<{ path: string; bytes: number; files: number }>('app:diagnostics', { outputPath, ...opts })
   },

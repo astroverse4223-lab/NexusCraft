@@ -72,6 +72,7 @@ import { assertInside, dataRoot, ensureDir, logsRoot } from '../core/paths'
 import { writeBootstrap } from '../core/bootstrap'
 import { toast } from '../core/events'
 import { writeDiagnostics } from '../services/support/diagnostics'
+import { recentTrouble } from '../services/support/recentTrouble'
 
 import { getSettings, updateSettings, recommendedRamMb } from '../services/settings/settingsService'
 import {
@@ -571,6 +572,15 @@ export function registerIpcHandlers(): void {
    * Deliberately a file the user can open and read before sending it anywhere:
    * it is plain text, and everything in it has been through the log redactor.
    */
+  /**
+   * What the launcher has complained about lately.
+   *
+   * Every silent failure this app has had wrote a line here first - a pack
+   * that would not build said exactly why, hours before anybody worked it out,
+   * because the only copy was in a file nobody knew to open.
+   */
+  handle('app:recentTrouble', async (payload?: { limit: number }) => await recentTrouble(payload?.limit ?? 100))
+
   handle('app:diagnostics', async (payload: { outputPath: string; instanceId?: string; note?: string }) => {
     const result = await writeDiagnostics(payload.outputPath, {
       instanceId: payload.instanceId,
