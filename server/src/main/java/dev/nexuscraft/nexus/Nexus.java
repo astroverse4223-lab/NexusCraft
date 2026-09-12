@@ -499,6 +499,25 @@ public final class Nexus extends JavaPlugin {
         return cosmetics;
     }
 
+    /**
+     * The circuits the launcher has written, for tab completion.
+     *
+     * Read off disk each time rather than cached: they arrive while the server
+     * is running, and a list that needs a restart to notice a new one would be
+     * a list nobody trusts.
+     */
+    public java.util.List<String> circuitNames() {
+        java.io.File dir = new java.io.File(getDataFolder(), "circuits");
+        String[] found = dir.list((where, name) -> name.endsWith(".txt"));
+
+        if (found == null) return java.util.List.of();
+
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (String name : found) names.add(name.substring(0, name.length() - 4));
+
+        return names;
+    }
+
     public Armoury armoury() {
         return armoury;
     }
@@ -2903,6 +2922,60 @@ public final class Nexus extends JavaPlugin {
              * Warden left over from a crash and a Warden that rose on schedule
              * look exactly alike.
              */
+            /*
+             * A circuit designed in the launcher, put in somebody's clipboard.
+             *
+             * The launcher writes the file; this reads it. Into the clipboard
+             * rather than straight into the world so it lands where the player
+             * chooses to stand and so /undo takes it away - which matters more
+             * for redstone than for anything else, because a circuit is
+             * something you try, look at, and try again two blocks over.
+             */
+            case "circuit" -> {
+                if (args.length < 2) {
+                    sender.sendMessage(Text.bad("/nexus circuit <name> [player]"));
+                    return true;
+                }
+
+                Player who = args.length > 2
+                        ? getServer().getPlayerExact(args[2])
+                        : (sender instanceof Player self ? self : null);
+
+                if (who == null) {
+                    sender.sendMessage(Text.bad(args.length > 2
+                            ? args[2] + " is not online."
+                            : "Name somebody to give it to."));
+                    return true;
+                }
+
+                java.io.File file = new java.io.File(
+                        new java.io.File(getDataFolder(), "circuits"), args[1] + ".txt");
+
+                if (!file.isFile()) {
+                    sender.sendMessage(Text.bad("There is no circuit called " + args[1] + "."));
+                    return true;
+                }
+
+                try {
+                    int many = toolkit.load(who, java.nio.file.Files.readAllLines(file.toPath()));
+
+                    if (many == 0) {
+                        sender.sendMessage(Text.bad("Nothing in that circuit could be placed."));
+                        return true;
+                    }
+
+                    who.sendMessage(Text.good(many + " blocks ready. Stand where you want it and /paste."));
+                    if (!who.equals(sender)) {
+                        sender.sendMessage(Text.good("Sent " + args[1] + " to " + who.getName() + "."));
+                    }
+                } catch (java.io.IOException unreadable) {
+                    sender.sendMessage(Text.bad("Could not read that circuit."));
+                    getLogger().warning("circuit " + args[1] + ": " + unreadable.getMessage());
+                }
+
+                return true;
+            }
+
             case "stopboss", "clearbosses", "bossoff" -> {
                 int gone = boss.dismiss();
 

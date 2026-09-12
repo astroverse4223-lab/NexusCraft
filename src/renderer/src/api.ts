@@ -604,6 +604,8 @@ export const api = {
     acceptEula: (id: string) => call<HostedServer>('host:acceptEula', { id }),
     start: (id: string) => call<HostedServerState>('host:start', { id }),
     stop: (id: string) => call<HostedServerState>('host:stop', { id }),
+    sendCircuit: (serverId: string, name: string, player: string, pieces: string[]) =>
+      call<{ sent: boolean; blocks: number }>('host:sendCircuit', { serverId, name, player, pieces }),
     setDomain: (serverId: string, domain: string) =>
       call<{ address: string | null }>('host:setDomain', { serverId, domain }),
     checkDomain: (serverId: string, domain: string) => call<DomainCheck>('host:checkDomain', { serverId, domain }),

@@ -904,6 +904,20 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
    * strict about what it is not: no scheme, no path, no spaces. The check that
    * matters happens against real DNS a moment later.
    */
+  'host:sendCircuit': z.object({
+    serverId: id,
+    name: z.string().min(1).max(48),
+    player: z.string().max(16),
+
+    /*
+     * One line per block: "dx dy dz minecraft:repeater[facing=north]".
+     *
+     * Capped generously - a door is dozens of blocks, a sorter is hundreds -
+     * and every line is checked by the server as it reads it, so a bad one
+     * costs that block rather than the whole design.
+     */
+    pieces: z.array(z.string().min(5).max(200)).min(1).max(4096)
+  }),
   'host:setDomain': z.object({
     serverId: id,
     domain: z

@@ -1561,6 +1561,48 @@ textarea {
   background: var(--panel-flat);
 }
 
+/*
+ * The redstone grid: one square per block, seen from above.
+ *
+ * Square cells rather than a fixed pixel size, so a wide layout and a narrow
+ * one both fill the panel and neither ends up a letterbox.
+ */
+.redstone-grid {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.redstone-cell {
+  position: relative;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  border: none;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.redstone-cell:hover {
+  background: var(--panel-hover);
+}
+
+/* Which way a repeater or piston points, small enough not to crowd the mark. */
+.redstone-aim {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  font-size: 9px;
+  opacity: 0.75;
+}
+
 /* Where the server can be reached, meant to be read and copied. */
 .host-address {
   font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);

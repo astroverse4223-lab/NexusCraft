@@ -2358,6 +2358,42 @@ export function registerIpcHandlers(): void {
   })
 
   /**
+   * A circuit designed in the launcher, put where the plugin can read it.
+   *
+   * Written to a file rather than sent as a command, because a circuit is
+   * hundreds of blocks and a console line is not. The plugin then loads it
+   * into that player's clipboard, so it lands where they choose to stand and
+   * /undo takes it away again - which for redstone matters more than anywhere
+   * else, since a circuit is something you try and then try again two blocks
+   * to the left.
+   */
+  handle('host:sendCircuit', async (payload: { serverId: string; name: string; player: string; pieces: string[] }) => {
+    const server = getHostedServer(payload.serverId)
+    const dir = hostedServerDir(server.id)
+
+    const safe =
+      payload.name
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '_')
+        .slice(0, 48) || 'circuit'
+
+    const folder = ensureDir(join(dir, 'plugins', 'Nexus', 'circuits'))
+    const file = assertInside(folder, join(folder, `${safe}.txt`))
+
+    await writeFile(file, payload.pieces.join('\n'), 'utf8')
+
+    if (!isHostedServerRunning(server.id)) {
+      toast('info', 'Circuit saved', `Start the server, then /nexus circuit ${safe} to put it in your hands.`)
+      return { sent: false, blocks: payload.pieces.length }
+    }
+
+    sendHostedServerCommand(server.id, `nexus circuit ${safe}${payload.player ? ` ${payload.player}` : ''}`)
+
+    toast('success', 'Circuit sent', 'Stand where you want it in game and run /paste.')
+    return { sent: true, blocks: payload.pieces.length }
+  })
+
+  /**
    * The address players are told to type.
    *
    * Written once and used by the website, the invite link and the share panel,

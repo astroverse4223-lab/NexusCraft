@@ -24,6 +24,7 @@ import {
   Package,
   Palette,
   Sparkles,
+  Zap,
   Trophy,
   Type
 } from 'lucide-react'
@@ -64,12 +65,24 @@ import { BannersScreen } from './Banners'
 import { IconMakerScreen } from './IconMaker'
 import { MapArtTab } from './MapArt'
 import { PackMakerTab } from './PackMaker'
+import { RedstoneScreen } from './Redstone'
 import { focusedInstance } from '../store/useStore'
 import { EmptyState } from '../components/ui'
 import { DesignTools } from '../components/DesignTools'
 
 type Section =
-  'motd' | 'logo' | 'icon' | 'banners' | 'firework' | 'item' | 'recipes' | 'loot' | 'advancement' | 'mapart' | 'pack'
+  | 'motd'
+  | 'logo'
+  | 'icon'
+  | 'banners'
+  | 'firework'
+  | 'item'
+  | 'recipes'
+  | 'loot'
+  | 'advancement'
+  | 'mapart'
+  | 'pack'
+  | 'redstone'
 
 const BLANK_MOTD: MotdDesign = { line1: '&aYour Server', line2: '&7Come and have a look' }
 
@@ -352,7 +365,7 @@ export function GeneratorsScreen(): JSX.Element {
    * and ways of saving. So they get the header and the tabs and nothing else,
    * rather than the shared half being reshaped to fit around them.
    */
-  const OWN_SCREEN: Section[] = ['icon', 'banners', 'mapart', 'pack']
+  const OWN_SCREEN: Section[] = ['icon', 'banners', 'mapart', 'pack', 'redstone']
 
   const TABS: [Section, string, typeof Type][] = [
     ['motd', 'Server message', MessageSquare],
@@ -365,7 +378,8 @@ export function GeneratorsScreen(): JSX.Element {
     ['loot', 'Loot', Package],
     ['advancement', 'Advancements', Trophy],
     ['mapart', 'Map art', MapIcon],
-    ['pack', 'Resource pack', Palette]
+    ['pack', 'Resource pack', Palette],
+    ['redstone', 'Redstone', Zap]
   ]
 
   const chrome = (
@@ -408,6 +422,7 @@ export function GeneratorsScreen(): JSX.Element {
 
         {section === 'icon' && <IconMakerScreen />}
         {section === 'banners' && <BannersScreen />}
+        {section === 'redstone' && <RedstoneScreen />}
 
         {(section === 'mapart' || section === 'pack') &&
           (instance ? (
@@ -436,7 +451,7 @@ export function GeneratorsScreen(): JSX.Element {
    * narrowing is stated rather than the type widened to accept four sections
    * that never reach here.
    */
-  const shared = section as Exclude<Section, 'icon' | 'banners' | 'mapart' | 'pack'>
+  const shared = section as Exclude<Section, 'icon' | 'banners' | 'mapart' | 'pack' | 'redstone'>
 
   return (
     <>

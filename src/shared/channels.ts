@@ -294,6 +294,7 @@ export const IPC_CHANNELS = [
   'site:status',
   'site:votifierPort',
   'site:votifierInfo',
+  'host:sendCircuit',
   'host:setDomain',
   'host:checkDomain',
   'host:discordWebhook',

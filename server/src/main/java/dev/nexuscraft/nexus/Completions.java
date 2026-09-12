@@ -28,7 +28,7 @@ public final class Completions {
     private static final List<String> NEXUS = List.of(
             "wand", "layout", "setnpc", "clearnpc", "tpnpc", "npcs",
             "build", "setspawn", "check", "testarena",
-            "setboss", "boss", "startboss", "stopboss",
+            "setboss", "boss", "startboss", "stopboss", "circuit",
             "setportal", "clearportal", "undoportal", "portals", "digspot",
             "hologram", "holopreset", "holosize", "holoraise", "holobackdrop",
             "unhologram", "clearholograms",
@@ -327,6 +327,9 @@ public final class Completions {
                 // the moment its pack is built rather than when somebody
                 // remembers to add it here.
                 case "armour", "armor" -> nexus.armoury().ids();
+
+                // Whatever the launcher has written into plugins/Nexus/circuits.
+                case "circuit" -> nexus.circuitNames();
                 case "holosize" -> List.of("0.5", "1", "1.5", "2", "3", "4", "6");
                 case "holoraise" -> List.of("-1", "-0.5", "0.5", "1", "2");
                 case "rebuild" -> List.of("dropper", "parkour", "prison", "digsite");
@@ -345,7 +348,7 @@ public final class Completions {
             return switch (sub) {
                 case "setrank" -> ranks();
                 case "givekey" -> TIERS;
-                case "armour", "armor" -> names();
+                case "armour", "armor", "circuit" -> names();
                 case "rollback", "lookup" -> List.of("10", "30", "60", "180", "1440");
                 case "clearnpc" -> List.of("last");
                 case "endseason" -> List.of("confirm");

@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Location;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
@@ -355,6 +356,42 @@ public final class Toolkit {
 
         player.sendMessage(Text.good(pieces.size() + " blocks copied."));
         player.sendMessage(Text.plain("  Stand where you want it and /paste."));
+    }
+
+    /**
+     * Puts a design made somewhere else into somebody's clipboard.
+     *
+     * Loaded rather than pasted so it lands where they choose to stand, and so
+     * /undo takes it away again - which matters more here than anywhere else
+     * in this file. A circuit is something you try, look at, and try again two
+     * blocks to the left.
+     *
+     * A block state that will not parse is skipped rather than failing the
+     * whole load: one bad entry in forty should cost one block, and it is
+     * written to the log so it is findable.
+     */
+    public int load(Player player, List<String> lines) {
+        List<Piece> pieces = new ArrayList<>();
+
+        for (String line : lines) {
+            String[] bits = line.split(" ", 4);
+            if (bits.length < 4) continue;
+
+            try {
+                pieces.add(new Piece(
+                        Integer.parseInt(bits[0]),
+                        Integer.parseInt(bits[1]),
+                        Integer.parseInt(bits[2]),
+                        Bukkit.createBlockData(bits[3])));
+            } catch (IllegalArgumentException unusable) {
+                nexus.getLogger().warning("circuit: could not read \"" + line + "\" - " + unusable.getMessage());
+            }
+        }
+
+        if (pieces.isEmpty()) return 0;
+
+        clipboard.put(player.getUniqueId(), pieces);
+        return pieces.size();
     }
 
     public void paste(Player player) {
