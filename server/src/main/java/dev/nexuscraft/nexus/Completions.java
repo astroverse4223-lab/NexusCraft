@@ -28,7 +28,7 @@ public final class Completions {
     private static final List<String> NEXUS = List.of(
             "wand", "layout", "setnpc", "clearnpc", "tpnpc", "npcs",
             "build", "setspawn", "check", "testarena",
-            "setboss", "boss", "startboss", "clearbosses",
+            "setboss", "boss", "startboss", "stopboss",
             "setportal", "clearportal", "undoportal", "portals", "digspot",
             "hologram", "holopreset", "holosize", "holoraise", "holobackdrop",
             "unhologram", "clearholograms",

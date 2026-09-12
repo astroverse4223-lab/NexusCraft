@@ -517,24 +517,41 @@ public final class Boss {
     }
 
     /**
-     * Every Warden standing, wanted or not.
+     * Sends every Warden away, the one being fought included.
      *
-     * For the operator command, so somebody looking at a row of them can say
-     * so rather than killing each one by hand.
+     * There was no way to do this at all: the fight ended when somebody won it
+     * or when nobody turned up for long enough, and an operator watching a boss
+     * he did not want had to go and kill it by hand - which for a ravager with
+     * four hundred health and resistance is not a short job.
+     *
+     * Deliberately not fussy about which is which. An earlier version skipped
+     * the live one on the grounds that it was wanted, and the result was a
+     * command that could not do the thing its name promised.
+     *
+     * The clock moves on, so sending one away does not leave an appointment in
+     * the past for the next tick to act on.
      */
-    public int clearStrays() {
-        World survival = nexus.worlds().of(Worlds.Place.SURVIVAL);
-        if (survival == null) return 0;
-
+    public int dismiss() {
         int gone = 0;
 
-        for (org.bukkit.entity.Entity entity : survival.getEntities()) {
-            if (!entity.getScoreboardTags().contains(BOSS_TAG)) continue;
-            if (alive != null && entity.getUniqueId().equals(alive.getUniqueId())) continue;
-
-            entity.remove();
+        if (alive != null && !alive.isDead()) {
+            alive.remove();
             gone++;
         }
+
+        World survival = nexus.worlds().of(Worlds.Place.SURVIVAL);
+
+        if (survival != null) {
+            for (org.bukkit.entity.Entity entity : survival.getEntities()) {
+                if (!entity.getScoreboardTags().contains(BOSS_TAG)) continue;
+
+                entity.remove();
+                gone++;
+            }
+        }
+
+        clear();
+        scheduleNext();
 
         return gone;
     }

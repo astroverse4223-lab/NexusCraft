@@ -2895,13 +2895,22 @@ public final class Nexus extends JavaPlugin {
              * persistent and do not despawn - so somebody who restarted a few
              * times has a queue of Wardens and no way to say so.
              */
-            case "clearbosses" -> {
-                int gone = boss.clearStrays();
+            /*
+             * One command for "make them go away", whichever they are.
+             *
+             * Two - one for the live boss and one for the strays - would mean
+             * knowing which you were looking at, and from across an arena a
+             * Warden left over from a crash and a Warden that rose on schedule
+             * look exactly alike.
+             */
+            case "stopboss", "clearbosses", "bossoff" -> {
+                int gone = boss.dismiss();
 
                 sender.sendMessage(gone == 0
-                        ? Text.good("No strays to clear.")
-                        : Text.good("Cleared " + gone + " leftover Warden"
-                                + (gone == 1 ? "" : "s") + "."));
+                        ? Text.good("No Warden to send away.")
+                        : Text.good("Sent away " + gone + " Warden"
+                                + (gone == 1 ? "" : "s") + ". The next is due in "
+                                + Text.roughly((int) boss.secondsUntil()) + "."));
                 return true;
             }
 
