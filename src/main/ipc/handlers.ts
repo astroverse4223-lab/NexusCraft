@@ -74,6 +74,7 @@ import { toast } from '../core/events'
 import { writeDiagnostics } from '../services/support/diagnostics'
 import { recentTrouble } from '../services/support/recentTrouble'
 import { blockPalette } from '../companion/build/palette'
+import { blueprintFromCells, trimmed } from '@shared/studio'
 
 import { getSettings, updateSettings, recommendedRamMb } from '../services/settings/settingsService'
 import {
@@ -3003,46 +3004,41 @@ export function registerIpcHandlers(): void {
 
       const blueprint = (imported?.blueprint ?? entry?.blueprint) as Parameters<typeof exportBlueprint>[0]
       const name = imported?.summary.name ?? entry?.blueprint.name ?? 'structure'
-      const fileName = `${safeFileName(name)}.${payload.format}`
 
-      /*
-       * A hosted server: the file goes into that server's own world, because
-       * that is where a structure block on it reads from. Writing into the
-       * client instance instead leaves the block reporting an unknown name.
-       */
-      if (payload.serverId) {
-        const server = getHostedServer(payload.serverId)
-        const root = hostedServerDir(payload.serverId)
-        const world = await serverWorldName(root)
-        const target = join(structuresDir(join(root, world)), fileName)
-        // Stamped with the server's own version, not a hardcoded one.
-        const written = await exportBlueprint(blueprint, target, payload.format, server.minecraftVersion)
+      return await writeBlueprintOut(blueprint, name, payload)
+    }
+  )
 
-        toast(
-          'success',
-          `${name} sent to ${server.name}`,
-          payload.format === 'nbt'
-            ? `Place a structure block, set it to Load, and enter "${safeFileName(name).toLowerCase()}".`
-            : 'Saved into the server world. Note that a structure block only reads .nbt.'
-        )
-        return written
-      }
-
-      if (!payload.instanceId) throw new LauncherError('INVALID_INPUT', 'no export target given')
-
-      const instance = getInstance(payload.instanceId)
-      await ensureInstanceLayout(instance)
-      const target = join(schematicsDir(instance.gameDir), fileName)
-      const written = await exportBlueprint(blueprint, target, payload.format, instance.minecraftVersion)
-
-      toast(
-        'success',
-        `${name} exported`,
-        payload.format === 'schem'
-          ? `In game press M, load it, then Execute Operation → Paste Schematic in World. Loading alone only shows a hologram — it places no blocks.`
-          : `Saved to the instance's schematics folder. For a structure block, export to a server instead.`
+  /**
+   * A build drawn in the studio, written out as a schematic.
+   *
+   * The same destinations and the same advice an imported blueprint gets,
+   * because from the game's side there is no difference - a structure block
+   * does not care who drew it.
+   *
+   * What arrives is a list of placed blocks, which is a good shape to draw
+   * into and a poor one to write out, so it becomes a character grid on the
+   * way and loses its empty top layers: the studio has a fixed height whether
+   * or not anything is up there, and exporting the empty part makes a
+   * structure taller than what was built.
+   */
+  handle(
+    'studio:export',
+    async (payload: {
+      name: string
+      cells: { x: number; y: number; z: number; block: string }[]
+      width: number
+      depth: number
+      layers: number
+      instanceId?: string
+      serverId?: string
+      format: 'schem' | 'nbt'
+    }) => {
+      const drawn = trimmed(
+        blueprintFromCells(payload.name, payload.cells, payload.width, payload.depth, payload.layers)
       )
-      return written
+
+      return await writeBlueprintOut(drawn as Parameters<typeof exportBlueprint>[0], drawn.name, payload)
     }
   )
 
@@ -3597,4 +3593,59 @@ function noteServerJoin(address: string): void {
     (server) => server.address.toLowerCase() === host.toLowerCase() && server.port === port
   )
   if (match) recordJoin(match.id)
+}
+
+/**
+ * Where an exported build lands, and what to say afterwards.
+ *
+ * Shared rather than copied, because the rules are fiddly and version
+ * dependent: a hosted server wants the file inside its own world, since that
+ * is where a structure block on it reads from, and writing to the client
+ * instance instead leaves the block reporting a name it cannot find.
+ */
+async function writeBlueprintOut(
+  blueprint: Parameters<typeof exportBlueprint>[0],
+  name: string,
+  payload: { instanceId?: string; serverId?: string; format: 'schem' | 'nbt' }
+): Promise<Awaited<ReturnType<typeof exportBlueprint>>> {
+  const fileName = `${safeFileName(name)}.${payload.format}`
+
+  /*
+   * A hosted server: the file goes into that server's own world, because
+   * that is where a structure block on it reads from. Writing into the
+   * client instance instead leaves the block reporting an unknown name.
+   */
+  if (payload.serverId) {
+    const server = getHostedServer(payload.serverId)
+    const root = hostedServerDir(payload.serverId)
+    const world = await serverWorldName(root)
+    const target = join(structuresDir(join(root, world)), fileName)
+    // Stamped with the server's own version, not a hardcoded one.
+    const written = await exportBlueprint(blueprint, target, payload.format, server.minecraftVersion)
+
+    toast(
+      'success',
+      `${name} sent to ${server.name}`,
+      payload.format === 'nbt'
+        ? `Place a structure block, set it to Load, and enter "${safeFileName(name).toLowerCase()}".`
+        : 'Saved into the server world. Note that a structure block only reads .nbt.'
+    )
+    return written
+  }
+
+  if (!payload.instanceId) throw new LauncherError('INVALID_INPUT', 'no export target given')
+
+  const instance = getInstance(payload.instanceId)
+  await ensureInstanceLayout(instance)
+  const target = join(schematicsDir(instance.gameDir), fileName)
+  const written = await exportBlueprint(blueprint, target, payload.format, instance.minecraftVersion)
+
+  toast(
+    'success',
+    `${name} exported`,
+    payload.format === 'schem'
+      ? `In game press M, load it, then Execute Operation → Paste Schematic in World. Loading alone only shows a hologram — it places no blocks.`
+      : `Saved to the instance's schematics folder. For a structure block, export to a server instead.`
+  )
+  return written
 }

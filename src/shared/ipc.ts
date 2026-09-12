@@ -905,6 +905,27 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
    * matters happens against real DNS a moment later.
    */
   'blocks:palette': z.object({ minecraftVersion: z.string().min(1).max(32) }),
+  'studio:export': z.object({
+    name: z.string().min(1).max(48),
+    cells: z
+      .array(
+        z.object({
+          x: z.number().int().min(0).max(255),
+          y: z.number().int().min(0).max(255),
+          z: z.number().int().min(0).max(255),
+          block: z.string().min(1).max(64)
+        })
+      )
+      .min(1)
+      /* 48 x 48 x 24 is the studio's own ceiling; this is that with room over. */
+      .max(60_000),
+    width: z.number().int().min(1).max(256),
+    depth: z.number().int().min(1).max(256),
+    layers: z.number().int().min(1).max(256),
+    instanceId: id.optional(),
+    serverId: id.optional(),
+    format: z.enum(['schem', 'nbt'])
+  }),
   'host:sendCircuit': z.object({
     serverId: id,
     name: z.string().min(1).max(48),

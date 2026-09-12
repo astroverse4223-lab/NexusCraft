@@ -52,6 +52,10 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
   const [who, setWho] = useState('')
 
   const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState<'schem' | 'nbt' | null>(null)
+
+  /** Whether a saved file goes to the server's world or the instance's folder. */
+  const [toServer, setToServer] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
 
@@ -132,6 +136,13 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
     setDepth(wasWidth)
   }
 
+  /*
+   * The name field can be emptied, and both buttons send it somewhere that
+   * requires one. Without this, clearing the box makes them do nothing at all
+   * and say nothing about why - the request is refused before it is read.
+   */
+  const title = name.trim() || 'Build'
+
   const send = async (): Promise<void> => {
     if (!serverId || cells.length === 0) return
 
@@ -142,7 +153,7 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
     try {
       const result = await api.host.sendCircuit(
         serverId,
-        name,
+        title,
         who,
         cells.map((cell) => `${cell.x} ${cell.y} ${cell.z} minecraft:${cell.block}`)
       )
@@ -150,12 +161,36 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
       setSaid(
         result.sent
           ? `${result.blocks} blocks are in ${who || 'your'} hands — stand where you want it and run /paste.`
-          : `${result.blocks} blocks saved. Start the server, then /nexus circuit ${name.toLowerCase().replace(/[^a-z0-9_-]+/g, '_')}.`
+          : `${result.blocks} blocks saved. Start the server, then /nexus circuit ${title.toLowerCase().replace(/[^a-z0-9_-]+/g, '_')}.`
       )
     } catch (err) {
       setError(toPayload(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const save = async (format: 'schem' | 'nbt'): Promise<void> => {
+    if (cells.length === 0) return
+
+    setSaving(format)
+    setSaid(null)
+    setError(null)
+
+    try {
+      await api.blocks.exportBuild({
+        name: title,
+        cells,
+        width,
+        depth,
+        layers,
+        format,
+        ...(toServer && serverId ? { serverId } : { instanceId: instance.id })
+      })
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setSaving(null)
     }
   }
 
@@ -361,6 +396,46 @@ export function StudioScreen({ instance }: { instance: Instance }): JSX.Element 
                 </p>
               </>
             )}
+          </div>
+
+          <div className="panel panel-pad col gap-12">
+            <div className="section-title">Keep it as a file</div>
+
+            <p className="small muted">
+              A schematic you can load in Litematica or WorldEdit, share, or keep. The two formats are not
+              interchangeable: a structure block only reads <code>.nbt</code>, and Litematica wants <code>.schem</code>.
+            </p>
+
+            <div className="row gap-8 wrap">
+              <button
+                className="btn btn-sm"
+                disabled={saving !== null || cells.length === 0}
+                onClick={() => void save('schem')}
+              >
+                {saving === 'schem' ? <Spinner /> : <Save size={14} />} .schem
+              </button>
+
+              <button
+                className="btn btn-sm"
+                disabled={saving !== null || cells.length === 0}
+                onClick={() => void save('nbt')}
+              >
+                {saving === 'nbt' ? <Spinner /> : <Save size={14} />} .nbt
+              </button>
+
+              {servers.length > 0 && (
+                <label className="row gap-6 tiny" style={{ alignItems: 'center' }}>
+                  <input type="checkbox" checked={toServer} onChange={(e) => setToServer(e.target.checked)} />
+                  into the server&apos;s world
+                </label>
+              )}
+            </div>
+
+            <p className="tiny dim">
+              {toServer && servers.length > 0
+                ? 'Written into that server’s own world, which is where a structure block on it reads from.'
+                : `Written into ${instance.name}'s schematics folder.`}
+            </p>
           </div>
 
           <div className="panel panel-pad col gap-8">

@@ -505,7 +505,17 @@ export const api = {
 
   /** The blocks the studio can place, with the game's own faces on them. */
   blocks: {
-    palette: (minecraftVersion: string) => call<PaletteBlock[]>('blocks:palette', { minecraftVersion })
+    palette: (minecraftVersion: string) => call<PaletteBlock[]>('blocks:palette', { minecraftVersion }),
+    exportBuild: (payload: {
+      name: string
+      cells: { x: number; y: number; z: number; block: string }[]
+      width: number
+      depth: number
+      layers: number
+      instanceId?: string
+      serverId?: string
+      format: 'schem' | 'nbt'
+    }) => call<unknown>('studio:export', payload)
   },
 
   host: {

@@ -295,6 +295,7 @@ export const IPC_CHANNELS = [
   'site:votifierPort',
   'site:votifierInfo',
   'blocks:palette',
+  'studio:export',
   'host:sendCircuit',
   'host:setDomain',
   'host:checkDomain',
