@@ -14,14 +14,80 @@ import {
 } from '../../src/main/companion/build/schematicExport'
 import { loadSchematic } from '../../src/main/companion/build/schematic'
 import { blueprintSize, billOfMaterials } from '../../src/main/companion/build/blueprint'
-import { BLUEPRINT_LIBRARY } from '../../src/main/companion/build/library'
-import { REDSTONE_LIBRARY } from '../../src/main/companion/build/redstone'
+import type { LibraryEntry } from '../../src/main/companion/build/library'
 
 /**
  * The export is only worth anything if the file it writes is the structure that
- * went in. The reader already exists, so every bundled blueprint is written out
- * and read back — a real round trip, not a shape check.
+ * went in. The reader already exists, so each of these is written out and read
+ * back — a real round trip, not a shape check.
+ *
+ * The fixtures used to be the blueprints that shipped with the launcher, which
+ * is why they are written out here now: those were removed, and a test that
+ * borrows its inputs from a feature dies with that feature. Exporting is the
+ * part that has to keep working, because it is how a build made in the studio
+ * or imported from a schematic site leaves the app.
  */
+
+/** A small one with several blocks, an opening, and more than one layer. */
+const HUT: LibraryEntry = {
+  id: 'hut',
+  blurb: 'A fixture, not a build.',
+  blueprint: {
+    name: 'Hut',
+    palette: { o: 'oak_planks', s: 'stone', g: 'glass', '.': 'air' },
+    layers: [
+      ['sss', 's.s', 'sss'],
+      ['ogo', '...', 'ooo'],
+      ['ooo', 'ooo', 'ooo']
+    ]
+  }
+}
+
+/** One block, to catch anything that assumes a structure has volume. */
+const SPECK: LibraryEntry = {
+  id: 'speck',
+  blurb: 'A fixture, not a build.',
+  blueprint: { name: 'Speck', palette: { s: 'stone' }, layers: [['s']] }
+}
+
+/** Oblong on purpose: a cube hides every width and depth mix-up there is. */
+const PLANK: LibraryEntry = {
+  id: 'plank',
+  blurb: 'A fixture, not a build.',
+  blueprint: {
+    name: 'Plank',
+    palette: { s: 'smooth_stone', '.': 'air' },
+    layers: [['s.ss', 'ssss']]
+  }
+}
+
+/**
+ * Two repeaters facing opposite ways, which is all the state tests need.
+ *
+ * They used to read this out of the bundled clock. The clock is gone, but what
+ * it was proving is not: a repeater that loses its facing on the way out is a
+ * repeater pointing the wrong way, and a circuit of correct blocks that does
+ * nothing.
+ */
+const WIRED: LibraryEntry = {
+  id: 'wired',
+  blurb: 'A fixture, not a build.',
+  blueprint: {
+    name: 'Wired',
+    palette: {
+      s: 'stone',
+      n: 'repeater[facing=north,delay=4]',
+      u: 'repeater[facing=south,delay=4]',
+      '.': 'air'
+    },
+    layers: [
+      ['sss', 'sss'],
+      ['n.u', '...']
+    ]
+  }
+}
+
+const FIXTURES: LibraryEntry[] = [HUT, SPECK, PLANK, WIRED]
 
 const mcData = minecraftData('1.21.1')
 let directory = ''
@@ -35,7 +101,7 @@ afterAll(async () => {
 })
 
 describe('Sponge .schem export', () => {
-  it.each(BLUEPRINT_LIBRARY.map((entry) => [entry.id, entry] as const))(
+  it.each(FIXTURES.map((entry) => [entry.id, entry] as const))(
     '"%s" survives a round trip unchanged',
     async (id, entry) => {
       const file = join(directory, `${id}.schem`)
@@ -58,14 +124,14 @@ describe('Sponge .schem export', () => {
   )
 
   it('writes a gzipped file, as WorldEdit and Litematica expect', () => {
-    const data = toSpongeSchematic(BLUEPRINT_LIBRARY[0].blueprint)
+    const data = toSpongeSchematic(HUT.blueprint)
     // gzip magic number
     expect(data[0]).toBe(0x1f)
     expect(data[1]).toBe(0x8b)
   })
 
   it('prefixes block names for the game', async () => {
-    const data = toSpongeSchematic(BLUEPRINT_LIBRARY[0].blueprint)
+    const data = toSpongeSchematic(HUT.blueprint)
     const { parsed } = await nbt.parse(data)
     const simple = nbt.simplify(parsed) as Record<string, never>
     const names = Object.keys(simple.Palette)
@@ -76,19 +142,19 @@ describe('Sponge .schem export', () => {
 
 describe('vanilla .nbt structure export', () => {
   it('is gzipped and carries a size, palette and blocks', async () => {
-    const data = toVanillaStructure(BLUEPRINT_LIBRARY[0].blueprint)
+    const data = toVanillaStructure(HUT.blueprint)
     expect(data[0]).toBe(0x1f)
 
     const { parsed } = await nbt.parse(data)
     const simple = nbt.simplify(parsed) as Record<string, never>
     const size = simple.size as unknown as number[]
-    const expected = blueprintSize(BLUEPRINT_LIBRARY[0].blueprint)
+    const expected = blueprintSize(HUT.blueprint)
     expect(size).toEqual([expected.width, expected.height, expected.depth])
     expect((simple.palette as unknown as unknown[]).length).toBeGreaterThan(0)
   })
 
   it('leaves air out, so a structure block does not wipe the ground', async () => {
-    const entry = BLUEPRINT_LIBRARY[0]
+    const entry = HUT
     const data = toVanillaStructure(entry.blueprint)
     const { parsed } = await nbt.parse(data)
     const simple = nbt.simplify(parsed) as Record<string, never>
@@ -102,7 +168,7 @@ describe('vanilla .nbt structure export', () => {
   })
 
   it('only names blocks the game actually has', async () => {
-    const data = toVanillaStructure(BLUEPRINT_LIBRARY[5].blueprint)
+    const data = toVanillaStructure(PLANK.blueprint)
     const { parsed } = await nbt.parse(data)
     const simple = nbt.simplify(parsed) as Record<string, never>
     const palette = simple.palette as unknown as Array<{ Name: string }>
@@ -112,8 +178,8 @@ describe('vanilla .nbt structure export', () => {
   })
 
   it('produces a file small enough to be worth gzipping', () => {
-    const raw = gunzipSync(toVanillaStructure(BLUEPRINT_LIBRARY[5].blueprint))
-    const packed = toVanillaStructure(BLUEPRINT_LIBRARY[5].blueprint)
+    const raw = gunzipSync(toVanillaStructure(PLANK.blueprint))
+    const packed = toVanillaStructure(PLANK.blueprint)
     expect(packed.length).toBeLessThan(raw.length)
   })
 })
@@ -132,7 +198,6 @@ describe('safeFileName', () => {
   })
 })
 
-
 /**
  * Block states are the whole point of the redstone set.
  *
@@ -142,7 +207,7 @@ describe('safeFileName', () => {
  */
 describe('block states in exports', () => {
   it('Sponge keeps the state in the palette key', async () => {
-    const clock = REDSTONE_LIBRARY.find((entry) => entry.id === 'clock')!
+    const clock = WIRED
     const data = toSpongeSchematic(clock.blueprint)
     const { parsed } = await nbt.parse(data)
     const simple = nbt.simplify(parsed) as Record<string, never>
@@ -156,7 +221,7 @@ describe('block states in exports', () => {
   })
 
   it('vanilla splits the state into Properties, not the name', async () => {
-    const clock = REDSTONE_LIBRARY.find((entry) => entry.id === 'clock')!
+    const clock = WIRED
     const data = toVanillaStructure(clock.blueprint)
     const { parsed } = await nbt.parse(data)
     const simple = nbt.simplify(parsed) as Record<string, never>
@@ -171,7 +236,7 @@ describe('block states in exports', () => {
   })
 
   it('keeps the two repeater directions apart in the vanilla palette', async () => {
-    const clock = REDSTONE_LIBRARY.find((entry) => entry.id === 'clock')!
+    const clock = WIRED
     const data = toVanillaStructure(clock.blueprint)
     const { parsed } = await nbt.parse(data)
     const simple = nbt.simplify(parsed) as Record<string, never>
@@ -183,7 +248,7 @@ describe('block states in exports', () => {
     expect(new Set(facings).size).toBe(2)
   })
 
-  it.each(REDSTONE_LIBRARY.map((entry) => [entry.id, entry] as const))(
+  it.each([[WIRED.id, WIRED] as const])(
     '"%s" round-trips through the reader with its states intact',
     async (id, entry) => {
       const file = join(directory, `${id}.schem`)
@@ -214,7 +279,7 @@ describe('DataVersion follows the instance', () => {
   })
 
   it('writes the resolved version into both formats', async () => {
-    const entry = BLUEPRINT_LIBRARY[0]
+    const entry = HUT
     for (const [version, expected] of [
       ['1.21.11', 4671],
       ['26.2', 4903]
