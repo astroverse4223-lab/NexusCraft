@@ -23,6 +23,7 @@ import {
   MessageSquare,
   Package,
   Palette,
+  Hammer,
   Sparkles,
   Zap,
   Trophy,
@@ -66,6 +67,7 @@ import { IconMakerScreen } from './IconMaker'
 import { MapArtTab } from './MapArt'
 import { PackMakerTab } from './PackMaker'
 import { RedstoneScreen } from './Redstone'
+import { StudioScreen } from './Studio'
 import { focusedInstance } from '../store/useStore'
 import { EmptyState } from '../components/ui'
 import { DesignTools } from '../components/DesignTools'
@@ -83,6 +85,7 @@ type Section =
   | 'mapart'
   | 'pack'
   | 'redstone'
+  | 'studio'
 
 const BLANK_MOTD: MotdDesign = { line1: '&aYour Server', line2: '&7Come and have a look' }
 
@@ -365,7 +368,7 @@ export function GeneratorsScreen(): JSX.Element {
    * and ways of saving. So they get the header and the tabs and nothing else,
    * rather than the shared half being reshaped to fit around them.
    */
-  const OWN_SCREEN: Section[] = ['icon', 'banners', 'mapart', 'pack', 'redstone']
+  const OWN_SCREEN: Section[] = ['icon', 'banners', 'mapart', 'pack', 'redstone', 'studio']
 
   const TABS: [Section, string, typeof Type][] = [
     ['motd', 'Server message', MessageSquare],
@@ -379,7 +382,8 @@ export function GeneratorsScreen(): JSX.Element {
     ['advancement', 'Advancements', Trophy],
     ['mapart', 'Map art', MapIcon],
     ['pack', 'Resource pack', Palette],
-    ['redstone', 'Redstone', Zap]
+    ['redstone', 'Redstone', Zap],
+    ['studio', 'Build studio', Hammer]
   ]
 
   const chrome = (
@@ -424,11 +428,12 @@ export function GeneratorsScreen(): JSX.Element {
         {section === 'banners' && <BannersScreen />}
         {section === 'redstone' && <RedstoneScreen />}
 
-        {(section === 'mapart' || section === 'pack') &&
+        {(section === 'mapart' || section === 'pack' || section === 'studio') &&
           (instance ? (
             <>
               {section === 'mapart' && <MapArtTab instance={instance} />}
               {section === 'pack' && <PackMakerTab instance={instance} />}
+              {section === 'studio' && <StudioScreen instance={instance} />}
             </>
           ) : (
             <div className="panel">
@@ -451,7 +456,7 @@ export function GeneratorsScreen(): JSX.Element {
    * narrowing is stated rather than the type widened to accept four sections
    * that never reach here.
    */
-  const shared = section as Exclude<Section, 'icon' | 'banners' | 'mapart' | 'pack' | 'redstone'>
+  const shared = section as Exclude<Section, 'icon' | 'banners' | 'mapart' | 'pack' | 'redstone' | 'studio'>
 
   return (
     <>

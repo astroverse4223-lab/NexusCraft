@@ -73,6 +73,7 @@ import { writeBootstrap } from '../core/bootstrap'
 import { toast } from '../core/events'
 import { writeDiagnostics } from '../services/support/diagnostics'
 import { recentTrouble } from '../services/support/recentTrouble'
+import { blockPalette } from '../companion/build/palette'
 
 import { getSettings, updateSettings, recommendedRamMb } from '../services/settings/settingsService'
 import {
@@ -2356,6 +2357,15 @@ export function registerIpcHandlers(): void {
 
     return { port, ...(await forwardingStatus(port, host)) }
   })
+
+  /**
+   * The blocks the studio offers, with the game's own faces on them.
+   *
+   * Read out of the version jar and cached per version: it is a few hundred
+   * small pngs, which is nothing to send once and far too many to fetch one
+   * at a time while somebody is picking a colour.
+   */
+  handle('blocks:palette', (payload: { minecraftVersion: string }) => blockPalette(payload.minecraftVersion))
 
   /**
    * A circuit designed in the launcher, put where the plugin can read it.

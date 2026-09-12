@@ -9,6 +9,7 @@ import type { SiteConfig, SiteStatus } from '@shared/serverSite'
 import type { FireworkDesign, ItemDesign, LogoDesign, MotdDesign, RecipePack, LootPack } from '@shared/creations'
 import type { OutsideCheck } from '@shared/types'
 import type { DomainCheck, Trouble } from '@shared/types'
+import type { PaletteBlock } from '@shared/blocks'
 import type {
   Account,
   AppSettings,
@@ -500,6 +501,11 @@ export const api = {
     stop: (id: string) => call<string[]>('crew:stop', { id }),
     notes: (id: string) => call<CrewNote[]>('crew:notes', { id }),
     clearNotes: (id: string) => call<boolean>('crew:clearNotes', { id })
+  },
+
+  /** The blocks the studio can place, with the game's own faces on them. */
+  blocks: {
+    palette: (minecraftVersion: string) => call<PaletteBlock[]>('blocks:palette', { minecraftVersion })
   },
 
   host: {

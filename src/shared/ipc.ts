@@ -904,6 +904,7 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
    * strict about what it is not: no scheme, no path, no spaces. The check that
    * matters happens against real DNS a moment later.
    */
+  'blocks:palette': z.object({ minecraftVersion: z.string().min(1).max(32) }),
   'host:sendCircuit': z.object({
     serverId: id,
     name: z.string().min(1).max(48),
