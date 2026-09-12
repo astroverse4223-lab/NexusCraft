@@ -14,7 +14,7 @@ import {
   Upload
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { type JSX, useEffect, useRef, useState } from 'react'
+import { type JSX, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BASE_ITEMS,
   COSMETIC_HATS,
@@ -81,6 +81,14 @@ const HAT_IDS: ReadonlySet<string> = new Set(COSMETIC_HATS.map((hat) => hat.id))
  * empty having four textures in it is exactly the surprise this is meant to
  * stop.
  */
+/**
+ * How many texture thumbnails are drawn at once.
+ *
+ * A restyled pack holds thousands and the browser decodes and keeps an image
+ * for every one it is shown. The box above them is how you reach the rest.
+ */
+const SHOWN_TEXTURES = 150
+
 function countFor(tab: PackTab, draft: ResourcePackDraft): number {
   if (tab === 'textures') return draft.textures.length
   if (tab === 'sounds') return draft.sounds.length
@@ -177,6 +185,84 @@ interface Target {
   minecraftVersion: string
 }
 
+/**
+ * The replaced textures, listed.
+ *
+ * Its own component, and memoised, because of what sits around it: a restyle
+ * reports progress a hundred and thirty-nine times, and every one of those
+ * re-rendered this. A whole-pack restyle replaces about two thousand eight
+ * hundred textures, so that was a couple of thousand rows reconciled a hundred
+ * and thirty-nine times over - while the work was running, which is exactly
+ * when the window needs to stay answerable.
+ *
+ * Memoising is enough because the draft is replaced rather than edited, so the
+ * array is the same object for the whole run and this redraws only when the
+ * textures themselves actually change.
+ */
+const TextureList = memo(function TextureList({
+  textures,
+  onRemove
+}: {
+  textures: PackTexture[]
+  onRemove: (path: string) => void
+}): JSX.Element {
+  const [filter, setFilter] = useState('')
+
+  const matching = useMemo(() => {
+    const needle = filter.trim().toLowerCase()
+    return needle ? textures.filter((one) => one.path.toLowerCase().includes(needle)) : textures
+  }, [textures, filter])
+
+  /*
+   * Only a screenful is drawn.
+   *
+   * Two thousand eight hundred thumbnails is two thousand eight hundred images
+   * for the browser to decode and keep, and nobody finds anything by scrolling
+   * that far anyway - which is what the box above them is for.
+   */
+  const shown = matching.slice(0, SHOWN_TEXTURES)
+  const hidden = matching.length - shown.length
+
+  return (
+    <>
+      {textures.length > SHOWN_TEXTURES && (
+        <input
+          className="input"
+          placeholder={`Find among ${textures.length.toLocaleString()} textures`}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      )}
+
+      <div className="row gap-8 wrap">
+        {shown.map((texture) => (
+          <div key={texture.path} className="row gap-6" style={{ alignItems: 'center' }} title={texture.path}>
+            <img
+              src={texture.image}
+              alt=""
+              width={22}
+              height={22}
+              style={{ imageRendering: 'pixelated', borderRadius: 3 }}
+            />
+            <span className="tiny dim">{texture.path.slice(texture.path.lastIndexOf('/') + 1)}</span>
+            <button className="btn btn-sm" onClick={() => onRemove(texture.path)}>
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {hidden > 0 && (
+        <p className="tiny dim">
+          {hidden.toLocaleString()} more not shown{filter ? ' that match' : ''}. Type above to find one.
+        </p>
+      )}
+
+      {matching.length === 0 && filter && <p className="tiny dim">Nothing matches &ldquo;{filter}&rdquo;.</p>}
+    </>
+  )
+})
+
 export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element {
   const draft = useStore((state) => state.resourcePack)
   const setDraft = useStore((state) => state.setResourcePack)
@@ -193,6 +279,18 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
    */
   const mergeDraft = (make: (current: ResourcePackDraft) => Partial<ResourcePackDraft>): void =>
     setDraft(make(useStore.getState().resourcePack))
+
+  /*
+   * Stable between renders, so the memoised list below stays memoised.
+   *
+   * A fresh arrow function every render would be a new prop every render, and
+   * the list would redraw for each of a restyle's progress reports - which is
+   * the whole thing being avoided.
+   */
+  const removeTexture = useCallback(
+    (path: string) => setDraft({ textures: useStore.getState().resourcePack.textures.filter((t) => t.path !== path) }),
+    [setDraft]
+  )
 
   const [targets, setTargets] = useState<Target[]>([])
   const [targetId, setTargetId] = useState('')
@@ -1587,30 +1685,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                     : 'Remove all'}
                 </button>
               </div>
-              <div className="row gap-8 wrap">
-                {draft.textures.map((texture) => (
-                  <div key={texture.path} className="row gap-6" style={{ alignItems: 'center' }} title={texture.path}>
-                    <img
-                      src={texture.image}
-                      alt=""
-                      width={22}
-                      height={22}
-                      style={{ imageRendering: 'pixelated', borderRadius: 3 }}
-                    />
-                    <span className="tiny dim">{texture.path.slice(texture.path.lastIndexOf('/') + 1)}</span>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() =>
-                        setDraft({
-                          textures: draft.textures.filter((t) => t.path !== texture.path)
-                        })
-                      }
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
+              <TextureList textures={draft.textures} onRemove={removeTexture} />
             </>
           )}
 

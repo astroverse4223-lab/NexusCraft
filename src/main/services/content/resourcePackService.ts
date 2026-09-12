@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { crc32 } from 'node:zlib'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import AdmZip from 'adm-zip'
@@ -28,6 +28,45 @@ import { packFormatOf } from './datapackService'
 import { versionJarPath } from '../minecraft/versionService'
 
 const log = createLogger('resourcepack')
+
+/**
+ * The last version jar opened, kept open.
+ *
+ * Opening one is not cheap: a version jar is around forty megabytes and
+ * AdmZip reads and indexes the whole thing, about half a second each time.
+ * That is invisible for a single texture and ruinous for a restyle, which
+ * asks for two and a half thousand of them one after another - measured at
+ * roughly a hundred and sixty times slower than holding the jar open, and
+ * turning nine seconds of work into twenty minutes.
+ *
+ * Worse than the waiting is where it happens. These reads are synchronous and
+ * they run in the main process, which is the only path the window has to
+ * anything - so every one of those half seconds is half a second in which
+ * nothing else in the launcher can be answered.
+ *
+ * One at a time is enough: a restyle reads thousands of textures from a single
+ * version, and nothing here interleaves two.
+ */
+let openJar: { path: string; stamp: number; zip: AdmZip } | null = null
+
+/**
+ * The jar for a version, opened once and kept.
+ *
+ * Stamped with the file's own modified time, so a version that is repaired or
+ * redownloaded mid-session is noticed rather than served from memory.
+ */
+function versionZip(minecraftVersion: string): AdmZip | null {
+  const jar = versionJarPath(minecraftVersion)
+  if (!existsSync(jar)) return null
+
+  const stamp = statSync(jar).mtimeMs
+
+  if (openJar && openJar.path === jar && openJar.stamp === stamp) return openJar.zip
+
+  const zip = new AdmZip(jar)
+  openJar = { path: jar, stamp, zip }
+  return zip
+}
 
 /**
  * Building a resource pack.
@@ -285,15 +324,14 @@ function unchangedFromVanilla(textures: PackTexture[], minecraftVersion: string)
 
   try {
     /*
-     * Inside the try, not above it. versionJarPath needs the launcher's data
-     * root, which throws outright when it has not been set up - so resolving
-     * it first turns "cannot check" into "cannot build", which is the same
-     * mistake packFormatOf made in this file once already.
+     * Inside the try, not above it. This reaches versionJarPath, which needs
+     * the launcher's data root and throws outright when it has not been set
+     * up - so resolving it first turns "cannot check" into "cannot build",
+     * which is the same mistake packFormatOf made in this file once already.
      */
-    const jar = versionJarPath(minecraftVersion)
-    if (!existsSync(jar)) return null
+    const zip = versionZip(minecraftVersion)
+    if (!zip) return null
 
-    const zip = new AdmZip(jar)
     let unchanged = 0
 
     for (const texture of textures) {
@@ -527,13 +565,13 @@ export async function installResourcePack(instance: Instance, draft: ResourcePac
  * guess into a search.
  */
 export function vanillaTextures(minecraftVersion: string): string[] {
-  const jar = versionJarPath(minecraftVersion)
-  if (!existsSync(jar)) return []
-
   try {
+    const zip = versionZip(minecraftVersion)
+    if (!zip) return []
+
     const out: string[] = []
 
-    for (const entry of new AdmZip(jar).getEntries()) {
+    for (const entry of zip.getEntries()) {
       const name = entry.entryName
 
       if (!name.startsWith('assets/minecraft/textures/')) continue
@@ -557,13 +595,13 @@ export function vanillaTextures(minecraftVersion: string): string[] {
  * somebody may have edited already.
  */
 export function vanillaTexture(minecraftVersion: string, path: string): string | null {
-  const jar = versionJarPath(minecraftVersion)
-  if (!existsSync(jar)) return null
-
   if (!/^[a-z0-9_\-/]+$/.test(path) || path.includes('..')) return null
 
   try {
-    const entry = new AdmZip(jar).getEntry(`assets/minecraft/textures/${path}.png`)
+    const zip = versionZip(minecraftVersion)
+    if (!zip) return null
+
+    const entry = zip.getEntry(`assets/minecraft/textures/${path}.png`)
     if (!entry) return null
 
     return 'data:image/png;base64,' + entry.getData().toString('base64')
