@@ -2888,6 +2888,23 @@ public final class Nexus extends JavaPlugin {
                 placer.give(player, id);
             }
 
+            /*
+             * For the row of them a crash can leave behind.
+             *
+             * Killing them by hand means finding each one, and they are
+             * persistent and do not despawn - so somebody who restarted a few
+             * times has a queue of Wardens and no way to say so.
+             */
+            case "clearbosses" -> {
+                int gone = boss.clearStrays();
+
+                sender.sendMessage(gone == 0
+                        ? Text.good("No strays to clear.")
+                        : Text.good("Cleared " + gone + " leftover Warden"
+                                + (gone == 1 ? "" : "s") + "."));
+                return true;
+            }
+
             case "startboss", "bossnow" -> {
                 if (boss.startNow(sender)) {
                     sender.sendMessage(Text.good("The Warden is up."));

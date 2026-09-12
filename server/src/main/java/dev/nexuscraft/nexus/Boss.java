@@ -286,6 +286,7 @@ public final class Boss {
 
         boss.customName(Component.text("Warden of the Deep", NamedTextColor.DARK_RED));
         boss.setCustomNameVisible(true);
+        boss.getScoreboardTags().add(BOSS_TAG);
         boss.setRemoveWhenFarAway(false);
         boss.setPersistent(true);
 
@@ -480,16 +481,62 @@ public final class Boss {
         World survival = nexus.worlds().of(Worlds.Place.SURVIVAL);
         if (survival == null) return;
 
-        int found = 0;
+        int minionsGone = 0;
+        int wardensGone = 0;
 
         for (org.bukkit.entity.Entity entity : survival.getEntities()) {
-            if (!entity.getScoreboardTags().contains(MINION_TAG)) continue;
+            var tags = entity.getScoreboardTags();
 
-            entity.remove();
-            found++;
+            if (tags.contains(MINION_TAG)) {
+                entity.remove();
+                minionsGone++;
+                continue;
+            }
+
+            /*
+             * Any Warden standing here at startup is left over.
+             *
+             * Nobody is mid-fight through a restart - everyone was
+             * disconnected - so there is no fight to preserve, and the clock
+             * decides when the next one rises. Leaving them was what put ten of
+             * them in the arena.
+             */
+            if (tags.contains(BOSS_TAG)) {
+                entity.remove();
+                wardensGone++;
+            }
         }
 
-        if (found > 0) nexus.getLogger().info("cleared " + found + " leftover boss minions");
+        if (minionsGone > 0) {
+            nexus.getLogger().info("cleared " + minionsGone + " leftover boss minions");
+        }
+
+        if (wardensGone > 0) {
+            nexus.getLogger().info("cleared " + wardensGone + " leftover Warden(s)");
+        }
+    }
+
+    /**
+     * Every Warden standing, wanted or not.
+     *
+     * For the operator command, so somebody looking at a row of them can say
+     * so rather than killing each one by hand.
+     */
+    public int clearStrays() {
+        World survival = nexus.worlds().of(Worlds.Place.SURVIVAL);
+        if (survival == null) return 0;
+
+        int gone = 0;
+
+        for (org.bukkit.entity.Entity entity : survival.getEntities()) {
+            if (!entity.getScoreboardTags().contains(BOSS_TAG)) continue;
+            if (alive != null && entity.getUniqueId().equals(alive.getUniqueId())) continue;
+
+            entity.remove();
+            gone++;
+        }
+
+        return gone;
     }
 
     /**
@@ -514,6 +561,17 @@ public final class Boss {
 
     /** Tagged so they can be cleared away whatever happens to the fight. */
     public static final String MINION_TAG = "nexus_warden_minion";
+
+    /**
+     * And the Warden itself, for the same reason.
+     *
+     * It is spawned persistent and told not to despawn when nobody is near,
+     * which is right during a fight and is exactly what makes it outlive a
+     * crash. `alive` is a field, so a restart forgets it while the ravager
+     * stands there - and the next time the clock came round the plugin saw no
+     * boss and raised another. One per restart, standing in a row.
+     */
+    public static final String BOSS_TAG = "nexus_warden";
 
     /** Everything it called up, taken away with it. */
     private void clearMinions() {
