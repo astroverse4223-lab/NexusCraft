@@ -406,3 +406,109 @@ export function useAutoScroll<T>(dependency: T): React.RefObject<HTMLDivElement>
   }, [dependency])
   return ref
 }
+
+/* ----------------------------------------------------------- tab strip */
+
+/** How far the pointer may travel before it is a drag and not a click. */
+const STRIP_SLOP = 4
+
+/**
+ * A row of tabs that scrolls sideways, by dragging it.
+ *
+ * The strip hides its scrollbar, which left the keyboard as the only way to
+ * reach a tab past the edge - the scrollbar was gone, a vertical wheel did
+ * nothing to a horizontal box, and dragging did nothing at all. So it drags
+ * here, and a wheel over it scrolls it along too, since that is the other
+ * thing anyone tries.
+ *
+ * A drag must not also pick a tab. The click is caught on the way down and
+ * stopped if the pointer travelled, which is the same trick the block canvas
+ * uses to tell turning the camera from placing a block.
+ */
+export function TabStrip({ className, children }: { className?: string; children: ReactNode }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const dragged = useRef(false)
+
+  useEffect(() => {
+    const strip = ref.current
+    if (!strip) return
+
+    let from = 0
+    let scrolled = 0
+    let holding = false
+
+    const down = (event: PointerEvent): void => {
+      // Only the left button, and never a drag that starts on a scrollbar.
+      if (event.button !== 0) return
+
+      holding = true
+      dragged.current = false
+      from = event.clientX
+      scrolled = strip.scrollLeft
+
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+    }
+
+    /*
+     * Tracked on the window rather than the strip, and without pointer
+     * capture. Capturing would redirect the click to the strip itself, so a
+     * tab could be dragged but never chosen.
+     */
+    const move = (event: PointerEvent): void => {
+      if (!holding) return
+
+      const travelled = event.clientX - from
+      if (Math.abs(travelled) > STRIP_SLOP) {
+        dragged.current = true
+        strip.classList.add('dragging')
+      }
+
+      strip.scrollLeft = scrolled - travelled
+    }
+
+    const up = (): void => {
+      holding = false
+      strip.classList.remove('dragging')
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+
+    // Down phase, so it is stopped before the tab under it ever hears about it.
+    const click = (event: MouseEvent): void => {
+      if (!dragged.current) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    const wheel = (event: WheelEvent): void => {
+      // Nothing hidden means the page should keep the wheel.
+      if (strip.scrollWidth <= strip.clientWidth) return
+
+      // A real sideways gesture already works; this is only for the common
+      // case of a wheel that can only go up and down.
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+
+      event.preventDefault()
+      strip.scrollLeft += event.deltaY
+    }
+
+    strip.addEventListener('pointerdown', down)
+    strip.addEventListener('click', click, true)
+    strip.addEventListener('wheel', wheel, { passive: false })
+
+    return () => {
+      strip.removeEventListener('pointerdown', down)
+      strip.removeEventListener('click', click, true)
+      strip.removeEventListener('wheel', wheel)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+  }, [])
+
+  return (
+    <div ref={ref} className={className ? `tab-strip ${className}` : 'tab-strip'}>
+      {children}
+    </div>
+  )
+}

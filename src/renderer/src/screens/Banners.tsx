@@ -36,7 +36,7 @@ import {
 import { validTarget } from '@shared/creations'
 import { api, toPayload } from '../api'
 import { useStore } from '../store/useStore'
-import { ErrorView, Modal, Spinner } from '../components/ui'
+import { ErrorView, Modal, Spinner, TabStrip } from '../components/ui'
 import { PromptChips } from '../components/PromptChips'
 import { DesignTools } from '../components/DesignTools'
 
@@ -625,7 +625,7 @@ export function BannersScreen(): JSX.Element {
            * picture for a listing - and stacked they ran well past the bottom
            * of the window, so the last was found by scrolling for it.
            */}
-          <div className="tab-strip">
+          <TabStrip>
             {(
               [
                 ['game', 'In game'],
@@ -637,7 +637,7 @@ export function BannersScreen(): JSX.Element {
                 {label}
               </button>
             ))}
-          </div>
+          </TabStrip>
 
           {use === 'game' && (
             <div className="panel panel-pad col gap-12">

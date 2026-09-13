@@ -50,7 +50,17 @@ import { ServerBackups } from '../components/ServerBackups'
 import { RestartSchedule } from '../components/RestartSchedule'
 import { RelayTunnel } from '../components/RelayTunnel'
 import { activeAccount, useStore } from '../store/useStore'
-import { ConfirmDialog, EmptyState, ErrorView, Field, Modal, Spinner, Toggle, useAutoScroll } from '../components/ui'
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorView,
+  Field,
+  Modal,
+  Spinner,
+  TabStrip,
+  Toggle,
+  useAutoScroll
+} from '../components/ui'
 
 /** Splits `host:port`, tolerating a bare host. */
 function splitAddress(address: string): [string, number] {
@@ -833,7 +843,7 @@ export function HostServerScreen(): JSX.Element {
                * player and somebody here to install a plugin want different
                * screens, so they get different screens.
                */}
-              <div className="tab-strip">
+              <TabStrip>
                 {HOST_TABS.map((entry) => (
                   <button
                     key={entry.id}
@@ -847,7 +857,7 @@ export function HostServerScreen(): JSX.Element {
                     )}
                   </button>
                 ))}
-              </div>
+              </TabStrip>
 
               {/* ---------------------------------------------- overview */}
 

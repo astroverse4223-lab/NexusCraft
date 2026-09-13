@@ -179,6 +179,7 @@ export function BlockCanvas({
     controls: OrbitControls
     meshes: THREE.InstancedMesh[]
     floor: THREE.Mesh
+    grid: THREE.LineSegments | null
     marker: THREE.LineSegments
   } | null>(null)
 
@@ -234,13 +235,20 @@ export function BlockCanvas({
     /*
      * The ground the first block goes on.
      *
-     * Invisible, but present to the raycaster: without something under the
-     * build there is nothing to aim at on an empty canvas, and the studio
-     * opens empty every time.
+     * It has to be seen as well as aimed at. An empty studio with nothing drawn
+     * in it is a black rectangle - no floor, no horizon, nothing to say which
+     * way is up or where the build may go - and the first thing anyone does
+     * with a black rectangle is report it as broken.
      */
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide })
+      new THREE.MeshBasicMaterial({
+        color: 0x8fa3c0,
+        transparent: true,
+        opacity: 0.05,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
     )
     floor.rotation.x = -Math.PI / 2
     scene.add(floor)
@@ -253,7 +261,7 @@ export function BlockCanvas({
     marker.visible = false
     scene.add(marker)
 
-    kit.current = { renderer, scene, camera, controls, meshes: [], floor, marker }
+    kit.current = { renderer, scene, camera, controls, meshes: [], floor, grid: null, marker }
 
     let running = true
     const tick = (): void => {
@@ -288,10 +296,37 @@ export function BlockCanvas({
     const current = kit.current
     if (!current) return
 
-    const { camera, controls, floor } = current
+    const { camera, controls, floor, scene } = current
 
     floor.scale.set(width, depth, 1)
     floor.position.set(width / 2, 0, depth / 2)
+
+    /*
+     * A line per block across the ground.
+     *
+     * Not decoration. It is the only thing that says how big the build may be,
+     * where a block will land, and - once the camera has been turned about a
+     * bit - which way round the thing is. Squares of a known size are also the
+     * only sense of scale an empty scene has.
+     */
+    if (current.grid) {
+      scene.remove(current.grid)
+      current.grid.geometry.dispose()
+    }
+
+    const lines: number[] = []
+    for (let x = 0; x <= width; x += 1) lines.push(x, 0, 0, x, 0, depth)
+    for (let z = 0; z <= depth; z += 1) lines.push(0, 0, z, width, 0, z)
+
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3))
+
+    const grid = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({ color: 0x7d8ca6, transparent: true, opacity: 0.32 })
+    )
+    scene.add(grid)
+    current.grid = grid
 
     const centre = new THREE.Vector3(width / 2, Math.min(layers, 6) / 2, depth / 2)
     controls.target.copy(centre)

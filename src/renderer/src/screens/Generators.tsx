@@ -59,7 +59,7 @@ import { drawOutlined, drawText, measure } from '../components/mcText'
 
 import { api, toPayload } from '../api'
 import { useStore } from '../store/useStore'
-import { ErrorView, Spinner } from '../components/ui'
+import { ErrorView, Spinner, TabStrip } from '../components/ui'
 import type { AdvancementDesign, AdvancementPack } from '@shared/advancements'
 import { PromptChips } from '../components/PromptChips'
 import { BannersScreen } from './Banners'
@@ -407,7 +407,7 @@ export function GeneratorsScreen(): JSX.Element {
        * Six primary-coloured pills in a row read as six things to press, and
        * the selected one looked no more selected than the rest did urgent.
        */}
-      <div className="tab-strip mb-16">
+      <TabStrip className="mb-16">
         {TABS.map(([key, label, Icon]) => (
           <button key={key} className={section === key ? 'tab active' : 'tab'} onClick={() => setSection(key)}>
             <span className="row gap-8" style={{ alignItems: 'center' }}>
@@ -415,7 +415,7 @@ export function GeneratorsScreen(): JSX.Element {
             </span>
           </button>
         ))}
-      </div>
+      </TabStrip>
     </>
   )
 

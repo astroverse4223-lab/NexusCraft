@@ -41,7 +41,7 @@ import { renderIconArt } from '../lib/iconArt'
 import { restyle } from '../lib/restyle'
 import { toOggVorbis } from '../lib/toOgg'
 import { RECIPE_PRESETS, type TextureRecipe } from '@shared/textureRecipe'
-import { ErrorView, Spinner } from '../components/ui'
+import { ErrorView, Spinner, TabStrip } from '../components/ui'
 import { useStore } from '../store/useStore'
 
 /**
@@ -1398,7 +1398,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
        * above, because it belongs to all of them; the counts ride on the tabs
        * so that what is in the six you cannot see is still visible.
        */}
-      <div className="tab-strip">
+      <TabStrip>
         {PACK_TABS.map((entry) => {
           const count = countFor(entry.id, draft)
 
@@ -1414,7 +1414,7 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
             </button>
           )
         })}
-      </div>
+      </TabStrip>
 
       {tab === 'textures' && (
         <div className="panel panel-pad col gap-12">

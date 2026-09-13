@@ -1457,6 +1457,23 @@ textarea {
 
   /* The strip is short and the tabs are self-evident; a bar under them is noise. */
   scrollbar-width: none;
+
+  /*
+   * Dragged rather than scrolled, since the bar above is hidden. Without this
+   * a drag across the tabs selects their labels instead of moving them, which
+   * looks like the drag failing rather than doing something else.
+   */
+  cursor: grab;
+  user-select: none;
+}
+
+.tab-strip.dragging,
+.tab-strip.dragging .tab {
+  cursor: grabbing;
+}
+
+.tab-strip .tab {
+  cursor: pointer;
 }
 
 .tab-strip::-webkit-scrollbar {
