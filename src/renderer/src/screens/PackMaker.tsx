@@ -1,5 +1,6 @@
 import {
   Boxes,
+  Github,
   Globe,
   Hammer,
   HardHat,
@@ -88,6 +89,45 @@ const HAT_IDS: ReadonlySet<string> = new Set(COSMETIC_HATS.map((hat) => hat.id))
  * for every one it is shown. The box above them is how you reach the rest.
  */
 const SHOWN_TEXTURES = 150
+
+/**
+ * Where the pack gets published, remembered.
+ *
+ * Typed once and then used at every rebuild, so it has to outlive the window
+ * being closed - a repository name retyped every session is a repository name
+ * eventually typed wrong, and the wrong one uploads somebody's textures to a
+ * repository they did not mean.
+ */
+const RELEASE_KEY = 'pack-release'
+
+interface ReleaseWhere {
+  repo: string
+  tag: string
+  assetName: string
+}
+
+const RELEASE_DEFAULT: ReleaseWhere = {
+  repo: '',
+  tag: 'resource-pack',
+  assetName: 'nexuscraft-pack.zip'
+}
+
+function loadWhere(): ReleaseWhere {
+  try {
+    const raw = window.localStorage.getItem(RELEASE_KEY)
+    return raw ? { ...RELEASE_DEFAULT, ...(JSON.parse(raw) as Partial<ReleaseWhere>) } : RELEASE_DEFAULT
+  } catch {
+    return RELEASE_DEFAULT
+  }
+}
+
+function saveWhere(where: ReleaseWhere): void {
+  try {
+    window.localStorage.setItem(RELEASE_KEY, JSON.stringify(where))
+  } catch {
+    /* nothing worth doing */
+  }
+}
 
 function countFor(tab: PackTab, draft: ResourcePackDraft): number {
   if (tab === 'textures') return draft.textures.length
@@ -277,6 +317,47 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
    * whichever finished last wrote its own stale copy over the other, and the
    * only evidence was a pack that came out looking exactly like vanilla.
    */
+  /*
+   * Asked when the screen opens rather than when the button is pressed.
+   * "Install the GitHub CLI" is a reasonable thing to be told; it is not a
+   * reasonable thing to be told after sitting through a four megabyte build.
+   */
+  useEffect(() => {
+    void (async () => {
+      try {
+        setGithub(await api.resourcePack.githubStatus())
+      } catch {
+        setGithub({ installed: false, account: null, canWrite: false, why: 'Could not ask.' })
+      }
+    })()
+  }, [])
+
+  const publish = async (): Promise<void> => {
+    if (!target || target.kind !== 'server') return
+
+    setPublishing(true)
+    setError(null)
+    setPublished(null)
+    saveWhere(where)
+
+    try {
+      const sent = await api.resourcePack.publish({
+        serverId: target.serverId as string,
+        draft: useStore.getState().resourcePack,
+        repo: where.repo.trim(),
+        tag: where.tag.trim(),
+        assetName: where.assetName.trim(),
+        required
+      })
+
+      setPublished({ url: sent.url, reachable: sent.reachable, bytes: sent.bytes })
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   const mergeDraft = (make: (current: ResourcePackDraft) => Partial<ResourcePackDraft>): void =>
     setDraft(make(useStore.getState().resourcePack))
 
@@ -291,6 +372,16 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     (path: string) => setDraft({ textures: useStore.getState().resourcePack.textures.filter((t) => t.path !== path) }),
     [setDraft]
   )
+
+  const [where, setWhere] = useState<ReleaseWhere>(loadWhere)
+  const [github, setGithub] = useState<{
+    installed: boolean
+    account: string | null
+    canWrite: boolean
+    why: string | null
+  } | null>(null)
+  const [publishing, setPublishing] = useState(false)
+  const [published, setPublished] = useState<{ url: string; reachable: boolean; bytes: number } | null>(null)
 
   const [targets, setTargets] = useState<Target[]>([])
   const [targetId, setTargetId] = useState('')
@@ -2423,6 +2514,93 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 {target?.kind === 'server' ? ' Build and serve it' : ' Build and install it'}
               </button>
             </div>
+
+            {target?.kind === 'server' && (
+              <div className="panel panel-pad col gap-10" style={{ marginTop: 4 }}>
+                <div className="row gap-8" style={{ alignItems: 'center' }}>
+                  <Github size={15} />
+                  <div className="section-title" style={{ flex: 1, marginBottom: 0 }}>
+                    Put it on GitHub instead
+                  </div>
+                </div>
+
+                <p className="small muted">
+                  Serving it from here only works while the launcher is open, and only for people who can reach this
+                  machine. A release asset is always up and keeps one address across every rebuild, so the server is
+                  pointed at it once and never edited again.
+                </p>
+
+                {github && !github.canWrite ? (
+                  <p className="small" style={{ color: 'var(--warning)' }}>
+                    {github.why}{' '}
+                    {github.installed
+                      ? 'Run "gh auth login" in a terminal, then reopen this tab.'
+                      : 'Install it from cli.github.com, then sign in with "gh auth login".'}
+                  </p>
+                ) : (
+                  <>
+                    <div className="row gap-8 wrap" style={{ alignItems: 'flex-end' }}>
+                      <div className="field" style={{ flex: '1 1 220px' }}>
+                        <label className="field-label">Repository</label>
+                        <input
+                          className="input"
+                          value={where.repo}
+                          placeholder="yourname/yourrepo"
+                          onChange={(e) => setWhere({ ...where, repo: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="field" style={{ width: 150 }}>
+                        <label className="field-label">Release tag</label>
+                        <input
+                          className="input"
+                          value={where.tag}
+                          onChange={(e) => setWhere({ ...where, tag: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                    <p className="tiny dim">
+                      {github?.account ? (
+                        <>
+                          Uploading as <b>{github.account}</b>. The repository has to be public — a private one takes
+                          the file and then answers every player with a 404.
+                        </>
+                      ) : (
+                        'The repository has to be public, or players get nothing.'
+                      )}
+                    </p>
+
+                    <button
+                      className="btn btn-primary"
+                      disabled={publishing || nothing || !where.repo.includes('/')}
+                      title={
+                        nothing
+                          ? 'There is nothing in the pack yet'
+                          : !where.repo.includes('/')
+                            ? 'Type the repository as owner/name'
+                            : 'Build it, upload it, and point the server at it'
+                      }
+                      onClick={() => void publish()}
+                    >
+                      {publishing ? <Spinner /> : <Github size={14} />} Build and publish it
+                    </button>
+
+                    {published && (
+                      <div className="col gap-6">
+                        <p className="tiny" style={{ color: published.reachable ? 'var(--success)' : 'var(--danger)' }}>
+                          {published.reachable
+                            ? `Up, and it downloads without signing in — ${(published.bytes / 1024 / 1024).toFixed(1)} MB. Restart the server to pick it up.`
+                            : 'It uploaded, but it could not be fetched back without signing in. That is what a private repository does, and players would get nothing.'}
+                        </p>
+
+                        <code className="host-address">{published.url}</code>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
             {target?.kind === 'server' ? (
               <>

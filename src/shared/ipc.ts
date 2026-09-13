@@ -905,6 +905,35 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
    * matters happens against real DNS a moment later.
    */
   'blocks:palette': z.object({ minecraftVersion: z.string().min(1).max(32) }),
+  /*
+   * Putting the pack on a GitHub release instead of serving it from here.
+   *
+   * The repo is checked loosely on purpose - "owner/name" is all the shape
+   * that can be known, and GitHub is the authority on the rest of it.
+   */
+  'resourcepack:publish': z.object({
+    serverId: id,
+    draft: resourcePackDraft,
+    repo: z
+      .string()
+      .min(3)
+      .max(120)
+      .regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/, 'that is not an owner/repo'),
+    tag: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Za-z0-9._-]+$/, 'a tag cannot have spaces or slashes'),
+    assetName: z
+      .string()
+      .min(1)
+      .max(80)
+      .regex(/^[A-Za-z0-9._-]+\.zip$/, 'the file has to end in .zip'),
+    required: z.boolean()
+  }),
+
+  'github:status': z.object({}),
+
   'studio:export': z.object({
     name: z.string().min(1).max(48),
     cells: z

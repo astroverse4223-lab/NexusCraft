@@ -742,6 +742,32 @@ export const api = {
       call<BuiltPack>('resourcepack:build', { draft, minecraftVersion, path }),
     install: (instanceId: string, draft: ResourcePackDraft) =>
       call<BuiltPack>('resourcepack:install', { instanceId, draft }),
+    /** Whether this machine can upload to GitHub, and as whom. */
+    githubStatus: () =>
+      call<{ installed: boolean; account: string | null; canWrite: boolean; why: string | null }>(
+        'github:status',
+        {}
+      ),
+
+    /** Builds the pack, puts it on a release, and points the server at it. */
+    publish: (payload: {
+      serverId: string
+      draft: ResourcePackDraft
+      repo: string
+      tag: string
+      assetName: string
+      required: boolean
+    }) =>
+      call<{
+        url: string
+        sha1: string
+        bytes: number
+        created: boolean
+        /** Whether the file could be fetched back without signing in. */
+        reachable: boolean
+        pluginTook: boolean
+      }>('resourcepack:publish', payload),
+
     serve: (serverId: string, draft: ResourcePackDraft, port: number, required: boolean, address?: string) =>
       call<
         BuiltPack & {

@@ -296,6 +296,8 @@ export const IPC_CHANNELS = [
   'site:votifierInfo',
   'blocks:palette',
   'studio:export',
+  'resourcepack:publish',
+  'github:status',
   'host:sendCircuit',
   'host:setDomain',
   'host:checkDomain',

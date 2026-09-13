@@ -61,6 +61,7 @@ import {
   writeResourcePack
 } from '../services/content/resourcePackService'
 import { packHostStatus, packUrl, servePack, startPackHost, stopPackHost } from '../services/content/packHost'
+import { githubStatus, uploadPack } from '../services/content/packRelease'
 import type { ResourcePackDraft } from '@shared/resourcePacks'
 import { readAdvancements, type AdvancementPack } from '@shared/advancements'
 import type { CreationKind } from '@shared/types'
@@ -2074,6 +2075,71 @@ export function registerIpcHandlers(): void {
    * with no listener is a url that 404s, and a listener with no server entry is
    * a file nobody is ever told about.
    */
+  handle('github:status', async () => await githubStatus())
+
+  /**
+   * The pack, put somewhere it stays put.
+   *
+   * The same job as serving it from here, done once instead of every time the
+   * launcher is open. A release asset is always up, survives this machine
+   * being off, and keeps one address across every rebuild - so the server is
+   * pointed at it once and never edited again.
+   *
+   * Built first, exactly as the served route builds it, because the thing
+   * uploaded has to be the thing the draft currently says.
+   */
+  handle(
+    'resourcepack:publish',
+    async (payload: {
+      serverId: string
+      draft: ResourcePackDraft
+      repo: string
+      tag: string
+      assetName: string
+      required: boolean
+    }) => {
+      const server = getHostedServer(payload.serverId)
+      const dir = hostedServerDir(server.id)
+
+      const built = await writeResourcePack(
+        payload.draft,
+        server.minecraftVersion,
+        join(dir, 'nexus-resource-pack.zip')
+      )
+
+      const sent = await uploadPack(built.path, {
+        repo: payload.repo,
+        tag: payload.tag,
+        assetName: payload.assetName
+      })
+
+      /*
+       * The plugin takes the job where it is there, for the same reason it does
+       * on the served route: it hashes the file itself at every start, so a
+       * pack that changes needs no further help, and a player is never asked
+       * twice for one file.
+       */
+      const pluginTook = await pointPluginAtPack(
+        dir,
+        { url: sent.url, required: payload.required },
+        payload.draft.armour
+      )
+
+      await pointServerAtPack(dir, pluginTook ? null : { url: sent.url, sha1: sent.sha1, required: payload.required })
+
+      toast(
+        sent.reachable ? 'success' : 'warning',
+        sent.reachable ? 'The pack is published' : 'Uploaded, but nobody can fetch it',
+        sent.reachable
+          ? `${server.name} will hand out this pack from now on. Restart it to pick up the change.`
+          : 'The file went up but could not be fetched back without signing in, which is what a ' +
+              'private repository does. Players would get nothing. Make the repository public.'
+      )
+
+      return { ...sent, pluginTook }
+    }
+  )
+
   handle(
     'resourcepack:serve',
     async (payload: {
