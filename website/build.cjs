@@ -20,8 +20,30 @@ const { PNG } = require('pngjs')
 const HERE = __dirname
 const CONFIG = JSON.parse(fs.readFileSync(path.join(HERE, 'site.json'), 'utf8'))
 
-/** The tint the game multiplies grass by in a plains biome. */
+/*
+ * The three tints the game applies, and only to the textures listed below.
+ *
+ * Named per texture rather than detected, because the obvious test - is this
+ * file grey? - says yes to stone, cobblestone and bedrock, which are grey
+ * because stone is grey. Tinting those turns the island green.
+ */
 const GRASS = [0x91, 0xbd, 0x59]
+const FOLIAGE = [0x77, 0xab, 0x2f]
+const WATER = [0x3f, 0x76, 0xe4]
+
+/** Which of the island's textures are masks, and what colours them. */
+const TINTED = {
+  grass_block_top: GRASS,
+  oak_leaves: FOLIAGE,
+  short_grass: FOLIAGE,
+  water_still: WATER
+}
+
+/** Blocks the island is made of, beyond the ones the page already uses. */
+const ISLAND_BLOCKS = [
+  'oak_leaves', 'oak_log', 'oak_log_top', 'oak_planks',
+  'water_still', 'lava_still', 'dandelion', 'short_grass'
+]
 
 const BLOCKS = [
   'grass_block_side', 'grass_block_top', 'dirt', 'stone', 'deepslate',
@@ -53,36 +75,38 @@ function textures() {
   const read = (entryPath, tint) => {
     const entry = zip.getEntry(entryPath)
     if (!entry) return null
-    if (!tint) return 'data:image/png;base64,' + entry.getData().toString('base64')
 
     const png = PNG.sync.read(entry.getData())
 
     /*
-     * Only the first frame. Animated textures stack their frames down one
-     * tall strip, and taking the whole file squashes the lot into a square.
+     * A square off the top, which for a still texture is the whole file and
+     * for an animated one is the first frame. Water and lava are stored as
+     * tall strips of frames, and taking the file whole squashes twenty of
+     * them into one square of soup.
      */
     const side = Math.min(png.width, png.height)
-    const tinted = new PNG({ width: side, height: side })
+    const square = png.height === side && png.width === side && !tint
+
+    if (square) return 'data:image/png;base64,' + entry.getData().toString('base64')
+
+    const out = new PNG({ width: side, height: side })
 
     for (let y = 0; y < side; y++) {
       for (let x = 0; x < side; x++) {
         const i = (png.width * y + x) << 2
         const o = (side * y + x) << 2
-        tinted.data[o] = Math.round((png.data[i] * tint[0]) / 255)
-        tinted.data[o + 1] = Math.round((png.data[i + 1] * tint[1]) / 255)
-        tinted.data[o + 2] = Math.round((png.data[i + 2] * tint[2]) / 255)
-        tinted.data[o + 3] = png.data[i + 3]
+        out.data[o] = tint ? Math.round((png.data[i] * tint[0]) / 255) : png.data[i]
+        out.data[o + 1] = tint ? Math.round((png.data[i + 1] * tint[1]) / 255) : png.data[i + 1]
+        out.data[o + 2] = tint ? Math.round((png.data[i + 2] * tint[2]) / 255) : png.data[i + 2]
+        out.data[o + 3] = png.data[i + 3]
       }
     }
 
-    return 'data:image/png;base64,' + PNG.sync.write(tinted).toString('base64')
+    return 'data:image/png;base64,' + PNG.sync.write(out).toString('base64')
   }
 
-  for (const name of BLOCKS) {
-    const url = read(
-      `assets/minecraft/textures/block/${name}.png`,
-      name === 'grass_block_top' ? GRASS : null
-    )
+  for (const name of [...BLOCKS, ...ISLAND_BLOCKS]) {
+    const url = read(`assets/minecraft/textures/block/${name}.png`, TINTED[name] || null)
     if (url) out['block/' + name] = url
     else missing.push('block/' + name)
   }
@@ -96,6 +120,67 @@ function textures() {
   return { out, missing }
 }
 
+/**
+ * The skyblock starting island, as the plugin actually stores it.
+ *
+ * Real block data off the server rather than something drawn to look like a
+ * build. It is the island every skyblock player wakes up on, which makes it
+ * the one build on the server that every visitor will eventually stand on.
+ *
+ * Only the server's own content goes on the page. The lobby world is a
+ * purchased build whose licence does not allow passing it on, so its geometry
+ * stays off the public site however good it looks.
+ */
+function island() {
+  if (!CONFIG.island || !fs.existsSync(CONFIG.island)) return null
+
+  const yaml = require('yaml')
+  const parsed = yaml.parse(fs.readFileSync(CONFIG.island, 'utf8'))
+  const blocks = (parsed && parsed.blocks) || {}
+
+  /* Anything with no cube to draw. A sign is an entity model, not a block. */
+  const SKIP = new Set(['air', 'oak_sign', 'oak_wall_sign', 'cave_air', 'void_air'])
+
+  const out = []
+  let low = [Infinity, Infinity, Infinity]
+  let high = [-Infinity, -Infinity, -Infinity]
+
+  for (const key of Object.keys(blocks)) {
+    const at = key.split('_').map(Number)
+    if (at.length !== 3 || at.some(Number.isNaN)) continue
+
+    const raw = String((blocks[key] || {}).data || '')
+    const id = raw.replace(/^minecraft:/, '').replace(/\[.*$/, '')
+    if (!id || SKIP.has(id)) continue
+
+    /* Logs are drawn with their rings on whichever pair of faces the axis
+       names, so the one piece of state worth keeping is kept. */
+    const axis = /axis=([xyz])/.exec(raw)
+
+    out.push([at[0], at[1], at[2], id, axis ? axis[1] : 'y'])
+
+    for (let i = 0; i < 3; i++) {
+      low[i] = Math.min(low[i], at[i])
+      high[i] = Math.max(high[i], at[i])
+    }
+  }
+
+  if (!out.length) return null
+
+  /* Moved to sit around its own origin, so the page can spin it about the
+     middle without knowing where on the server it used to be. */
+  const middle = [
+    Math.round((low[0] + high[0]) / 2),
+    low[1],
+    Math.round((low[2] + high[2]) / 2)
+  ]
+
+  return {
+    blocks: out.map(([x, y, z, id, axis]) => [x - middle[0], y - middle[1], z - middle[2], id, axis]),
+    size: [high[0] - low[0] + 1, high[1] - low[1] + 1, high[2] - low[2] + 1]
+  }
+}
+
 /** Anything going into markup, so a server name with an ampersand cannot break the page. */
 function escape(text) {
   return String(text)
@@ -107,6 +192,7 @@ function escape(text) {
 
 function main() {
   const { out: tex, missing } = textures()
+  const built = island()
 
   /*
    * The first word of the name in the grass green.
@@ -142,7 +228,8 @@ function main() {
       address: CONFIG.address,
       modes: CONFIG.modes,
       votes: CONFIG.votes,
-      facts: CONFIG.facts || []
+      facts: CONFIG.facts || [],
+      island: built
     })
   }
 
@@ -186,6 +273,8 @@ function main() {
   const size = fs.statSync(path.join(dist, 'index.html')).size
   console.log(`built website/public/index.html - ${(size / 1024).toFixed(0)} KB, ${Object.keys(tex).length} textures`)
   if (CONFIG.domain) console.log(`CNAME set to ${CONFIG.domain}`)
+  if (built) console.log(`island: ${built.blocks.length} blocks, ${built.size.join(' x ')}`)
+  else console.log('no island data - point "island" in site.json at islandtemplate.yml')
   if (missing.length) console.log('not in this jar: ' + missing.join(', '))
 }
 

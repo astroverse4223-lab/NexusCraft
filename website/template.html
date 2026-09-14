@@ -124,6 +124,9 @@ h1, h2, h3, .mono {
   max-height: 82vh;
   object-fit: cover;
   object-position: center 42%;
+  /* Oversized a little, so drifting it on scroll never uncovers an edge. */
+  transform: scale(1.08);
+  will-change: transform;
 }
 
 /* The working half: address, status, numbers, tucked into the dark end of
@@ -357,25 +360,112 @@ h2 {
   margin: 0 0 34px;
 }
 
+/* --- the island, in three dimensions --- */
+
+.scene-wrap {
+  position: relative;
+  border: 3px solid;
+  border-color: #3f4653 #10131a #10131a #3f4653;
+  background: radial-gradient(120% 90% at 50% 15%, #17203a 0%, #0a0e18 55%, #05070c 100%);
+  overflow: hidden;
+}
+
+#scene {
+  display: block;
+  width: 100%;
+  height: clamp(380px, 62vh, 680px);
+  cursor: grab;
+  touch-action: none;
+}
+
+#scene.dragging { cursor: grabbing; }
+
+/* Said once, over the corner, the way the game labels a control. */
+.scene-hint {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 13px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 2px solid #262a33;
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.scene-hint b { font-family: var(--display); color: var(--gold); font-size: 10px; }
+
+.scene-tag {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  padding: 8px 13px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 2px solid #262a33;
+  font-family: var(--display);
+  font-size: 10px;
+  color: var(--grass);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+/* Shown only if the 3D library never arrives, so the section is never a
+   black rectangle with nothing in it. */
+.scene-fallback {
+  display: none;
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+.scene-wrap.failed #scene,
+.scene-wrap.failed .scene-hint,
+.scene-wrap.failed .scene-tag { display: none; }
+
+.scene-wrap.failed .scene-fallback { display: block; }
+
 /* --- what you can play --- */
 
 .modes {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 18px;
+  /* The depth the tilt below is measured against. Without it the cards
+     rotate flat and the whole thing just looks skewed. */
+  perspective: 1000px;
 }
 
 .mode {
+  position: relative;
   padding: 22px 20px 24px;
   background: linear-gradient(180deg, #232833 0%, #1a1e27 100%);
   border: 3px solid;
   border-color: #3f4653 #10131a #10131a #3f4653;
-  transition: transform 0.14s, border-color 0.14s;
+  transform-style: preserve-3d;
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.14s, box-shadow 0.3s;
 }
 
 .mode:hover {
-  transform: translateY(-3px);
   border-color: var(--grass) #10131a #10131a var(--grass);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  /* Snappier going in than coming back, which is what makes it feel like a
+     thing being pushed rather than an animation playing. */
+  transition-duration: 0.08s;
+}
+
+/* The block lifts off its own card, which is the whole trick: it is the
+   only part with somewhere to lift to. */
+.mode .mode-face {
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.mode:hover .mode-face {
+  transform: translateZ(34px) scale(1.06);
+  transition-duration: 0.12s;
 }
 
 .mode-face {
@@ -578,6 +668,26 @@ footer::before {
 
 <div class="underground">
 
+  <section class="wrap" id="island">
+    <div class="head"><h2>Where skyblock starts</h2><span class="rule"></span></div>
+    <p class="lede">
+      This is the real thing &mdash; the island every skyblock player wakes up on, read straight out of
+      the server and drawn here in the game's own blocks. Drag it about.
+    </p>
+
+    <div class="scene-wrap" id="sceneWrap">
+      <canvas id="scene"></canvas>
+      <div class="scene-tag" id="sceneTag">&hellip;</div>
+      <div class="scene-hint">
+        <span><b>Drag</b> turn</span>
+        <span><b>Scroll</b> zoom</span>
+      </div>
+      <div class="scene-fallback">
+        The 3D view could not load. Everything else on this page works without it.
+      </div>
+    </div>
+  </section>
+
   <section class="wrap" id="play">
     <div class="head"><h2>What you can play</h2><span class="rule"></span></div>
     <p class="lede">__MODES_LEDE__</p>
@@ -620,6 +730,8 @@ footer::before {
     <span>Not affiliated with Mojang or Microsoft.</span>
   </div>
 </footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
 <script>
 /* Textures, lifted out of the game's own jar at build time. */
@@ -729,6 +841,342 @@ const CONFIG = __CONFIG__;
     try { document.execCommand('copy'); done(); } catch (e) { /* nothing left to try */ }
     document.body.removeChild(box);
   }
+})();
+
+/* --------------------------------------------------------------- 3D */
+
+/*
+ * The island, drawn as real blocks.
+ *
+ * The same three things matter anywhere Minecraft is drawn: the textures are
+ * sixteen pixels across and must not be smoothed, the faces of a block are not
+ * all the same picture, and five hundred cubes is too many to hand over one at
+ * a time - so each kind of block becomes one instanced mesh and the whole
+ * island is a dozen draw calls.
+ */
+(function islandScene() {
+  var wrap = document.getElementById('sceneWrap');
+  var canvas = document.getElementById('scene');
+  var tag = document.getElementById('sceneTag');
+
+  if (!wrap || !canvas) return;
+
+  /* The library comes from a CDN, and a CDN can be blocked or down. Saying so
+     beats a black rectangle that never fills in. */
+  if (typeof THREE === 'undefined' || !CONFIG.island) {
+    wrap.classList.add('failed');
+    return;
+  }
+
+  var DATA = CONFIG.island;
+  if (tag) tag.textContent = DATA.blocks.length + ' blocks';
+
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(48, 1, 0.1, 1000);
+
+  /* Flat and even. Not realism: a face in shadow is a face nobody can see the
+     texture of, and the texture is the entire point. */
+  scene.add(new THREE.AmbientLight(0xffffff, 1.15));
+
+  var key = new THREE.DirectionalLight(0xfff4e0, 0.85);
+  key.position.set(1, 2.4, 1.2);
+  scene.add(key);
+
+  var fill = new THREE.DirectionalLight(0x93b4ff, 0.3);
+  fill.position.set(-1.5, 0.6, -1.2);
+  scene.add(fill);
+
+  var cache = {};
+
+  function tex(name) {
+    if (cache[name]) return cache[name];
+    var url = TEX['block/' + name];
+    if (!url) return null;
+
+    var t = new THREE.TextureLoader().load(url);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestMipmapNearestFilter;
+    t.encoding = THREE.sRGBEncoding;
+    cache[name] = t;
+    return t;
+  }
+
+  /*
+   * Which picture goes on which face.
+   *
+   * A box's faces come out as +x, -x, +y, -y, +z, -z, so the sides repeat
+   * around the middle with the top and bottom between them. Grass is the block
+   * that makes this worth doing: turf on top, dirt underneath, and a fringe of
+   * both down the sides.
+   */
+  var FACES = {
+    grass_block: { top: 'grass_block_top', side: 'grass_block_side', bottom: 'dirt' },
+    oak_log: { top: 'oak_log_top', side: 'oak_log', bottom: 'oak_log_top' },
+    chest: { top: 'oak_planks', side: 'oak_planks', bottom: 'oak_planks' },
+    water: { top: 'water_still', side: 'water_still', bottom: 'water_still' },
+    lava: { top: 'lava_still', side: 'lava_still', bottom: 'lava_still' }
+  };
+
+  var SEE_THROUGH = { oak_leaves: 1, water: 1 };
+  var FULL_BRIGHT = { lava: 1 };
+
+  function materials(id, axis) {
+    var face = FACES[id] || { top: id, side: id, bottom: id };
+
+    var top = tex(face.top) || tex('stone');
+    var side = tex(face.side) || tex('stone');
+    var bottom = tex(face.bottom) || tex('stone');
+
+    function make(map, dim) {
+      var options = { map: map };
+
+      if (SEE_THROUGH[id]) {
+        options.transparent = true;
+        options.opacity = id === 'water' ? 0.72 : 1;
+        options.alphaTest = id === 'oak_leaves' ? 0.35 : 0;
+        options.depthWrite = id !== 'water';
+      }
+
+      /* Lava lights itself, so it is drawn without caring where the lamps are. */
+      var material = FULL_BRIGHT[id]
+        ? new THREE.MeshBasicMaterial(options)
+        : new THREE.MeshLambertMaterial(options);
+
+      if (dim && !FULL_BRIGHT[id]) material.color.setScalar(dim);
+      return material;
+    }
+
+    /* A log lying on its side puts its rings on the pair of faces its axis
+       names, which is the one piece of block state worth keeping here. */
+    if (id === 'oak_log' && axis === 'x') {
+      return [make(top), make(top), make(side, 0.86), make(side, 0.62), make(side, 0.92), make(side, 0.92)];
+    }
+    if (id === 'oak_log' && axis === 'z') {
+      return [make(side, 0.92), make(side, 0.92), make(side, 0.86), make(side, 0.62), make(top), make(top)];
+    }
+
+    /* Shaded per direction the way the game does it: top brightest, the sides
+       a step down, the underside darkest. */
+    return [make(side, 0.86), make(side, 0.86), make(top), make(bottom, 0.62), make(side, 0.92), make(side, 0.92)];
+  }
+
+  /*
+   * A flower is not a cube.
+   *
+   * The game draws these as two flat squares crossed through each other, and
+   * putting the picture on all six faces of a block instead gives a solid box
+   * with a flower printed on every side - which is exactly what it looks like.
+   */
+  var PLANTS = { dandelion: 1, short_grass: 1, poppy: 1, fern: 1 };
+
+  var groups = {};
+  var plants = [];
+
+  for (var i = 0; i < DATA.blocks.length; i++) {
+    var b = DATA.blocks[i];
+
+    if (PLANTS[b[3]]) {
+      plants.push(b);
+      continue;
+    }
+
+    var gk = b[3] + '|' + (b[3] === 'oak_log' ? b[4] : '');
+    if (!groups[gk]) groups[gk] = [];
+    groups[gk].push(b);
+  }
+
+  var box = new THREE.BoxGeometry(1, 1, 1);
+  var pivot = new THREE.Group();
+  var matrix = new THREE.Matrix4();
+
+  Object.keys(groups).forEach(function (gk) {
+    var list = groups[gk];
+    var id = gk.split('|')[0];
+    var axis = gk.split('|')[1];
+
+    var mesh = new THREE.InstancedMesh(box, materials(id, axis), list.length);
+
+    for (var n = 0; n < list.length; n++) {
+      matrix.setPosition(list[n][0], list[n][1], list[n][2]);
+      mesh.setMatrixAt(n, matrix);
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    if (SEE_THROUGH[id]) mesh.renderOrder = 1;
+    pivot.add(mesh);
+  });
+
+  /* The crossed squares, two per plant, lit from neither side so they read
+     the same however the island is turned. */
+  var quad = new THREE.PlaneGeometry(1, 1);
+
+  plants.forEach(function (b) {
+    var map = tex(b[3]);
+    if (!map) return;
+
+    var material = new THREE.MeshBasicMaterial({
+      map: map,
+      transparent: true,
+      alphaTest: 0.4,
+      side: THREE.DoubleSide
+    });
+
+    for (var turn = 0; turn < 2; turn++) {
+      var blade = new THREE.Mesh(quad, material);
+      blade.position.set(b[0], b[1], b[2]);
+      blade.rotation.y = turn === 0 ? Math.PI / 4 : -Math.PI / 4;
+      pivot.add(blade);
+    }
+  });
+
+  /* Stood on its middle so it turns about itself rather than swinging. */
+  pivot.position.y = -DATA.size[1] / 2;
+  scene.add(pivot);
+
+  var reach = Math.max(DATA.size[0], DATA.size[2]) * 1.9;
+  var view = { yaw: -0.7, pitch: 0.42, distance: reach, spin: true };
+  var holding = null;
+
+  function place() {
+    var d = view.distance;
+    camera.position.set(
+      Math.cos(view.pitch) * Math.sin(view.yaw) * d,
+      Math.sin(view.pitch) * d,
+      Math.cos(view.pitch) * Math.cos(view.yaw) * d
+    );
+    camera.lookAt(0, 0, 0);
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    holding = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch };
+    view.spin = false;
+    canvas.classList.add('dragging');
+    canvas.setPointerCapture(e.pointerId);
+  });
+
+  canvas.addEventListener('pointermove', function (e) {
+    if (!holding) return;
+    view.yaw = holding.yaw - (e.clientX - holding.x) * 0.008;
+    /* Stopped short of straight up and straight down, where the maths flips
+       the island over and it reads as a glitch. */
+    view.pitch = Math.max(-1.2, Math.min(1.35, holding.pitch + (e.clientY - holding.y) * 0.006));
+  });
+
+  function release(e) {
+    holding = null;
+    canvas.classList.remove('dragging');
+    if (e && e.pointerId !== undefined && canvas.hasPointerCapture(e.pointerId)) {
+      canvas.releasePointerCapture(e.pointerId);
+    }
+  }
+
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+
+  canvas.addEventListener(
+    'wheel',
+    function (e) {
+      e.preventDefault();
+      view.distance = Math.max(reach * 0.45, Math.min(reach * 2.4, view.distance + e.deltaY * 0.02));
+    },
+    { passive: false }
+  );
+
+  function size() {
+    var w = canvas.clientWidth;
+    var h = canvas.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+
+  if ('ResizeObserver' in window) new ResizeObserver(size).observe(canvas);
+  window.addEventListener('resize', size);
+  size();
+
+  /* Only drawn while it is on screen. A page that keeps a renderer running
+     behind three screens of scroll is a page that flattens a phone. */
+  var visible = true;
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(
+      function (entries) {
+        visible = entries[0].isIntersecting;
+      },
+      { rootMargin: '120px' }
+    ).observe(wrap);
+  }
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) view.spin = false;
+
+  (function draw() {
+    requestAnimationFrame(draw);
+    if (!visible) return;
+    if (view.spin) view.yaw += 0.0022;
+    place();
+    renderer.render(scene, camera);
+  })();
+})();
+
+/* ----------------------------------------------------------- depth */
+
+/*
+ * Two bits of parallax, both switched off for anyone who has asked for less
+ * movement. Neither is load-bearing: the page reads exactly the same standing
+ * still, which is the test for whether an effect is decoration or a crutch.
+ */
+(function depth() {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  /* --- the artwork drifts slower than the page --- */
+
+  var art = document.querySelector('.art');
+
+  if (art) {
+    var pending = false;
+
+    window.addEventListener(
+      'scroll',
+      function () {
+        if (pending) return;
+        pending = true;
+
+        requestAnimationFrame(function () {
+          pending = false;
+          var y = window.scrollY;
+          /* Stops once the picture is gone, rather than going on computing
+             a transform for something nobody can see. */
+          if (y > window.innerHeight) return;
+          art.style.transform = 'scale(1.08) translateY(' + (y * 0.14).toFixed(1) + 'px)';
+        });
+      },
+      { passive: true }
+    );
+  }
+
+  /* --- the cards lean towards the pointer --- */
+
+  var cards = document.querySelectorAll('.mode');
+
+  cards.forEach(function (card) {
+    card.addEventListener('pointermove', function (e) {
+      var box = card.getBoundingClientRect();
+      /* Where the pointer is across the card, as -0.5 to 0.5 from the middle. */
+      var x = (e.clientX - box.left) / box.width - 0.5;
+      var y = (e.clientY - box.top) / box.height - 0.5;
+
+      card.style.transform =
+        'perspective(1000px) rotateX(' + (-y * 9).toFixed(2) + 'deg) rotateY(' +
+        (x * 11).toFixed(2) + 'deg) translateZ(6px)';
+    });
+
+    card.addEventListener('pointerleave', function () {
+      card.style.transform = '';
+    });
+  });
 })();
 
 /* ------------------------------------------------------------- status */
