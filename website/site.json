@@ -1,0 +1,71 @@
+{
+  "title": "NexusCraft",
+  "blurb": "Survival, skyblock, prison, one block and ten minigames, on one server. Custom textures, custom armour, and a world boss that turns up whether you are ready or not.",
+  "address": "play.nexuscraft.net",
+  "version": "26.2",
+  "domain": "",
+  "jar": "C:/Users/count/AppData/Roaming/nexuscraft-launcher/data/versions/26.2/26.2.jar",
+  "modesLede": "Everything runs on the one server and one login. Walk into a portal at spawn and you are there.",
+  "modes": [
+    {
+      "name": "Survival",
+      "block": "grass_block_side",
+      "blurb": "The ordinary game, with land claims so what you build stays built. Homes, shops, jobs and a nether and end of its own."
+    },
+    {
+      "name": "Skyblock",
+      "block": "end_stone",
+      "blurb": "A tree, a chest, and a long way down. Island levels, a generator that pays out better the further you get, and team islands."
+    },
+    {
+      "name": "One Block",
+      "block": "sculk",
+      "blurb": "Break the same block forever. What it gives back changes as you go, and the drops get stranger the deeper the phase."
+    },
+    {
+      "name": "Prison",
+      "block": "stone_bricks",
+      "blurb": "Mine, sell, rank up, repeat. Straightforward on purpose, and the fastest way to make money if that is what you are here for."
+    },
+    {
+      "name": "The Dig Site",
+      "block": "dirt",
+      "blurb": "A pit that refills every half hour. Everyone digs the same hole for whatever is buried in it, and the countdown moves you out before it closes."
+    },
+    {
+      "name": "Minigames",
+      "block": "obsidian",
+      "blurb": "Bed Wars, Sky Wars, Spleef, TNT Run, Murder Mystery, Hide and Seek, Dropper, Parkour, Sumo and One in the Chamber."
+    },
+    {
+      "name": "The World Boss",
+      "block": "netherrack",
+      "blurb": "A Warden rises in the survival world on a timer. Everyone who lands a hit takes a share of the purse, not just whoever finishes it."
+    },
+    {
+      "name": "Custom gear",
+      "block": "diamond_block",
+      "blurb": "Armour sets that are real armour wearing our own textures, handed out as gifts and prizes rather than sold."
+    }
+  ],
+  "voteReward": "Every vote pays 2,500 coins, and voting on consecutive days multiplies it up to seven times. Every fifth vote is also a rare crate key.",
+  "votes": [],
+  "facts": [
+    {
+      "value": "8",
+      "label": "worlds to play in"
+    },
+    {
+      "value": "10",
+      "label": "minigames"
+    },
+    {
+      "value": "100",
+      "label": "player slots"
+    },
+    {
+      "value": "24/7",
+      "label": "no whitelist"
+    }
+  ]
+}
