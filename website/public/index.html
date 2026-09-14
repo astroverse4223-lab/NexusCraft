@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexusCraft</title>
+<meta name="description" content="Survival, skyblock, prison, one block and ten minigames, on one server. Custom textures, custom armour, and a world boss that turns up whether you are ready or not.">
+
+<meta property="og:title" content="NexusCraft">
+<meta property="og:description" content="Survival, skyblock, prison, one block and ten minigames, on one server. Custom textures, custom armour, and a world boss that turns up whether you are ready or not.">
+<meta property="og:type" content="website">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ===================================================================
+   Every colour here is taken off a real block rather than invented.
+   Minecraft's palette is already doing a job - stone reads as stone,
+   the grass tint is the one the game multiplies its greyscale mask by -
+   and a page built from those sits beside screenshots of the game
+   instead of clashing with them.
+   =================================================================== */
+:root {
+  --void:    #070a0f;
+  --night:   #0d1320;
+  --deep:    #141a27;
+  --stone:   #3c3f46;
+  --stone-lit: #6f737d;
+  --stone-dark: #1c1e24;
+
+  --grass:   #91bd59;
+  --gold:    #fcdc5f;
+  --emerald: #17dd62;
+  --redstone:#ff5555;
+
+  --text:    #e9edf4;
+  --muted:   #98a1b3;
+  --dim:     #64708a;
+
+  --display: 'Silkscreen', 'Courier New', monospace;
+  --body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --tex-grass_block_side: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAeFBMVEV5VTqWbEq5hVyHh4dwsEZoqD5iojhsrEJhoTdpqT9npz1goDZXly1QkCZzs0l2tkyKuVp+vlRqqkCDslOBsFFmpjyQv2CSwWKTwmN/v1WXxmdvr0VkpDqcy2xrq0GNvF11tUttrUN0tEpfnzVxsUd0WERsbGxZPSmGrpghAAAAjElEQVR42gXBB0LCAAAEwd2LGkAFG3ZqIPf/HzLDebPebv+m8XXztlounk8cx5eP994/TN+f68W42nPo7n/Zu55/vn779Fg6t5e2U0+lBTEV2s5YoIptoUAIMEBCgggkClZBEUSKAgUstAAkCJIQm1QHEDQ4K5VCRQMAJCBcUZoSRRpKEwRFogwoKL0BxA0LD3lN79UAAAAASUVORK5CYII=);
+  --tex-grass_block_top: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAC1klEQVR4ATXB207cRgCA4X/GHp/ttfcAAaImwE1Ee1kpL9Ln6MtWCooaUUBZCNll12btHY/Hh6oX/T7xx5+/TxfXOetve9pjz3+U76DrjiBSRKmH7QaM7pnGCSEFxUnEw+0r+UmEFMDD7St+pIhSjzjzaBvLbBHStT27l4Y488lXEX7ocvnrkmqrSYuAaQQ3iBXWDmyfalwlcVyJ60lsNxDECulIOtPj+S7ZIuTurw26tijf4ZfrAvfpriRMFH7oEkSK3o4oT1JuNcnMpy5bpCPxAgfPd3E9h3gmyVch91+2yLPLnHGE5XlCXRnyZUiSB3iBw2wRcvXbCnO0mGNPmCjyVYQ5WnYvDWGicK3pSXKfx687zq9ynh8qkplPECqOdcdmfWB+GtNqy2Zd07U9YaJwXQdHSdxqqylOI84vc+qyJUo8mrcOV0m6ssdxJe3Rcn6VY81AudWkhY+uLbYbkGHqUZcG2w0M/cQ0TQx2YLYMcVxJnPms3qc83ZU8P1RM00RvR952mtkixM3mAUb3ZIuQIHIRQqAbi/IcsnlAWgRYMzD0I1HiYbTFOIL5acyP+wpX15a6bMlXEfvNESZIi4BpnCg3mro0KN8lTDzSImAcJubvYjbrGuEIpHQE+Spi96MhK0K6tqc4iSk3mjjz+Hiz5LDXJLnPz+8HEPB8X6E8hyBSyMO+JYgVx0PHNE0kecD3v3dIR9CZgZfHN7J5SLXV9N3A6iLBmoHqVTP0I/LDpwV1aRiGkepVIwT4ocJoi64t7dEyTTCOE0IK6spw8j5jHEaCSCH/+bIlSj063aM8h3KrUZ5kGCZuPp+RFQFSwvw0pjiJEEKw3zRcXBekRYBcniX03cDN53MO+5YPn+ZEmU+c+ay/7dk+1QghaCpDUxmU55DMAvY/jzx+fUXufzaYtuf+dksQK3Rjad4M/wsTj3cfZ7ztNIuzhM36gNGWcRxZXaT8CwE3aopgO4RMAAAAAElFTkSuQmCC);
+  --tex-dirt: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAFVBMVEV5VTq5hVyHh4eWbEpsbGx0WERZPSk6VlZqAAAAa0lEQVR42gXBwQnDQAxFwSd+0FnLgs8+5SyjsA2kgZQgY9j+S8gMM61oM9R6W85NeBDs4BPLSpbk9bBeary02zGC02JIMIpVFCm5kkbtDUPIYt5HnaQuffNxPCuAgfiVH1bk7T5EkTPPovwPGbIOYwnMHcMAAAAASUVORK5CYII=);
+  --tex-stone: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAXklEQVR42gXBMQEAMAwEocqNgNuR8JYLb9uUruCRgLv0dFddBR6bsaF6Ucm2xTNAXddebGur4NVdV1R424xtoMewjW3zTuouUT2wgc2eyhR3XW9TVFR7CsC2PaBsxAdyLn2NNWHIVAAAAABJRU5ErkJggg==);
+  --tex-deepslate: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAD1BMVEVkZGR5eXlRUVE9PUMvLzdi5EnwAAAAYUlEQVR42gXBAQHEIAwEweUUgIM0qYHPoaDgX9PPMDONKqlrR7pg6r1nm1Y5FuKkm0GxIj8ig6nX6dvIHtRJqvxIbnwzsvdB6tonF9RYVT2RH+QG74861yxq/xSDJb0PyR+e6w/hsG/r7QAAAABJRU5ErkJggg==);
+  --tex-cobblestone: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAElBMVEW1tbWmpqaIh4hubW1hYWFSUlLm8qFQAAAAcUlEQVR42gVAARGDMAz8MAMjh4CSLwIWIgDSIGAD/1p2iPk5pTfFOW3QLR3nGrrGQxSLTL1wp2TJ3PF6W/yaOjSV9eEB2y3a4omQPSerG4f6biMXkP0a8X2DMdpytQkuIWuY49CuziJmclhoIcsjUvgH41gVHD61kt4AAAAASUVORK5CYII=);
+  --tex-oak_planks: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEW4lF+vj1WfhE1nUCx+YjeWdEHCnWJT722OAAAAaUlEQVR42gXBgRHAMAyEMKCX339jVwLZtrFt4wH6ElAoBMQqhec75A45Dw/WtrUNDQSzlwJIifoArb6sT6++SmBDt23bCASwMusxtEq1yA/lDvQ4YLFB2xobCmWBqFhiD6zq+9KKL0P9AbiHDNWkCjANAAAAAElFTkSuQmCC);
+  --tex-stone_bricks: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEV/f394dnhqbWpaWVpjY2OcmZyLiYujkba6AAAAYklEQVR42lXOUQrEQAgE0Sob+/5HXjLDEvJQ8M+i+2obltIHj4Yt5WiFsEiLFNGwjlJQHEIdUD2XYb4yM/qsc8geTffC25At97pjFmtvDzhZESgPMVWKouOMuWnI+/9D/iE/bMYCbu05nvoAAAAASUVORK5CYII=);
+  --tex-end_stone: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAElBMVEXV2pT2+r3u9rTe5qTNxovFvouon65CAAAAc0lEQVR42gXBQQ6DMAwEwCVL7hX0AcaBu2X6ACsK90h1//+VzsCovKIE4KGDbHBJipojSw0f24lYxM65/LD6xnP1ACUOpRKao+ySglcN+z5w6IdXSBC1m+CGY0J3z1uAJv0Ku9H8/ZDlQD/qpLeK1WGWnn8dRxJ526YuMQAAAABJRU5ErkJggg==);
+  --tex-obsidian: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAD1BMVEU7J1QnHj0QDBwGAwsAAAFbDTSxAAAAaUlEQVR42gVAARGAMAj8mUA3AzhYAOUJoED/TB68Ut/xNLiFb9wVhfPpaybePs3KHJ+sqmRCVpCNBbG9+ekJvySq3hPVZI7qgl56aBihTmPph+Cyu4ng3kJ2vRSHMoQ+8FGHLU9o5FwkfyEoFb7iY82bAAAAAElFTkSuQmCC);
+  --tex-diamond_block: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAG1BMVEX////V//ae/utw+/Bl9eNL7eY94OUVwsYOur1j/GYQAAAAZ0lEQVR42gXBgUEDIAAEsRyi+w9s+Sb3FxlhzvU/x8jx8Xft2sspO8/FXmKe3M6Wyqa5jMqe0+1uyXhOcRFZxdyKTNh2IRPr5TrLc+BTXfGcrI+4eE7xqu3qVdmSufYz2WRbt5qYTL4NpDxhgpbEjAAAAABJRU5ErkJggg==);
+  --tex-emerald_block: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAElBMVEUXxURB84QarjUX3WIcmCmC9q0CJfVIAAAAYklEQVR42l3NSW4AMAzDQEqM/v/lojC6zpGJbf4p7FOWTZMH+36C5kHItqim92OcprvAtmS1PghjiaaW28GynzBClFJu5ELrV6gsok15YO25QNgESO6s/SUPREEFs0ffH/0A9xYB+jgWgYkAAAAASUVORK5CYII=);
+  --tex-gold_block: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAG1BMVEX+/73//ZD/7E/+4Ej/2D71zCf5vSPTljLMjidMMDrkAAAAZ0lEQVR42gXBgUEDIAAEsRyi+w9s+Sb3FxlhzvU/x8jx8Xft2sspO8/FXmKe3M6Wyqa5jMqe0+1uyXhOcRFZxdyKTNh2IRPr5TrLc+BTXfGcrI+4eE7xqu3qVdmSufYz2WRbt5qYTL4NpDxhgpbEjAAAAABJRU5ErkJggg==);
+  --tex-netherrack: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAFVBMVEWFQkJyMjJlKChXISFQGxtRFRVBFhZSHStNAAAAe0lEQVR42g3JsRGDMBAEwIMK9A8UcNKrABgPud6IHIzJ7VH/NdibLl6XSfwyYUm7j3esUF2vVI3oaDOH0xHUQy8l4UgHxKLiHD/Uyg7D7fpWB4xWo2TCgzZyujBTW5C9wYrdJbcHTi15O5j/FaZtCRNc+udORmwcubrEH0CdFhUpwFc0AAAAAElFTkSuQmCC);
+  --tex-bedrock: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAbUlEQVR42gXBgQAAMBDEsLG8QmEKcFDVXfIGYDNBfGytRe2Qx8EBoeaebZ4pAL4jAGG18VBROIXj1VzN1eKeigoHMt9K0NWqnnCITKC9LVYc1eCdCq7c6p7AhAWAby1P4HD1NkFwJfg4uBruwH1D0lUfTgxevgAAAABJRU5ErkJggg==);
+  --tex-crafting_table_front: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAANlBMVEX////Y2Ni1tbXCnWK4lF+vj1WfhE2WdEF+YjdnUCxzOSBLKxhBIw44IRYoHgsbFg0ZFAwRDggy6vjwAAAAjklEQVR42gXBW1bDAAxDwSvZKSfAB/vfJtDmaXVGP/8Jn7dIPUHfJnLvBbVZMoZkZrN3IYamCZKxCi6as27AnHy91qHRrEdkDCtD4zgEwh80TQVLZskmTHPwGMYcABfG83vFdvkBxkTEgpAwNEuC1FRU+0JzTxDmpO4cH02QiRHRAo2UkQBJQMeIpNKKIG8DCkhY9AxuRwAAAABJRU5ErkJggg==);
+  --tex-bookshelf: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAV1BMVEVjKAV3MAeRERG8FhZpVDN8Yj7Mpmy8mGKzjFGbd0KfhE0nHhE2KhUsIhNBMRoxY6MqTnoxW44RjmsMa1CJiYm1tbWomwqJfgh1jhFecg1VaAlJSUk/Pz95EYrOAAAAlElEQVR42gXBW3LCMBQFwZkrhTIQ85H9r5GqPGxCYenQ7VKEo4NAnJ0GaULIKWN2Umx8wtnHNHT3UIHLmH8rp1FDAIMNYFRBCFcxSBXJLeivIJbnhIASEHtUXh9BCEdz6QRXf5ySehWP3d6T3bbeWuh+JQfAdgndZ437HWgtbNC0ioBwjTBSVeFb5vhP1IFLCCgBhDf+ck47xheS/gAAAABJRU5ErkJggg==);
+  --tex-nether_bricks: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEUwGBxEJCo+HiQ4GB4pFRkhERQZDRCSXrt5AAAAZElEQVR42l2LUQpEQQjDYmu9/5GXkRlYnhDTn6BSVFWSch6NxwB4tKID3ayBmSQz88z2diRZcpABmLpm3R1Dmw6vf8apcspebJhDrRfipbO7OfU/bFlVx+fBLW2Gve47WDOf+wF11gLnBCajwgAAAABJRU5ErkJggg==);
+  --tex-purpur_block: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEXHqMe6lbqyhrKse6ykcqOdb5yQZZD/TDgUAAAATklEQVR42gXBgQ3AMAwEIc6qsv/GXyDSU+F9FVkRTghCbkQW4SAFypeCRJyCSaE3WqwRpDxFva/EKcFNGBCnUpOUKwpIDpEpOIhC6AEAfhtwDIqRwLDuAAAAAElFTkSuQmCC);
+  --tex-sea_lantern: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAABQCAIAAACfyWJaAAAJ80lEQVR42gXB23aV13kG4Pf95vx3a0ksAQaDABsMkgm2R8eoTTJ6HUmvpk1PW19Sj9vTOt3Zji0JbIIJGO211r+bc35vnoe//7d/cndBi7rpxyFUtSDPpa2b2YtKrmM1p1ngVt06EQOVUZ7sP7u/c20s/tn9j8f15sHtO3PKJ5srArGufnr/7tXx26ODg+IlppT2nz7bvXH9+aO9VaidrK/fcheb9uZiYcBYyu7WtnLGHg9++D666/6ND54/fNyGxswWMdDMAIAGZhUzG9L8272nOvzzd3OKbdvdW15bVE1Na+sKmig5KEkGd1Whkdcs6fHde4xNNKvYNtHUxkDMAGrrZCpeIuOMAcptU5fJx3E2wIZpzeLBjCDkVWxEyUlFEHXoSMFBUmIuxarY3b3xgbuLEEhQYvEk5VLkcofMDMLdnZ2uXZoZA2lmBhIsXgRKIkkjCGMQBCJNE1gszfNJfyWXQ5IbjShmFRBImcxzdhfJk2EDyRZ1s7lYj0lyCUh5IhkDSYcwlZ4WSKSSm7YexiHOEKuY4KmUECpjmcsoIsDkDhksJEdFm4YJDHGep9eXpze7hbfNTrughWgNIEmgAV7cxnm4nOZX5ydwj8r51cmvJafnDz89m8drMQIFEs3k7rRInfTD/775+c35KcQos59+POTe429ev7xcX5L2xcNHHyy2jOF8XI/TXNXVwV/fvL04e3F42LU1f/+vfxyGDSAYYhVzctHoAhVCzGledAuYDcNm0W2lnCKoum1cZavp+rFvuwbOknPXtslzIAIxp7mq6i7EJjAGekH59Omz3dXOkNNnHz3Km373gw/TPL/fXElqmvqn419/+vXty6MD9xxTSk+efr67Wn31aH9VVxLj6qZciNWN5RLQXPzetRXlNB788H10cPf6zu8e7XehDmQTElQYjYQEQTHU/Tx/9Wi/uH83JWvr7sHWalk3dbTWsoUqxiqECBpJs1j5XFtszJ7cuWtVE80C6yagVFQIkabATnIDaEilD1VscqKqYUxG2jBtomi0ykxwqgZEGowk67gkEEiKpKU0WbD69vUbgooXgGZBYi59zj1kklxwR4Hu7KyW3bbFGIIxMNCMNEgCXALgcpKAzBjINKWiYjmXs2ENQhIhAQavwrKypRlcIiFJwNm4BmSLKl6dX65np+RQLoMAUqBLch/d4VIuJTbNlFIcS7E6ZuVJVUxzHetUBpCkGQAGLyPCdo00jxOkmEp6dXZys1lgsdiuG5bZBJgVT2bmKuL2lKbzcXp1egxXVPE3Z6eEvvxo79LSKlYO0gEARdmtDum07//r9cs35yeARUkvDg+4t0d7ebm+Ivyzh4/vbK0EXIybcZqqqjp69/btxdmLw6PFouE/fv3HzeYKAoyxrnNKpMkdUIxxntNysUVDP/Rdu0g5RQF104C2qOt+HLrFluSe5rbpknswi4HTPNVVbMzqto2BcuPjT39z79r24P7s3oO8GXdv3Z7ndDps4G5V/Onk/evjt0cHh2VOcZqmvWef31ltf/Xw02t1HZC4WhFUrD9c1KCvS/h45/p/yt15dPBdFHlv58bvHu+1rCvmOnYuJxBoAgQtMU45PH+07+7f/1+JdWzub213oWqY2tjGEIoyZaAICmC1AEYv/OTuLiqLMUZVdY2+idtmkNwYCYIizD0Z0MQm2Dj0o4k2zJsARqsMNJAWDEzep9IDIqNQAOSCEGuXYgzt3es3aBBQ4BTdx8COhpR7i21ALHKQt7e2F92WRbMQgruKCmUGSjIjBFBGAigAwTTNglvK82l/RTLQAAdQhcWYrlLZVHEJQRAlAMfj2otbV7VX51djdoCguQrJrr5Wx6UkySFAkErbNUMabCqZdZwU5jx6KQCKZ1dxleJZglBA0JoyJRNtLun1+fvNZjhLGMoswV0551wkQUAqGorer/sXJ+8gRBR/c7b28vKrh/vrWIc8FJEkAYDuGWxO+v6bvxz99eIMYAR4dPCtnuz/6fWLdX/pHr74+OPb2yvCzobLnBKCvXz/9s3l+dGPR4uu5R++/pd+fQkLgGJd5ZQBQgUMsQp5mheLpYBh6LumyypR8LpbuJettuuHTds2AEspTawKFAhSeU51XbcxFlo0eFF6+uzz3e1rfSl/9+CjPA4f3riVUzobe7h7jK+Oj18dv39x8OesEtM07X32xZ2d6799tL+KBgasCMia7sZym0Cfp493bv6HF+w9Pfjh/yNCfHDz1lcPH3c0MLYhGAmCoiARklJJXz7cc/347ThbXTUfbS0XxraqljGGAKMI0TwYItnFKsaqC3hydxdVY2aMTVcF1qQFGiDANZY8AijIYlmGqg1NnqZI2DjNKA6RoOS04D4CbQiL5H1AiGYwFokWU3GLsbq12jGjSIJzWtO6YBZCiNwqProgieTta9e22qUFGgmABhQUCADMQnEH5HICkgDkORXIckkX00CBNDrraunqS8m55Fw2VVyAIE3w0/6SkHVV3V+s+1wgkRQUrCs+EFOsFsULREgQq7YbpsnmklOIjtLnWSJBI6K1MSxKSQJcuYCB2mwGoMS5lF8uTz/oFqWTgCVq0FwygKwlnx1Z00k//+XiFG7RU3p9cuyl/P2DT8ySkYCbmRd3l4xBOt5M37w6enN5BiDS7MXBgfaeWAjrvl9Wce/B/ZvdUu5X85jn7KE6evfm3fr86OBw0TUxhDAM47f/89/fhRBCVUr6dwUqA4xNlaa565bBbLO5Wiy35jlFmjVN5ayWddOPQ71YeJEU2qqeXYFWGec0VXXVhqrpLAYUp/b393dXNyb50937ZZju3rw1p3zarwlZjK+O3/98/O7F4YF7jlPOe7/5bPf6jeeP9laxJsHrhGRNc2u5MGgofm+1Apzkjz98Fwm7v3PzHx7vN6yNXoUYAQcAADAaOI85P3+0L+nbKcWmbu9trWqrInIXW7IQLp8BBNaAVyG6w708vnOXsYk0C21dM9fWQEkogOq4Xbzk0pOhCY1CCIZ+mIPBxmkwV7QYjGIhYNYBiCFU1RbpBTmGUECzmEuxKjS3VzcEh0D3EDqSgOQAEMPSPUmSdGdntWgXRioESg6CpASSLhdFoLgTBsjINM5iMZefDWuQkgrjnC8hEATgUvENLRAm6WS4VHFrY7U+X/dJWTCgCu2ULgG6e87raDVckryUpu3GOcVZBVUogJSzh9oYrM6+IRhCDRE0h8VYzdMEIM4p/3J+cnuxlat6p2uIaIrBagmQsuCu5Om0738++VWuiFJen52668uHTy5SWskBwkFBQJZHC8dXV3968/MvF2cEo4AXh4d68om9jlebK4Cff/zw1nKb4MW0Geccq3D09u0vFycvDg67puYfvv7nfjOADpfVVSmZMEgQYxPmYdpabMHYD0PbNEX6G9pqhHE9lssiAAAAAElFTkSuQmCC);
+  --tex-redstone_block: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAD1BMVEXmIAi9IAikGAiUFABzDABFTPGwAAAAV0lEQVR42gXBgWHDQBAEIebcf8fRbwAAQLLELHZQR51I2sns3haVtps9UgX4u+24DdgvcgmwecfegGnOzLwZ4/CT+2QmKS2jbykCwztbvtHMJCYZDADAP7Y+Nw/1IQEFAAAAAElFTkSuQmCC);
+  --tex-iron_block: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAcElEQVR42rXRMQ4AERCFYfc/jS2nfCeQbVRbqBSi2hMskxCTUUiWLwrFiD+Y2zmwspkusD5jALxSblJKUQJQD8RlRGQua5+Z0PhBGRZJukrfsCMpDHynk7IU2Zkk3bb0St2ZpFAsfpyO+Z2EGWJ1o3yPeZRBEj1y+QAAAABJRU5ErkJggg==);
+  --tex-quartz_block_side: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAElBMVEXy7+3u6ubu5t7q4tri3tDd2csPbMi3AAAATklEQVR42gXBgQHAIADDIKL+f/I6AACQQvDh5ghs6L6CGUGdISaUI5igHIaDcRMIcB8SM/AkGyAJoFCCBL73IG3NkENmoFtnzSCcnhgQfs6bGU9ppJq1AAAAAElFTkSuQmCC);
+  --tex-amethyst_block: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAFVBMVEX+y+bIkPCmePGNasx6W7VkR55dOppI3xRrAAAAeklEQVR42g3LwRGDIBAF0D+mASdkvBuhAbKbuy5rAfLpQOi/hOTdHyi+Y+MXtlHyMEX1Gq8eHdThvEKBvXoz6o388LLK2TBP0Y2twhKjmCuYcnDWhGJRhx0BJYeTWRT2fqqtm+P6t3b0CH6WdhcGuCXffZ/QKWWWe/kBljEdyt/kygIAAAAASUVORK5CYII=);
+  --tex-sculk: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAABABAMAAADhU+qlAAAAGFBMVEUNEhcp3+sAkpUFYl0ZRkgDQVAFKjIRGyH1kgkDAAAAqUlEQVR42qXQsW3DUBAE0Ul8V4FKMEtQC04VkemREvDTTXTbvgNKgWETIOAGBg8DuBsXNGkNw6NwXI3DtKppWwlJupcwgmHdKxco1ErTVzJRkUNtpcgmpUr0KCtmcJBfDNECsSczYABP36tn/vCshWM66bm9PM/L2zP/8mzlenlienvqtGc751l/ej6PPWtZMe1/luM/2/882ynPbf+jj8vuGSxHnrV6/gZhcH+0H9zs2QAAAABJRU5ErkJggg==);
+  --tex-prismarine_bricks: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAGFBMVEVar6RhpZpBgWpSmYNGiXSVz8eCxbxuua4Cbk+SAAAAdUlEQVR42iWNyQ0EQRDCTF3OP+PVTiPhBzyM+8X78xwWVWoV5Q1orwYsRBL6FEmhnKROhQwrCtUi3nCgqSuBOBiwTyokGS7Sq1IJDht7Bf1Mw4XeJ+81xSV9EujeUO8hSagNg9CXBOiDgk5B0p1Kepip+vo4P/3LA0nnDoguAAAAAElFTkSuQmCC);
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--void);
+  color: var(--text);
+  font: 16px/1.65 var(--body);
+  overflow-x: hidden;
+}
+
+img { max-width: 100%; }
+
+/* Every texture in the game is 16 pixels across. Smoothing any of them
+   is the single fastest way to stop looking like Minecraft. */
+.px { image-rendering: pixelated; image-rendering: crisp-edges; }
+
+/* -------------------------------------------------------------------
+   The GUI grammar: a raised panel is lit on the top and left and dark
+   on the bottom and right, with no rounded corners anywhere. That one
+   detail is what the game's whole interface is built from.
+   ------------------------------------------------------------------- */
+.panel {
+  background: var(--stone);
+  border: 3px solid;
+  border-color: var(--stone-lit) var(--stone-dark) var(--stone-dark) var(--stone-lit);
+}
+
+.sunk {
+  background: #16181d;
+  border: 3px solid;
+  border-color: var(--stone-dark) var(--stone-lit) var(--stone-lit) var(--stone-dark);
+}
+
+h1, h2, h3, .mono {
+  font-family: var(--display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  /* The hard offset shadow under every string the game draws. */
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
+}
+
+.wrap { width: min(1120px, 100% - 40px); margin: 0 auto; }
+
+/* ============================================ the surface: hero ==== */
+
+/*
+ * The artwork carries the name, the tagline and the whole identity, so it is
+ * the hero rather than a backdrop behind one. Nothing is written across it:
+ * type over a picture this busy is type nobody can read, and the picture
+ * already says the thing the type would have said.
+ */
+.hero { position: relative; background: #05070b; }
+
+/*
+ * The fade hangs off the bottom of the picture rather than the bottom of the
+ * hero. Anchored to the hero it sits under the text instead of under the
+ * image, and the first line of copy lands on a lit castle.
+ */
+.art-wrap { position: relative; line-height: 0; }
+
+.art-wrap::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 260px;
+  background: linear-gradient(180deg, transparent 0%, rgba(5, 7, 11, 0.72) 46%, #05070b 100%);
+  pointer-events: none;
+}
+
+.art {
+  display: block;
+  width: 100%;
+  max-height: 82vh;
+  object-fit: cover;
+  object-position: center 42%;
+}
+
+/* The working half: address, status, numbers, tucked into the dark end of
+   the fade so the picture becomes the page rather than stopping. */
+.deck {
+  position: relative;
+  z-index: 1;
+  margin-top: -96px;
+  padding-bottom: 60px;
+}
+
+.blurb {
+  font-size: clamp(16px, 2.1vw, 19px);
+  color: var(--muted);
+  margin: 0 0 26px;
+  max-width: 60ch;
+}
+
+/* --- the address, which is the only thing on the page that matters --- */
+
+.join {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin-bottom: 18px;
+}
+
+.addr {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  cursor: pointer;
+  background: #16181d;
+  border: 3px solid;
+  border-color: var(--stone-dark) var(--stone-lit) var(--stone-lit) var(--stone-dark);
+  transition: border-color 0.12s, background 0.12s;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.addr:hover { background: #1c1f26; border-color: var(--grass) var(--stone-lit) var(--stone-lit) var(--grass); }
+
+.addr-label {
+  display: block;
+  font-family: var(--display);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+
+.addr-value {
+  display: block;
+  font-family: var(--display);
+  font-size: clamp(15px, 2.6vw, 22px);
+  color: var(--gold);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+  word-break: break-all;
+}
+
+.addr-copy {
+  font-family: var(--display);
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+  border-left: 2px solid #2a2d35;
+  padding-left: 14px;
+}
+
+.addr.done .addr-copy { color: var(--emerald); }
+
+/* --- live status, pinged from the browser --- */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 15px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 2px solid #262a33;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pip {
+  width: 9px;
+  height: 9px;
+  background: var(--dim);
+  box-shadow: 0 0 0 0 rgba(23, 221, 98, 0.6);
+}
+
+.status.up .pip { background: var(--emerald); animation: pulse 2.4s ease-out infinite; }
+.status.down .pip { background: var(--redstone); }
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(23, 221, 98, 0.55); }
+  70%  { box-shadow: 0 0 0 9px rgba(23, 221, 98, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(23, 221, 98, 0); }
+}
+
+.status b { color: var(--text); font-weight: 600; }
+
+/* A few plain numbers under the status. They are the questions anybody
+   sizing up a server asks first, answered without being asked. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin-top: 26px;
+  border-top: 2px solid #1e2430;
+}
+
+.fact {
+  padding: 16px 26px 4px 0;
+  margin-right: 26px;
+  border-right: 2px solid #1e2430;
+}
+
+.fact:last-child { border-right: 0; margin-right: 0; }
+
+.fact b {
+  display: block;
+  font-family: var(--display);
+  font-size: 21px;
+  color: var(--gold);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+  line-height: 1.2;
+}
+
+.fact span {
+  display: block;
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 5px;
+}
+
+/* Kept for the page's outline and for anything reading it aloud, since the
+   name only exists inside the picture otherwise. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status.up .pip { animation: none; }
+}
+
+/* --- the ground line: where the sky stops and the world starts --- */
+
+.ground {
+  position: relative;
+  height: 64px;
+  background-image: var(--tex-grass_block_top);
+  background-size: 64px 64px;
+  background-repeat: repeat-x;
+  image-rendering: pixelated;
+  border-top: 3px solid rgba(0, 0, 0, 0.35);
+}
+
+.ground::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 128px;
+  background-image: var(--tex-dirt);
+  background-size: 64px 64px;
+  image-rendering: pixelated;
+  opacity: 0.85;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent);
+  mask-image: linear-gradient(180deg, #000, transparent);
+}
+
+/* ======================================= underground: the sections == */
+
+.underground {
+  position: relative;
+  background:
+    linear-gradient(180deg, #10131b 0%, var(--night) 30%, var(--void) 100%);
+  padding: 84px 0 0;
+}
+
+/* A faint wall of stone behind everything, so the dark has a surface. */
+.underground::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--tex-deepslate);
+  background-size: 96px 96px;
+  image-rendering: pixelated;
+  opacity: 0.055;
+  pointer-events: none;
+}
+
+section { position: relative; padding: 0 0 84px; }
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+h2 {
+  font-size: clamp(19px, 3.4vw, 28px);
+  margin: 0;
+  color: #fff;
+}
+
+.head .rule {
+  flex: 1;
+  height: 3px;
+  background: linear-gradient(90deg, #2b313e, transparent);
+}
+
+.lede {
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0 0 34px;
+}
+
+/* --- what you can play --- */
+
+.modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.mode {
+  padding: 22px 20px 24px;
+  background: linear-gradient(180deg, #232833 0%, #1a1e27 100%);
+  border: 3px solid;
+  border-color: #3f4653 #10131a #10131a #3f4653;
+  transition: transform 0.14s, border-color 0.14s;
+}
+
+.mode:hover {
+  transform: translateY(-3px);
+  border-color: var(--grass) #10131a #10131a var(--grass);
+}
+
+.mode-face {
+  width: 64px;
+  height: 64px;
+  image-rendering: pixelated;
+  background-size: 100% 100%;
+  margin-bottom: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.5);
+}
+
+.mode h3 {
+  font-size: 15px;
+  margin: 0 0 9px;
+  color: var(--gold);
+}
+
+.mode p {
+  margin: 0;
+  font-size: 14.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* --- voting --- */
+
+.votes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+/* A Minecraft button: raised, lit from the top left, and it lights up
+   rather than moves when the pointer is over it. */
+.vote {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  text-decoration: none;
+  color: var(--text);
+  background: #4a5160;
+  border: 3px solid;
+  border-color: #78808f #22262e #22262e #78808f;
+  transition: background 0.12s;
+}
+
+.vote:hover { background: #5b6374; }
+.vote:hover .vote-name { color: var(--gold); }
+
+.vote img { width: 26px; height: 26px; image-rendering: pixelated; }
+
+.vote-name {
+  font-family: var(--display);
+  font-size: 13px;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.55);
+  transition: color 0.12s;
+}
+
+.vote-sub {
+  display: block;
+  font-family: var(--body);
+  font-size: 11.5px;
+  color: #b9c1d0;
+  margin-top: 3px;
+  text-shadow: none;
+}
+
+/* --- how to join --- */
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 18px;
+  counter-reset: step;
+}
+
+.step {
+  position: relative;
+  padding: 24px 20px 22px;
+  background: #16181d;
+  border: 3px solid;
+  border-color: var(--stone-dark) #31353e #31353e var(--stone-dark);
+}
+
+.step::before {
+  counter-increment: step;
+  content: counter(step);
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 14px;
+  font-family: var(--display);
+  font-size: 15px;
+  color: var(--void);
+  background: var(--grass);
+  text-shadow: none;
+}
+
+.step h3 { font-size: 13px; margin: 0 0 8px; color: #fff; }
+.step p { margin: 0; font-size: 14.5px; color: var(--muted); }
+.step code {
+  font-family: var(--display);
+  font-size: 12px;
+  color: var(--gold);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px 6px;
+}
+
+/* --- bedrock at the bottom, because that is what is down there --- */
+
+footer {
+  padding: 40px 0 48px;
+  background-image: var(--tex-bedrock);
+  background-size: 56px 56px;
+  image-rendering: pixelated;
+  border-top: 3px solid #000;
+  position: relative;
+}
+
+footer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.86);
+}
+
+.foot {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.foot b { font-family: var(--display); color: var(--muted); font-size: 12px; }
+
+@media (max-width: 820px) {
+  /*
+   * The artwork is composed around a centre, so on a narrow screen it is
+   * allowed to be shorter and crop inwards rather than shrink to a strip.
+   */
+  /*
+   * Shown whole rather than cropped. The picture is a wide one with the name
+   * built into the middle of it, and a narrow screen cropping to fill would
+   * cut the first and last letters off the thing the page is named after.
+   * Shorter and complete beats taller and beheaded.
+   */
+  .art { max-height: none; height: auto; object-fit: contain; }
+  .art-wrap::after { height: 92px; }
+  .deck { margin-top: -34px; }
+  .fact { padding-right: 18px; margin-right: 18px; }
+  .underground { padding-top: 72px; }
+}
+</style>
+</head>
+
+<body>
+
+<header class="hero">
+  <h1 class="sr-only">NexusCraft &mdash; Survival, skyblock, prison, one block and ten minigames, on one server. Custom textures, custom armour, and a world boss that turns up whether you are ready or not.</h1>
+
+  <div class="art-wrap">
+    <picture>
+      <source media="(max-width: 820px)" srcset="art/hero-small.jpg">
+      <img class="art" src="art/hero.jpg" width="1536" height="1024"
+           alt="NexusCraft &mdash; floating islands, castles and a dragon over a Minecraft world"
+           fetchpriority="high">
+    </picture>
+  </div>
+
+  <div class="wrap deck">
+    <p class="blurb">Survival, skyblock, prison, one block and ten minigames, on one server. Custom textures, custom armour, and a world boss that turns up whether you are ready or not.</p>
+
+    <div class="join">
+      <button class="addr" id="addr" type="button">
+        <span>
+          <span class="addr-label">Server address</span>
+          <span class="addr-value" id="addrValue">play.nexuscraft.net</span>
+        </span>
+        <span class="addr-copy" id="addrCopy">Click<br>to copy</span>
+      </button>
+    </div>
+
+    <div class="status" id="status">
+      <span class="pip"></span>
+      <span id="statusText">Checking the server&hellip;</span>
+    </div>
+
+    <div class="facts" id="facts"></div>
+  </div>
+</header>
+
+<div class="ground" aria-hidden="true"></div>
+
+<div class="underground">
+
+  <section class="wrap" id="play">
+    <div class="head"><h2>What you can play</h2><span class="rule"></span></div>
+    <p class="lede">Everything runs on the one server and one login. Walk into a portal at spawn and you are there.</p>
+    <div class="modes" id="modes"></div>
+  </section>
+
+  <section class="wrap" id="vote">
+    <div class="head"><h2>Vote for us</h2><span class="rule"></span></div>
+    <p class="lede">
+      Voting is how people find a small server &mdash; the lists rank by it, and one click puts us
+      higher for everyone. It costs you nothing and you get paid in game for it.
+    </p>
+    <div class="votes" id="votes"></div>
+    <p class="lede" style="margin:0">Every vote pays 2,500 coins, and voting on consecutive days multiplies it up to seven times. Every fifth vote is also a rare crate key.</p>
+  </section>
+
+  <section class="wrap" id="join">
+    <div class="head"><h2>How to join</h2><span class="rule"></span></div>
+    <div class="steps">
+      <div class="step">
+        <h3>Open Minecraft</h3>
+        <p>Java Edition, version <code>26.2</code>. Then <b>Multiplayer</b> &rarr; <b>Add Server</b>.</p>
+      </div>
+      <div class="step">
+        <h3>Paste the address</h3>
+        <p>Put <code>play.nexuscraft.net</code> in the address box. The name can be anything you like.</p>
+      </div>
+      <div class="step">
+        <h3>Say yes to the pack</h3>
+        <p>We use our own textures. Accepting them is what makes the place look like ours.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap foot">
+    <span><b>NexusCraft</b></span>
+    <span>Not affiliated with Mojang or Microsoft.</span>
+  </div>
+</footer>
+
+<script>
+/* Textures, lifted out of the game's own jar at build time. */
+const TEX = {"block/grass_block_side":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAeFBMVEV5VTqWbEq5hVyHh4dwsEZoqD5iojhsrEJhoTdpqT9npz1goDZXly1QkCZzs0l2tkyKuVp+vlRqqkCDslOBsFFmpjyQv2CSwWKTwmN/v1WXxmdvr0VkpDqcy2xrq0GNvF11tUttrUN0tEpfnzVxsUd0WERsbGxZPSmGrpghAAAAjElEQVR42gXBB0LCAAAEwd2LGkAFG3ZqIPf/HzLDebPebv+m8XXztlounk8cx5eP994/TN+f68W42nPo7n/Zu55/vn779Fg6t5e2U0+lBTEV2s5YoIptoUAIMEBCgggkClZBEUSKAgUstAAkCJIQm1QHEDQ4K5VCRQMAJCBcUZoSRRpKEwRFogwoKL0BxA0LD3lN79UAAAAASUVORK5CYII=","block/grass_block_top":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAC1klEQVR4ATXB207cRgCA4X/GHp/ttfcAAaImwE1Ee1kpL9Ln6MtWCooaUUBZCNll12btHY/Hh6oX/T7xx5+/TxfXOetve9pjz3+U76DrjiBSRKmH7QaM7pnGCSEFxUnEw+0r+UmEFMDD7St+pIhSjzjzaBvLbBHStT27l4Y488lXEX7ocvnrkmqrSYuAaQQ3iBXWDmyfalwlcVyJ60lsNxDECulIOtPj+S7ZIuTurw26tijf4ZfrAvfpriRMFH7oEkSK3o4oT1JuNcnMpy5bpCPxAgfPd3E9h3gmyVch91+2yLPLnHGE5XlCXRnyZUiSB3iBw2wRcvXbCnO0mGNPmCjyVYQ5WnYvDWGicK3pSXKfx687zq9ynh8qkplPECqOdcdmfWB+GtNqy2Zd07U9YaJwXQdHSdxqqylOI84vc+qyJUo8mrcOV0m6ssdxJe3Rcn6VY81AudWkhY+uLbYbkGHqUZcG2w0M/cQ0TQx2YLYMcVxJnPms3qc83ZU8P1RM00RvR952mtkixM3mAUb3ZIuQIHIRQqAbi/IcsnlAWgRYMzD0I1HiYbTFOIL5acyP+wpX15a6bMlXEfvNESZIi4BpnCg3mro0KN8lTDzSImAcJubvYjbrGuEIpHQE+Spi96MhK0K6tqc4iSk3mjjz+Hiz5LDXJLnPz+8HEPB8X6E8hyBSyMO+JYgVx0PHNE0kecD3v3dIR9CZgZfHN7J5SLXV9N3A6iLBmoHqVTP0I/LDpwV1aRiGkepVIwT4ocJoi64t7dEyTTCOE0IK6spw8j5jHEaCSCH/+bIlSj063aM8h3KrUZ5kGCZuPp+RFQFSwvw0pjiJEEKw3zRcXBekRYBcniX03cDN53MO+5YPn+ZEmU+c+ay/7dk+1QghaCpDUxmU55DMAvY/jzx+fUXufzaYtuf+dksQK3Rjad4M/wsTj3cfZ7ztNIuzhM36gNGWcRxZXaT8CwE3aopgO4RMAAAAAElFTkSuQmCC","block/dirt":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAFVBMVEV5VTq5hVyHh4eWbEpsbGx0WERZPSk6VlZqAAAAa0lEQVR42gXBwQnDQAxFwSd+0FnLgs8+5SyjsA2kgZQgY9j+S8gMM61oM9R6W85NeBDs4BPLSpbk9bBeary02zGC02JIMIpVFCm5kkbtDUPIYt5HnaQuffNxPCuAgfiVH1bk7T5EkTPPovwPGbIOYwnMHcMAAAAASUVORK5CYII=","block/stone":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAXklEQVR42gXBMQEAMAwEocqNgNuR8JYLb9uUruCRgLv0dFddBR6bsaF6Ucm2xTNAXddebGur4NVdV1R424xtoMewjW3zTuouUT2wgc2eyhR3XW9TVFR7CsC2PaBsxAdyLn2NNWHIVAAAAABJRU5ErkJggg==","block/deepslate":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAD1BMVEVkZGR5eXlRUVE9PUMvLzdi5EnwAAAAYUlEQVR42gXBAQHEIAwEweUUgIM0qYHPoaDgX9PPMDONKqlrR7pg6r1nm1Y5FuKkm0GxIj8ig6nX6dvIHtRJqvxIbnwzsvdB6tonF9RYVT2RH+QG74861yxq/xSDJb0PyR+e6w/hsG/r7QAAAABJRU5ErkJggg==","block/cobblestone":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAElBMVEW1tbWmpqaIh4hubW1hYWFSUlLm8qFQAAAAcUlEQVR42gVAARGDMAz8MAMjh4CSLwIWIgDSIGAD/1p2iPk5pTfFOW3QLR3nGrrGQxSLTL1wp2TJ3PF6W/yaOjSV9eEB2y3a4omQPSerG4f6biMXkP0a8X2DMdpytQkuIWuY49CuziJmclhoIcsjUvgH41gVHD61kt4AAAAASUVORK5CYII=","block/oak_planks":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEW4lF+vj1WfhE1nUCx+YjeWdEHCnWJT722OAAAAaUlEQVR42gXBgRHAMAyEMKCX339jVwLZtrFt4wH6ElAoBMQqhec75A45Dw/WtrUNDQSzlwJIifoArb6sT6++SmBDt23bCASwMusxtEq1yA/lDvQ4YLFB2xobCmWBqFhiD6zq+9KKL0P9AbiHDNWkCjANAAAAAElFTkSuQmCC","block/stone_bricks":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEV/f394dnhqbWpaWVpjY2OcmZyLiYujkba6AAAAYklEQVR42lXOUQrEQAgE0Sob+/5HXjLDEvJQ8M+i+2obltIHj4Yt5WiFsEiLFNGwjlJQHEIdUD2XYb4yM/qsc8geTffC25At97pjFmtvDzhZESgPMVWKouOMuWnI+/9D/iE/bMYCbu05nvoAAAAASUVORK5CYII=","block/end_stone":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAElBMVEXV2pT2+r3u9rTe5qTNxovFvouon65CAAAAc0lEQVR42gXBQQ6DMAwEwCVL7hX0AcaBu2X6ACsK90h1//+VzsCovKIE4KGDbHBJipojSw0f24lYxM65/LD6xnP1ACUOpRKao+ySglcN+z5w6IdXSBC1m+CGY0J3z1uAJv0Ku9H8/ZDlQD/qpLeK1WGWnn8dRxJ526YuMQAAAABJRU5ErkJggg==","block/obsidian":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAD1BMVEU7J1QnHj0QDBwGAwsAAAFbDTSxAAAAaUlEQVR42gVAARGAMAj8mUA3AzhYAOUJoED/TB68Ut/xNLiFb9wVhfPpaybePs3KHJ+sqmRCVpCNBbG9+ekJvySq3hPVZI7qgl56aBihTmPph+Cyu4ng3kJ2vRSHMoQ+8FGHLU9o5FwkfyEoFb7iY82bAAAAAElFTkSuQmCC","block/diamond_block":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAG1BMVEX////V//ae/utw+/Bl9eNL7eY94OUVwsYOur1j/GYQAAAAZ0lEQVR42gXBgUEDIAAEsRyi+w9s+Sb3FxlhzvU/x8jx8Xft2sspO8/FXmKe3M6Wyqa5jMqe0+1uyXhOcRFZxdyKTNh2IRPr5TrLc+BTXfGcrI+4eE7xqu3qVdmSufYz2WRbt5qYTL4NpDxhgpbEjAAAAABJRU5ErkJggg==","block/emerald_block":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAElBMVEUXxURB84QarjUX3WIcmCmC9q0CJfVIAAAAYklEQVR42l3NSW4AMAzDQEqM/v/lojC6zpGJbf4p7FOWTZMH+36C5kHItqim92OcprvAtmS1PghjiaaW28GynzBClFJu5ELrV6gsok15YO25QNgESO6s/SUPREEFs0ffH/0A9xYB+jgWgYkAAAAASUVORK5CYII=","block/gold_block":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAG1BMVEX+/73//ZD/7E/+4Ej/2D71zCf5vSPTljLMjidMMDrkAAAAZ0lEQVR42gXBgUEDIAAEsRyi+w9s+Sb3FxlhzvU/x8jx8Xft2sspO8/FXmKe3M6Wyqa5jMqe0+1uyXhOcRFZxdyKTNh2IRPr5TrLc+BTXfGcrI+4eE7xqu3qVdmSufYz2WRbt5qYTL4NpDxhgpbEjAAAAABJRU5ErkJggg==","block/netherrack":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAFVBMVEWFQkJyMjJlKChXISFQGxtRFRVBFhZSHStNAAAAe0lEQVR42g3JsRGDMBAEwIMK9A8UcNKrABgPud6IHIzJ7VH/NdibLl6XSfwyYUm7j3esUF2vVI3oaDOH0xHUQy8l4UgHxKLiHD/Uyg7D7fpWB4xWo2TCgzZyujBTW5C9wYrdJbcHTi15O5j/FaZtCRNc+udORmwcubrEH0CdFhUpwFc0AAAAAElFTkSuQmCC","block/bedrock":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAbUlEQVR42gXBgQAAMBDEsLG8QmEKcFDVXfIGYDNBfGytRe2Qx8EBoeaebZ4pAL4jAGG18VBROIXj1VzN1eKeigoHMt9K0NWqnnCITKC9LVYc1eCdCq7c6p7AhAWAby1P4HD1NkFwJfg4uBruwH1D0lUfTgxevgAAAABJRU5ErkJggg==","block/crafting_table_front":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAANlBMVEX////Y2Ni1tbXCnWK4lF+vj1WfhE2WdEF+YjdnUCxzOSBLKxhBIw44IRYoHgsbFg0ZFAwRDggy6vjwAAAAjklEQVR42gXBW1bDAAxDwSvZKSfAB/vfJtDmaXVGP/8Jn7dIPUHfJnLvBbVZMoZkZrN3IYamCZKxCi6as27AnHy91qHRrEdkDCtD4zgEwh80TQVLZskmTHPwGMYcABfG83vFdvkBxkTEgpAwNEuC1FRU+0JzTxDmpO4cH02QiRHRAo2UkQBJQMeIpNKKIG8DCkhY9AxuRwAAAABJRU5ErkJggg==","block/bookshelf":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAV1BMVEVjKAV3MAeRERG8FhZpVDN8Yj7Mpmy8mGKzjFGbd0KfhE0nHhE2KhUsIhNBMRoxY6MqTnoxW44RjmsMa1CJiYm1tbWomwqJfgh1jhFecg1VaAlJSUk/Pz95EYrOAAAAlElEQVR42gXBW3LCMBQFwZkrhTIQ85H9r5GqPGxCYenQ7VKEo4NAnJ0GaULIKWN2Umx8wtnHNHT3UIHLmH8rp1FDAIMNYFRBCFcxSBXJLeivIJbnhIASEHtUXh9BCEdz6QRXf5ySehWP3d6T3bbeWuh+JQfAdgndZ437HWgtbNC0ioBwjTBSVeFb5vhP1IFLCCgBhDf+ck47xheS/gAAAABJRU5ErkJggg==","block/nether_bricks":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEUwGBxEJCo+HiQ4GB4pFRkhERQZDRCSXrt5AAAAZElEQVR42l2LUQpEQQjDYmu9/5GXkRlYnhDTn6BSVFWSch6NxwB4tKID3ayBmSQz88z2diRZcpABmLpm3R1Dmw6vf8apcspebJhDrRfipbO7OfU/bFlVx+fBLW2Gve47WDOf+wF11gLnBCajwgAAAABJRU5ErkJggg==","block/purpur_block":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAFVBMVEXHqMe6lbqyhrKse6ykcqOdb5yQZZD/TDgUAAAATklEQVR42gXBgQ3AMAwEIc6qsv/GXyDSU+F9FVkRTghCbkQW4SAFypeCRJyCSaE3WqwRpDxFva/EKcFNGBCnUpOUKwpIDpEpOIhC6AEAfhtwDIqRwLDuAAAAAElFTkSuQmCC","block/sea_lantern":"data:image/png;base64,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","block/redstone_block":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAD1BMVEXmIAi9IAikGAiUFABzDABFTPGwAAAAV0lEQVR42gXBgWHDQBAEIebcf8fRbwAAQLLELHZQR51I2sns3haVtps9UgX4u+24DdgvcgmwecfegGnOzLwZ4/CT+2QmKS2jbykCwztbvtHMJCYZDADAP7Y+Nw/1IQEFAAAAAElFTkSuQmCC","block/iron_block":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAcElEQVR42rXRMQ4AERCFYfc/jS2nfCeQbVRbqBSi2hMskxCTUUiWLwrFiD+Y2zmwspkusD5jALxSblJKUQJQD8RlRGQua5+Z0PhBGRZJukrfsCMpDHynk7IU2Zkk3bb0St2ZpFAsfpyO+Z2EGWJ1o3yPeZRBEj1y+QAAAABJRU5ErkJggg==","block/quartz_block_side":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAElBMVEXy7+3u6ubu5t7q4tri3tDd2csPbMi3AAAATklEQVR42gXBgQHAIADDIKL+f/I6AACQQvDh5ghs6L6CGUGdISaUI5igHIaDcRMIcB8SM/AkGyAJoFCCBL73IG3NkENmoFtnzSCcnhgQfs6bGU9ppJq1AAAAAElFTkSuQmCC","block/amethyst_block":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAFVBMVEX+y+bIkPCmePGNasx6W7VkR55dOppI3xRrAAAAeklEQVR42g3LwRGDIBAF0D+mASdkvBuhAbKbuy5rAfLpQOi/hOTdHyi+Y+MXtlHyMEX1Gq8eHdThvEKBvXoz6o388LLK2TBP0Y2twhKjmCuYcnDWhGJRhx0BJYeTWRT2fqqtm+P6t3b0CH6WdhcGuCXffZ/QKWWWe/kBljEdyt/kygIAAAAASUVORK5CYII=","block/sculk":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAABABAMAAADhU+qlAAAAGFBMVEUNEhcp3+sAkpUFYl0ZRkgDQVAFKjIRGyH1kgkDAAAAqUlEQVR42qXQsW3DUBAE0Ul8V4FKMEtQC04VkemREvDTTXTbvgNKgWETIOAGBg8DuBsXNGkNw6NwXI3DtKppWwlJupcwgmHdKxco1ErTVzJRkUNtpcgmpUr0KCtmcJBfDNECsSczYABP36tn/vCshWM66bm9PM/L2zP/8mzlenlienvqtGc751l/ej6PPWtZMe1/luM/2/882ynPbf+jj8vuGSxHnrV6/gZhcH+0H9zs2QAAAABJRU5ErkJggg==","block/prismarine_bricks":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAGFBMVEVar6RhpZpBgWpSmYNGiXSVz8eCxbxuua4Cbk+SAAAAdUlEQVR42iWNyQ0EQRDCTF3OP+PVTiPhBzyM+8X78xwWVWoV5Q1orwYsRBL6FEmhnKROhQwrCtUi3nCgqSuBOBiwTyokGS7Sq1IJDht7Bf1Mw4XeJ+81xSV9EujeUO8hSagNg9CXBOiDgk5B0p1Kepip+vo4P/3LA0nnDoguAAAAAElFTkSuQmCC","item/diamond_sword":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAJFBMVEUAAAAOPzYIJSAz68uk/fArx6weincVY1VoTh5JNhUoHguJZycazUdMAAAAAXRSTlMAQObYZgAAAExJREFUGNN1jsENwDAMAgGndpLuv29/jZFa/+4QwkA/ks5jyPky8cHxwyQAxslZNAaYiux9Zlb4A0XjNcVu1r0hvYacGwB0Rq0OSC4ehwkBE0lygnsAAAAASUVORK5CYII=","item/iron_pickaxe":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAHlBMVEUAAAD////Y2NjBwcGJZydoTh5ERERJNhUoHgsYGBhl7cYfAAAAAXRSTlMAQObYZgAAAEVJREFUeNpjwArS0hLANJuQsVopmJU509gDKllkCaHZI4wmgBklDZMnQAQYgAywAMOkCRABhokTIAIMnFABqBYoowPNZgA3CQ9j/SFa9AAAAABJRU5ErkJggg==","item/emerald":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAIVBMVEUAAADb/+uv/c2C9q1B84QX3WIAqiwAlSkAexgAUwAALQC5+lfcAAAAAXRSTlMAQObYZgAAAENJREFUeNpjwApmzoTQnCKuE8CMiSpuUWABIRW31AUghmqQWhmUYdaGxgg2a4UyPEpBDIZpFe1WEAPTgTJgsGoVVpsBDRwS6h42ddsAAAAASUVORK5CYII=","item/golden_apple":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAHlBMVEUAAAD+/+b2+JLq7lfsy0XbohOyZBF1KAJUJAlUEglKVtcNAAAAAXRSTlMAQObYZgAAAFhJREFUeNp9z0sOgCAMRVGg70P3v2EDptEY9c3uSSdt3/OjNX8PJE/7SnZOgXZ1jN77CNoFewgWIBAAArnBJECCN+BqBrOVYFF1s1aCKmgpSmeX2M58f/oACs4CWTAWE9cAAAAASUVORK5CYII=","item/ender_pearl":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAIVBMVEUAAACM9OIszbE0mYglhHQbe2sQXlELTUIMNzAGOTEDJiC5a2thAAAAAXRSTlMAQObYZgAAAFtJREFUeNpjwAo4OqB0swmE1WyS5rIAJGAiVJ7mBWIYas4szwLJOM1aNb0MKLc4HchwAzKWgBhmQAaXe+XMIisGIMOtvFwRpJhhabozUAYktCxtFZACsVYh2wwA2BYa2KT1S0MAAAAASUVORK5CYII=","item/diamond":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAIVBMVEUAAAD////V//ah++hK7dks4NggxbUaqqcckZoRcnoUXlN/hNeyAAAAAXRSTlMAQObYZgAAAFxJREFUeNqNjzkOxDAMAyORS1n8/4MXyGEnQIpMN1Po2L7S3f3wiMi+O4mUbw4kKK8QGUl6OQmUyldIAhgrhABw1BWSrKqSxjnELEmqucW/I2Ae4kEC8jbxzvubfzBNAqq5tnU2AAAAAElFTkSuQmCC","item/nether_star":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAHlBMVEUAAAD9/6ja4uLg4nfL1ta5ycnS0gCIpKRkkJBVa2uOynhjAAAAAXRSTlMAQObYZgAAAEpJREFUeNpjwA4aoDRHJZTRrj4BwmgVhTA6SkQqQSyOUhcR10qQCkXBZMHwCSARV9NwsL6ZJaKVENVTxaHap7tDGZyVDFAwAdliAFlNENjnSBVaAAAAAElFTkSuQmCC","item/totem_of_undying":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAHlBMVEUAAAD9++747qXq24TRp11B5n/Fh0IAu0agWyOFQA8RGs9sAAAAAXRSTlMAQObYZgAAAF1JREFUeNptzkkOwDAMAsDYEGr+/+FK6RJXKjfPATz+UyvtxsoWIyIT3kAmyAYxyZgN5hE5jwZigvKetAD5ni7QoERZV69dGQmw7PcxklQrrRWPLZTk8QV6dPFTeAJoLQLslSF6LQAAAABJRU5ErkJggg==","item/elytra":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAG1BMVEUAAACPj7OMjIx/f5hzc3Nwbo1paWlLS0s1NTXBGAVdAAAAAXRSTlMAQObYZgAAAFpJREFUeNqNT0kOwEAIgtEO/P/DNrWxvQ4XFtFEnEGSLemzGZIUKbXPIA2IjBQWUEU0WMUOwPX4RRSwWrxBDxKYDUwjwAmyWftKA85ruxvE3Bh4+6dWHj569AbZrwlib1Ty2AAAAABJRU5ErkJggg==","item/trident":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAbUlEQVQ4y2NgoAeYNm3afxCgSPONGzfABoBoog3DpRkkTrQBZGsGgezs7P96cQH/0TUT7Q2Q5oi5fWBD0DWDDCfKAIfKTDBGdglRmsXcLcEaQTQIgzTBMNE2gzSSHO8wf480zWQHGCy6yNYMBACktqum4kbbjgAAAABJRU5ErkJggg==","item/experience_bottle":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAt0lEQVQ4y2NgoCX4+r///40nUWBMluZAG+b/uopMYJokQ2CaYRhkCAgTbQhIIUUGwAwBaboANYzkcIB5Ywc5BiBrLtpg9n8VKYYgaz75f+L/yA3hYEOIcglIM8jfW4GKTgPZIM2WE3zghhwgZAiy7UeAbJBm9VJrMA0yYCc0YHEaAIs+mN+RDTjwf+r/7aQagOyFE0AX7SJkADZDQBgUmDuI0YwtJcJSIQiDwoiklAjCIE0wjE0dAJs0FKvHezfcAAAAAElFTkSuQmCC","item/firework_rocket":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAG1BMVEUAAAD09PSyzNHWKiq5KSmZKSmEGxttFxctFAkSwe/YAAAAAXRSTlMAQObYZgAAADdJREFUeNpjwA4coDSrOZQREl4AYbiEJkAYTGpQKUZXKIPFCcYQgkmJYlHTAWE0cUCFOBqQLAYAeUYFmwkIxpYAAAAASUVORK5CYII="};
+
+/* Everything about this particular server, in one place. */
+const CONFIG = {"address":"play.nexuscraft.net","modes":[{"name":"Survival","block":"grass_block_side","blurb":"The ordinary game, with land claims so what you build stays built. Homes, shops, jobs and a nether and end of its own."},{"name":"Skyblock","block":"end_stone","blurb":"A tree, a chest, and a long way down. Island levels, a generator that pays out better the further you get, and team islands."},{"name":"One Block","block":"sculk","blurb":"Break the same block forever. What it gives back changes as you go, and the drops get stranger the deeper the phase."},{"name":"Prison","block":"stone_bricks","blurb":"Mine, sell, rank up, repeat. Straightforward on purpose, and the fastest way to make money if that is what you are here for."},{"name":"The Dig Site","block":"dirt","blurb":"A pit that refills every half hour. Everyone digs the same hole for whatever is buried in it, and the countdown moves you out before it closes."},{"name":"Minigames","block":"obsidian","blurb":"Bed Wars, Sky Wars, Spleef, TNT Run, Murder Mystery, Hide and Seek, Dropper, Parkour, Sumo and One in the Chamber."},{"name":"The World Boss","block":"netherrack","blurb":"A Warden rises in the survival world on a timer. Everyone who lands a hit takes a share of the purse, not just whoever finishes it."},{"name":"Custom gear","block":"diamond_block","blurb":"Armour sets that are real armour wearing our own textures, handed out as gifts and prizes rather than sold."}],"votes":[],"facts":[{"value":"8","label":"worlds to play in"},{"value":"10","label":"minigames"},{"value":"100","label":"player slots"},{"value":"24/7","label":"no whitelist"}]};
+
+/* ------------------------------------------------------------- modes */
+
+(function modes() {
+  const host = document.getElementById('modes');
+  if (!host) return;
+
+  host.innerHTML = CONFIG.modes.map(function (mode) {
+    const face = TEX['block/' + mode.block] || TEX['block/stone'];
+    return (
+      '<article class="mode">' +
+      '<div class="mode-face px" style="background-image:url(' + face + ')"></div>' +
+      '<h3>' + mode.name + '</h3>' +
+      '<p>' + mode.blurb + '</p>' +
+      '</article>'
+    );
+  }).join('');
+})();
+
+/* -------------------------------------------------------------- votes */
+
+(function votes() {
+  const host = document.getElementById('votes');
+  if (!host) return;
+
+  if (!CONFIG.votes.length) {
+    /* Said plainly rather than hidden. An empty section with a heading over
+       it looks broken; a sentence explaining it does not. */
+    host.innerHTML =
+      '<div class="vote" style="cursor:default;grid-column:1/-1">' +
+      '<img class="px" src="' + (TEX['item/ender_pearl'] || '') + '" alt="">' +
+      '<span><span class="vote-name">Not listed yet</span>' +
+      '<span class="vote-sub">We are signing up to the server lists now. Check back shortly.</span></span>' +
+      '</div>';
+    return;
+  }
+
+  const icons = ['item/emerald', 'item/diamond', 'item/nether_star', 'item/experience_bottle', 'item/golden_apple'];
+
+  host.innerHTML = CONFIG.votes.map(function (site, i) {
+    const icon = TEX[icons[i % icons.length]] || TEX['item/emerald'];
+    return (
+      '<a class="vote" href="' + site.url + '" target="_blank" rel="noopener">' +
+      '<img class="px" src="' + icon + '" alt="">' +
+      '<span><span class="vote-name">' + site.name + '</span>' +
+      '<span class="vote-sub">' + (site.note || 'Once every 24 hours') + '</span></span>' +
+      '</a>'
+    );
+  }).join('');
+})();
+
+/* -------------------------------------------------------------- facts */
+
+(function facts() {
+  const host = document.getElementById('facts');
+  if (!host || !CONFIG.facts || !CONFIG.facts.length) return;
+
+  host.innerHTML = CONFIG.facts.map(function (fact) {
+    return '<div class="fact"><b>' + fact.value + '</b><span>' + fact.label + '</span></div>';
+  }).join('');
+})();
+
+/* ------------------------------------------------------------ address */
+
+(function address() {
+  const button = document.getElementById('addr');
+  const copy = document.getElementById('addrCopy');
+  if (!button) return;
+
+  button.addEventListener('click', function () {
+    const text = CONFIG.address;
+
+    const done = function () {
+      button.classList.add('done');
+      copy.innerHTML = 'Copied';
+      setTimeout(function () {
+        button.classList.remove('done');
+        copy.innerHTML = 'Click<br>to copy';
+      }, 1800);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () {
+        /* Clipboard access is refused often enough - over plain http, in a
+           locked-down browser - that the fallback is not optional. */
+        fallback(text, done);
+      });
+    } else {
+      fallback(text, done);
+    }
+  });
+
+  function fallback(text, done) {
+    const box = document.createElement('textarea');
+    box.value = text;
+    box.style.position = 'fixed';
+    box.style.opacity = '0';
+    document.body.appendChild(box);
+    box.select();
+    try { document.execCommand('copy'); done(); } catch (e) { /* nothing left to try */ }
+    document.body.removeChild(box);
+  }
+})();
+
+/* ------------------------------------------------------------- status */
+
+(function status() {
+  const box = document.getElementById('status');
+  const text = document.getElementById('statusText');
+  if (!box || !CONFIG.address) return;
+
+  /* Asked of a public status service rather than of the server directly,
+     because a browser cannot speak the Minecraft protocol. It answers with
+     CORS open, so this works from a plain static page with nothing behind it. */
+  fetch('https://api.mcstatus.io/v2/status/java/' + encodeURIComponent(CONFIG.address))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.online) {
+        box.className = 'status down';
+        text.innerHTML = 'Server is offline right now';
+        return;
+      }
+
+      const players = (d.players && d.players.online) || 0;
+      const max = (d.players && d.players.max) || 0;
+
+      box.className = 'status up';
+      text.innerHTML =
+        '<b>' + players + '</b> ' + (players === 1 ? 'player' : 'players') + ' online' +
+        (max ? ' <span style="color:var(--dim)">of ' + max + '</span>' : '');
+    })
+    .catch(function () {
+      box.className = 'status';
+      text.innerHTML = 'Could not reach the server just now';
+    });
+})();
+</script>
+
+</body>
+</html>

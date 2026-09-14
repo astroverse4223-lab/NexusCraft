@@ -153,7 +153,7 @@ function main() {
   const left = html.match(/__[A-Z_]+__/g)
   if (left) throw new Error('template still has placeholders: ' + [...new Set(left)].join(', '))
 
-  const dist = path.join(HERE, 'dist')
+  const dist = path.join(HERE, 'public')
   fs.mkdirSync(dist, { recursive: true })
   fs.writeFileSync(path.join(dist, 'index.html'), html)
 
@@ -184,7 +184,7 @@ function main() {
   }
 
   const size = fs.statSync(path.join(dist, 'index.html')).size
-  console.log(`built website/dist/index.html - ${(size / 1024).toFixed(0)} KB, ${Object.keys(tex).length} textures`)
+  console.log(`built website/public/index.html - ${(size / 1024).toFixed(0)} KB, ${Object.keys(tex).length} textures`)
   if (CONFIG.domain) console.log(`CNAME set to ${CONFIG.domain}`)
   if (missing.length) console.log('not in this jar: ' + missing.join(', '))
 }
