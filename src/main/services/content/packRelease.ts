@@ -2,8 +2,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { LauncherError } from '../../core/errors'
 import { createLogger } from '../../core/logger'
 import { canFetch } from './packHost'
@@ -183,25 +184,37 @@ export async function uploadPack(file: string, target: ReleaseTarget): Promise<U
   }
 
   /*
-   * --clobber, because the whole arrangement rests on the address staying
-   * put. A second asset beside the first would be a second address, and the
-   * one in the server's config would go on serving the old pack for ever.
+   * Copied to a file already called what the asset must be called.
+   *
+   * gh names an asset after the file it was given, and the `file#label`
+   * syntax sets a display label rather than the name - so uploading the
+   * built pack directly puts it up as `nexus-resource-pack.zip` while the
+   * url in the server's config points at `nexuscraft-pack.zip`. The upload
+   * reports success, a second asset appears beside the first, and the
+   * address goes on serving whatever was there before. Which is exactly
+   * what happened the first time this ran by hand.
    */
-  const sent = await gh([
-    'release',
-    'upload',
-    target.tag,
-    `${file}#${target.assetName}`,
-    '--repo',
-    target.repo,
-    '--clobber'
-  ])
+  const staging = await mkdtemp(join(tmpdir(), 'nexus-release-'))
+  const named = join(staging, target.assetName)
 
-  if (!sent.ok) {
-    throw new LauncherError('UNKNOWN', 'upload refused', {
-      title: 'GitHub would not take the file',
-      message: sent.out.trim().slice(0, 400)
-    })
+  try {
+    await copyFile(file, named)
+
+    /*
+     * --clobber, because the whole arrangement rests on the address staying
+     * put. A second asset beside the first would be a second address, and the
+     * one in the server's config would go on serving the old pack for ever.
+     */
+    const sent = await gh(['release', 'upload', target.tag, named, '--repo', target.repo, '--clobber'])
+
+    if (!sent.ok) {
+      throw new LauncherError('UNKNOWN', 'upload refused', {
+        title: 'GitHub would not take the file',
+        message: sent.out.trim().slice(0, 400)
+      })
+    }
+  } finally {
+    await rm(staging, { recursive: true, force: true })
   }
 
   const url = `https://github.com/${target.repo}/releases/download/${encodeURIComponent(

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterAll } from 'vitest'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 /**
  * Publishing the pack to a release.
@@ -120,6 +120,28 @@ describe('uploading the pack', () => {
     const upload = calls.find((args) => args[0] === 'release' && args[1] === 'upload')
     expect(upload).toBeDefined()
     expect(upload).toContain('--clobber')
+  })
+
+  it('uploads under the name the address actually uses', async () => {
+    /*
+     * The bug this exists for. gh names an asset after the file it is handed,
+     * and `file#label` sets a display label rather than the name - so handing
+     * it the built pack put `nexus-resource-pack.zip` on the release while the
+     * url pointed at `nexuscraft-pack.zip`. It reported success, a second
+     * asset appeared beside the first, and the address went on serving the
+     * old pack.
+     *
+     * Asserting on the basename rather than on the flag, because the flag was
+     * right the whole time and the upload was still wrong.
+     */
+    await uploadPack(pack, WHERE)
+
+    const upload = calls.find((args) => args[0] === 'release' && args[1] === 'upload')
+    const given = (upload || [])[3] || ''
+    const name = basename(given)
+
+    expect(name).toBe(WHERE.assetName)
+    expect(given).not.toContain('#')
   })
 
   it('gives back the address a player will fetch, not the release page', async () => {

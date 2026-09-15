@@ -61,8 +61,9 @@ public final class Packs {
             String hashed = hashOf(url);
             if (hashed == null) {
                 nexus.getLogger().warning("could not fetch the resource pack at " + url
-                        + " - players will be offered it without a hash, and will"
-                        + " re-download it every time they join");
+                        + " - it will be hashed when the first player joins instead."
+                        + " If that fails too, nothing on this machine can reach that"
+                        + " address");
             } else {
                 nexus.getLogger().info("resource pack ready (" + hashed.substring(0, 8) + ")");
             }
@@ -107,15 +108,56 @@ public final class Packs {
     public void offer(Player player) {
         if (!configured()) return;
 
+        var info = ResourcePackInfo.resourcePackInfo()
+                .id(UUID.nameUUIDFromBytes(url.getBytes()))
+                .uri(URI.create(url));
+
+        /*
+         * A hash is not optional, whatever it looks like.
+         *
+         * The builder throws if one was never set, so the obvious "leave it out
+         * and let the client cope" is not a thing that exists - it used to read
+         * `if (sha1 != null) info.hash(sha1)` and then threw on build, which
+         * meant one unreachable pack at startup was nobody getting a pack for
+         * the rest of the server's life.
+         *
+         * So when the startup fetch did not manage it, the pack is fetched and
+         * hashed now instead. That also mends the common case by itself: the
+         * launcher's pack host often comes up a moment after the server, and
+         * by the time somebody actually joins it is answering.
+         */
+        if (sha1 != null) {
+            send(player, info.hash(sha1).build());
+            return;
+        }
+
+        info.computeHashAndBuild().whenComplete((built, failed) -> {
+            if (failed != null || built == null) {
+                nexus.getLogger().warning("the resource pack at " + url
+                        + " could not be reached, so " + player.getName()
+                        + " was not offered it: " + failed);
+                return;
+            }
+
+            // Kept, so the next player down the line takes the quick path.
+            sha1 = built.hash();
+
+            /*
+             * Back to the main thread. This lands on whichever thread finished
+             * the download, and sending a packet to a player from off the
+             * server thread is how a server ends up with a corrupted
+             * connection rather than a missing pack.
+             */
+            nexus.getServer().getScheduler().runTask(nexus, () -> {
+                if (player.isOnline()) send(player, built);
+            });
+        });
+    }
+
+    private void send(Player player, ResourcePackInfo info) {
         try {
-            var info = ResourcePackInfo.resourcePackInfo()
-                    .id(UUID.nameUUIDFromBytes(url.getBytes()))
-                    .uri(URI.create(url));
-
-            if (sha1 != null) info.hash(sha1);
-
             player.sendResourcePacks(ResourcePackRequest.resourcePackRequest()
-                    .packs(info.build())
+                    .packs(info)
                     .required(required)
                     .prompt(Component.text(prompt, NamedTextColor.WHITE))
                     .build());
