@@ -158,6 +158,24 @@ export async function uploadPack(file: string, target: ReleaseTarget): Promise<U
   const bytes = await readFile(file)
   const sha1 = createHash('sha1').update(bytes).digest('hex')
 
+  const sent = await uploadAsset(file, target)
+
+  return { url: sent.url, sha1, bytes: bytes.length, created: sent.created, reachable: sent.reachable }
+}
+
+/**
+ * Puts any one file on the release and hands back the address for it.
+ *
+ * Shared by the pack and by the published status file, because the fiddly
+ * parts are the same for both and neither is the interesting bit: the asset
+ * has to be named what the address says, the old one has to be replaced rather
+ * than joined, and the result has to be fetched back to prove a stranger can
+ * actually reach it.
+ */
+export async function uploadAsset(
+  file: string,
+  target: ReleaseTarget
+): Promise<{ url: string; created: boolean; reachable: boolean }> {
   const existed = await releaseExists(target)
 
   if (!existed) {
@@ -232,9 +250,9 @@ export async function uploadPack(file: string, target: ReleaseTarget): Promise<U
   const reachable = await canFetch(url, 20_000)
 
   log.info(
-    `${basename(file)} uploaded to ${target.repo} (${bytes.length} bytes)` +
+    `${basename(file)} uploaded to ${target.repo}` +
       (reachable ? '' : ' - but it could not be fetched back anonymously')
   )
 
-  return { url, sha1, bytes: bytes.length, created: !existed, reachable }
+  return { url, created: !existed, reachable }
 }

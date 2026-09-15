@@ -229,6 +229,7 @@ function main() {
       modes: CONFIG.modes,
       votes: CONFIG.votes,
       facts: CONFIG.facts || [],
+      statusUrl: CONFIG.statusUrl || '',
       island: built
     })
   }

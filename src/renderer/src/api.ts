@@ -746,6 +746,14 @@ export const api = {
     current: (serverId: string) =>
       call<{ url: string; published: boolean }>('resourcepack:current', { serverId }),
 
+    /** Puts the server's leaderboards and player list where the public site can read them. */
+    publishStatus: (serverId: string, repo: string, tag: string) =>
+      call<{ url: string; boards: number; players: number }>('site:publishStatus', {
+        serverId,
+        repo,
+        tag
+      }),
+
     /** Whether this machine can upload to GitHub, and as whom. */
     githubStatus: () =>
       call<{ installed: boolean; account: string | null; canWrite: boolean; why: string | null }>(

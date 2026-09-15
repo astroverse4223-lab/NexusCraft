@@ -68,5 +68,6 @@
       "label": "no whitelist"
     }
   ],
-  "island": "C:/Users/count/AppData/Roaming/nexuscraft-launcher/data/servers/2db55584-1555-46e9-8cdc-cd60f5b64347/plugins/Nexus/islandtemplate.yml"
+  "island": "C:/Users/count/AppData/Roaming/nexuscraft-launcher/data/servers/2db55584-1555-46e9-8cdc-cd60f5b64347/plugins/Nexus/islandtemplate.yml",
+  "statusUrl": "https://github.com/astroverse4223-lab/NexusCraft/releases/download/resource-pack/status.json"
 }

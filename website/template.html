@@ -490,6 +490,83 @@ h2 {
   line-height: 1.6;
 }
 
+/* --- who is ahead --- */
+
+.boards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.board {
+  padding: 18px 18px 16px;
+  background: linear-gradient(180deg, #232833 0%, #1a1e27 100%);
+  border: 3px solid;
+  border-color: #3f4653 #10131a #10131a #3f4653;
+}
+
+.board h3 {
+  font-size: 12px;
+  margin: 0 0 12px;
+  padding-bottom: 10px;
+  color: var(--gold);
+  border-bottom: 2px solid #2f3643;
+}
+
+.board ol { list-style: none; margin: 0; padding: 0; }
+
+.board li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 14px;
+}
+
+/* Tabular figures, so the numbers line up down the column. */
+.board .val {
+  margin-left: auto;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.board .at {
+  width: 16px;
+  font-family: var(--display);
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.board .who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.board img {
+  width: 22px;
+  height: 22px;
+  image-rendering: pixelated;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+
+/* Said plainly rather than hidden: a heading over nothing looks broken. */
+.boards-empty {
+  padding: 22px;
+  border: 3px solid;
+  border-color: #3f4653 #10131a #10131a #3f4653;
+  background: #1a1e27;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+.taken {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
 /* --- voting --- */
 
 .votes {
@@ -692,6 +769,16 @@ footer::before {
     <div class="head"><h2>What you can play</h2><span class="rule"></span></div>
     <p class="lede">__MODES_LEDE__</p>
     <div class="modes" id="modes"></div>
+  </section>
+
+  <section class="wrap" id="boards">
+    <div class="head"><h2>Who is ahead</h2><span class="rule"></span></div>
+    <p class="lede">
+      Read off the server itself. These are the same numbers the game keeps, not a tally kept here.
+    </p>
+
+    <div id="boardsHost" class="boards-empty">Fetching the latest figures&hellip;</div>
+    <p class="taken" id="boardsTaken"></p>
   </section>
 
   <section class="wrap" id="vote">
@@ -1177,6 +1264,89 @@ const CONFIG = __CONFIG__;
       card.style.transform = '';
     });
   });
+})();
+
+/* ------------------------------------------------------- leaderboards */
+
+/*
+ * The figures come from a file the launcher publishes beside the pack.
+ *
+ * A static page cannot read the server's own stats file - it is on a machine
+ * this page has never heard of - so the launcher writes the same numbers out
+ * and puts them somewhere public. The address never changes, which is what
+ * lets this be a plain fetch with nothing configured.
+ */
+(function boards() {
+  const host = document.getElementById('boardsHost');
+  const taken = document.getElementById('boardsTaken');
+  if (!host || !CONFIG.statusUrl) {
+    if (host) host.textContent = 'The leaderboards are not published yet.';
+    return;
+  }
+
+  /* No cache: these are the one thing on the page that is supposed to change. */
+  fetch(CONFIG.statusUrl, { cache: 'no-store' })
+    .then(function (r) {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    })
+    .then(function (status) {
+      const boards = (status && status.boards) || [];
+
+      if (boards.length === 0) {
+        host.className = 'boards-empty';
+        host.textContent = 'Nobody has got far enough to be on a board yet. Be the first.';
+      } else {
+        host.className = 'boards';
+        host.innerHTML = boards
+          .map(function (board) {
+            const rows = board.rows
+              .map(function (row, at) {
+                const head =
+                  '<img loading="lazy" src="https://mc-heads.net/avatar/' +
+                  encodeURIComponent(row.name) +
+                  '/24" alt="" onerror="this.style.visibility=\'hidden\'">';
+
+                return (
+                  '<li><span class="at">' + (at + 1) + '</span>' + head +
+                  '<span class="who">' + esc(row.name) + '</span>' +
+                  '<span class="val">' + esc(row.value) + '</span></li>'
+                );
+              })
+              .join('');
+
+            return '<section class="board"><h3>' + esc(board.label) + '</h3><ol>' + rows + '</ol></section>';
+          })
+          .join('');
+      }
+
+      if (taken && status.takenAt) taken.textContent = 'Taken ' + howLongAgo(status.takenAt) + '.';
+    })
+    .catch(function () {
+      host.className = 'boards-empty';
+      host.textContent = 'The leaderboards could not be fetched just now.';
+    });
+
+  /* Names come off a server, so they are somebody else's text. */
+  function esc(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function howLongAgo(at) {
+    const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
+
+    if (minutes < 2) return 'just now';
+    if (minutes < 60) return minutes + ' minutes ago';
+
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return hours === 1 ? 'an hour ago' : hours + ' hours ago';
+
+    const days = Math.round(hours / 24);
+    return days === 1 ? 'yesterday' : days + ' days ago';
+  }
 })();
 
 /* ------------------------------------------------------------- status */

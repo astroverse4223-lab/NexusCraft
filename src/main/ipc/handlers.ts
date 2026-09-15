@@ -63,6 +63,7 @@ import {
 } from '../services/content/resourcePackService'
 import { packHostStatus, packUrl, servePack, startPackHost, stopPackHost } from '../services/content/packHost'
 import { githubStatus, uploadPack } from '../services/content/packRelease'
+import { publishStatus } from '../services/content/siteStatus'
 import type { ResourcePackDraft } from '@shared/resourcePacks'
 import { readAdvancements, type AdvancementPack } from '@shared/advancements'
 import type { CreationKind } from '@shared/types'
@@ -2081,6 +2082,30 @@ export function registerIpcHandlers(): void {
   handle('resourcepack:current', async (payload: { serverId: string }) =>
     currentPackUrl(hostedServerDir(payload.serverId))
   )
+
+  /**
+   * The server's numbers, put where the public website can read them.
+   *
+   * The site is static and lives nowhere near this machine, so it cannot read
+   * stats.yml the way the launcher's own page does. This writes the same
+   * numbers out beside the pack on the same release, under a name that never
+   * changes - a status file at a new address each time is a page that goes on
+   * showing whichever one it saw first.
+   */
+  handle('site:publishStatus', async (payload: { serverId: string; repo: string; tag: string }) => {
+    const server = getHostedServer(payload.serverId)
+    const state = getHostedServerState(server.id)
+
+    return await publishStatus(
+      hostedServerDir(server.id),
+      {
+        online: state.players,
+        running: state.status === 'running',
+        version: server.minecraftVersion
+      },
+      { repo: payload.repo, tag: payload.tag, assetName: 'status.json' }
+    )
+  })
 
   /**
    * The pack, put somewhere it stays put.

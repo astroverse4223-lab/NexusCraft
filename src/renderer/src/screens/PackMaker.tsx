@@ -358,6 +358,36 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     }
   }
 
+  /**
+   * Sends the server's leaderboards and player list to the same release.
+   *
+   * Separate from publishing the pack because they change on completely
+   * different clocks: a pack changes when somebody edits a texture, and these
+   * numbers change every time anybody plays.
+   */
+  const publishStats = async (): Promise<void> => {
+    if (!target || target.kind !== 'server') return
+
+    setSendingStats(true)
+    setStatsSaid(null)
+    setError(null)
+
+    try {
+      const sent = await api.resourcePack.publishStatus(target.serverId as string, where.repo.trim(), where.tag.trim())
+
+      setStatsSaid(
+        sent.boards === 0
+          ? 'Sent, but there is nothing on the boards yet - they fill in once people have played.'
+          : `Sent ${sent.boards} leaderboard${sent.boards === 1 ? '' : 's'}` +
+              (sent.players > 0 ? ` and ${sent.players} player${sent.players === 1 ? '' : 's'} online.` : '.')
+      )
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setSendingStats(false)
+    }
+  }
+
   const mergeDraft = (make: (current: ResourcePackDraft) => Partial<ResourcePackDraft>): void =>
     setDraft(make(useStore.getState().resourcePack))
 
@@ -381,6 +411,8 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     why: string | null
   } | null>(null)
   const [publishing, setPublishing] = useState(false)
+  const [sendingStats, setSendingStats] = useState(false)
+  const [statsSaid, setStatsSaid] = useState<string | null>(null)
 
   /*
    * What the chosen server is handing out at the moment.
@@ -2639,6 +2671,21 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                     >
                       {publishing ? <Spinner /> : <Github size={14} />} Build and publish it
                     </button>
+
+                    <button
+                      className="btn"
+                      disabled={sendingStats || !where.repo.includes('/')}
+                      title={
+                        !where.repo.includes('/')
+                          ? 'Type the repository as owner/name'
+                          : 'Send the leaderboards and who is online to the website'
+                      }
+                      onClick={() => void publishStats()}
+                    >
+                      {sendingStats ? <Spinner /> : <Globe size={14} />} Update the website&apos;s numbers
+                    </button>
+
+                    {statsSaid && <p className="tiny dim">{statsSaid}</p>}
 
                     {published && (
                       <div className="col gap-6">

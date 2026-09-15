@@ -937,6 +937,17 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
   /** What a server is handing out now, so nothing overwrites it unasked. */
   'resourcepack:current': z.object({ serverId: id }),
 
+  /** Publish the server's numbers for the public site to read. */
+  'site:publishStatus': z.object({
+    serverId: id,
+    repo: z
+      .string()
+      .min(3)
+      .max(120)
+      .regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/, 'that is not an owner/repo'),
+    tag: z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/, 'a tag cannot have spaces or slashes')
+  }),
+
   'studio:export': z.object({
     name: z.string().min(1).max(48),
     cells: z

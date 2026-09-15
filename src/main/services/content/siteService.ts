@@ -95,6 +95,54 @@ function duration(minutes: number): string {
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
 }
 
+/** One leaderboard's rows, before anything decides how to draw them. */
+export interface BoardRows {
+  key: string
+  label: string
+  rows: { name: string; value: string }[]
+}
+
+/**
+ * Every leaderboard, read off the plugin's own stats file.
+ *
+ * Shared rather than written twice, because there are now two things that show
+ * these - the page the launcher serves and the file it publishes for the
+ * public site - and two copies of "who is richest" is two answers to the same
+ * question. The file on disk is the only source either of them has.
+ */
+export async function leaderboards(serverDir: string): Promise<BoardRows[]> {
+  const stats = await readStats(serverDir)
+  const names = await readNames(serverDir)
+
+  const named = [...stats.entries()].map(([uuid, record]) => ({
+    name: names.get(uuid.toLowerCase()) ?? uuid.slice(0, 8),
+    record
+  }))
+
+  return BOARDS.map((entry) => ({
+    key: entry.key,
+    label: entry.label,
+    rows: named
+      .map((player) => ({ name: player.name, raw: Number(player.record[entry.read] ?? 0) }))
+      /*
+       * Nobody sits on a board with nothing on it. A leaderboard padded out
+       * with zeroes says the server is empty far louder than showing three
+       * names does.
+       */
+      .filter((row) => row.raw > 0)
+      .sort((a, b) => b.raw - a.raw)
+      .slice(0, 5)
+      .map((row) => ({
+        name: row.name,
+        value: entry.money
+          ? money(row.raw)
+          : entry.key === 'minutesPlayed'
+            ? duration(row.raw)
+            : Math.round(row.raw).toLocaleString('en-US')
+      }))
+  })).filter((entry) => entry.rows.length > 0)
+}
+
 /** One leaderboard, as a block of html. */
 function board(
   label: string,
@@ -131,35 +179,8 @@ export async function renderSite(
   config: SiteConfig,
   facts: SiteFacts
 ): Promise<string> {
-  const stats = await readStats(serverDir)
-  const names = await readNames(serverDir)
-
-  const named = [...stats.entries()].map(([uuid, record]) => ({
-    name: names.get(uuid.toLowerCase()) ?? uuid.slice(0, 8),
-    record
-  }))
-
-  const boards = BOARDS.map((entry) => {
-    const rows = named
-      .map((player) => ({
-        name: player.name,
-        raw: Number(player.record[entry.read] ?? 0)
-      }))
-      .filter((row) => row.raw > 0)
-      .sort((a, b) => b.raw - a.raw)
-      .slice(0, 5)
-      .map((row) => ({
-        name: row.name,
-        value: entry.money
-          ? money(row.raw)
-          : entry.key === 'minutesPlayed'
-            ? duration(row.raw)
-            : Math.round(row.raw).toLocaleString('en-US')
-      }))
-
-    return board(entry.label, rows, config.accent)
-  })
-    .filter(Boolean)
+  const boards = (await leaderboards(serverDir))
+    .map((entry) => board(entry.label, entry.rows, config.accent))
     .join('')
 
   /*
