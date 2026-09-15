@@ -419,6 +419,12 @@ public final class Nexus extends JavaPlugin {
         if (kits != null) kits.save();
         if (auction != null) auction.save();
         if (punishments != null) punishments.save();
+
+        /*
+         * After every save above and not before, so the snapshot holds what
+         * the session actually ended with rather than what it started with.
+         */
+        if (backups != null) backups.takeDataSnapshot();
         if (voting != null) voting.stop();
         if (blockLog != null) blockLog.flushNow();
     }

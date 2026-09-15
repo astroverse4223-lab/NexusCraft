@@ -84,6 +84,64 @@ public final class Backups {
         return nexus.getConfig().getInt("backups.keep", 8);
     }
 
+    /**
+     * The plugin's own data, snapshotted as the server stops.
+     *
+     * The timed backup needs the server to stay up for however many minutes
+     * the config says - two hours by default - and the counter starts again
+     * from nothing on every boot. A server that is started, looked at and
+     * stopped never reaches it, and never once backs anything up. Which is
+     * exactly what had happened: eight world backups on disk, all written by
+     * the launcher, and not one copy of a player's money, home, claim, island
+     * or vault anywhere.
+     *
+     * So this runs every time the server shuts down, and takes only the data
+     * folder. That is under a megabyte of yaml against a couple of hundred
+     * megabytes of region files, which is the difference between a snapshot
+     * that always finishes and one that gets killed halfway and leaves a
+     * corrupt zip behind.
+     *
+     * Worlds are left to the timed backup and to the launcher, both of which
+     * already manage them. This is the part nothing else was covering.
+     */
+    public void takeDataSnapshot() {
+        if (!nexus.getConfig().getBoolean("backups.enabled", true)) return;
+
+        File data = nexus.getDataFolder();
+        if (data == null || !data.isDirectory()) return;
+
+        File target = new File(folder, "nexus-data-" + LocalDateTime.now().format(STAMP) + ".zip");
+
+        /*
+         * On this thread on purpose. Shutdown does not wait for workers, so a
+         * backup handed to the scheduler here is a backup that never runs.
+         */
+        try {
+            long bytes = zip(List.of(data), target);
+            nexus.getLogger().info(String.format(
+                    "saved player data to %s (%.0f KB)", target.getName(), bytes / 1024.0));
+        } catch (Exception broken) {
+            target.delete();
+            nexus.getLogger().warning("could not save player data on shutdown: " + broken);
+            return;
+        }
+
+        pruneData();
+    }
+
+    /** Keeps the same number of data snapshots as full backups. */
+    private void pruneData() {
+        File[] all = folder.listFiles((dir, name) ->
+                name.startsWith("nexus-data-") && name.endsWith(".zip"));
+
+        if (all == null || all.length <= keep()) return;
+
+        List<File> sorted = new ArrayList<>(List.of(all));
+        sorted.sort(Comparator.comparingLong(File::lastModified));
+
+        for (int i = 0; i < sorted.size() - keep(); i++) sorted.get(i).delete();
+    }
+
     /* ----------------------------------------------------------------- tick */
 
     /** Once a minute, from the plugin's clock. */
@@ -298,8 +356,12 @@ public final class Backups {
 
     /** Deletes the oldest until only `keep` remain. */
     private int prune() {
+        /*
+         * Not "nexus-", which now also catches the data snapshots and would
+         * have the two kinds deleting each other to hold one shared count.
+         */
         File[] all = folder.listFiles((dir, name) ->
-                name.startsWith("nexus-") && name.endsWith(".zip"));
+                name.startsWith("nexus-") && !name.startsWith("nexus-data-") && name.endsWith(".zip"));
 
         if (all == null || all.length <= keep()) return 0;
 
