@@ -54,6 +54,37 @@ function majorVersionOf(version: string | null | undefined): number | null {
   return found ? Number(found[1]) : null
 }
 
+/**
+ * Whether this is a Forge instance from before mods.toml existed.
+ *
+ * Forge changed how a mod declares itself at 1.13: before that it reads
+ * `mcmod.info` and never opens `META-INF/mods.toml`, and after it is the other
+ * way round. Plenty of 1.12.2 jars still carry a mods.toml anyway - left over
+ * from a template, sometimes still containing the words "this is an example
+ * mods.toml file" - and it is dead weight the game never looks at.
+ *
+ * Which matters because the two eras also number Forge differently. 1.12.2 is
+ * Forge 14; 1.13 onwards starts at 25. Reading a leftover `loaderVersion="[24,)"`
+ * and comparing it against Forge 14.23.5.2860 says the mod needs a newer loader
+ * when it needs nothing of the sort - which failed four mods of a fresh RLCraft
+ * install and refused to start it.
+ */
+function usesLegacyForgeMetadata(loader: string, minecraftVersion: string | null | undefined): boolean {
+  if (loader !== 'forge') return false
+  if (!minecraftVersion) return false
+
+  const parts = minecraftVersion.split('.')
+  const major = Number(parts[0])
+  const minor = Number(parts[1])
+
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) return false
+
+  // Only the 1.x line ever had mcmod.info; anything numbered above it is newer.
+  if (major !== 1) return false
+
+  return minor < 13
+}
+
 export interface ModTarget {
   dir: string
   loader: LoaderId
@@ -287,7 +318,17 @@ export async function analyseModsIn(target: ModTarget): Promise<ModInfo[]> {
        */
       const needsLoader = lowestVersionIn(metadata.loaderVersionRange)
       const haveLoader = majorVersionOf(target.loaderVersion)
-      if (needsLoader !== null && haveLoader !== null && haveLoader < needsLoader) {
+
+      /*
+       * Not asked at all on 1.12.2 and earlier. The only place a loader
+       * version range can come from is a mods.toml, and that file is not read
+       * by the Forge those instances run - so whatever it says is neither true
+       * nor false about whether the mod loads, and the numbering does not even
+       * line up to compare.
+       */
+      const legacy = usesLegacyForgeMetadata(target.loader, target.minecraftVersion)
+
+      if (!legacy && needsLoader !== null && haveLoader !== null && haveLoader < needsLoader) {
         issues.push({
           severity: 'error',
           code: 'loader-version-too-old',

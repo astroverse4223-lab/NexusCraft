@@ -172,6 +172,28 @@ export function parseModsToml(text: string, loader: LoaderId): RawMetadata {
   }
 }
 
+/**
+ * Nulls out a value the build never filled in.
+ *
+ * A mod's own build script writes mcmod.info from a template, and when a field
+ * is not wired up the token survives into the shipped jar: plenty of 1.12.2
+ * mods declare `"mcversion": "${mcversion}"` exactly like that. Read as a
+ * version it satisfies nothing, so the launcher warned that a mod built for
+ * 1.12.2 did not support 1.12.2. Nothing is a truer answer than a placeholder.
+ */
+function realOrNull(value: string | null | undefined): string | null {
+  if (!value) return null
+
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return null
+
+  // ${...} from Gradle, @...@ from Maven resource filtering.
+  if (/^\$\{[^}]*\}$/.test(trimmed)) return null
+  if (/^@[^@]*@$/.test(trimmed)) return null
+
+  return trimmed
+}
+
 export function parseLegacyMcmod(text: string): RawMetadata | null {
   try {
     const parsed = JSON.parse(text) as
@@ -190,12 +212,12 @@ export function parseLegacyMcmod(text: string): RawMetadata | null {
     return {
       modId: (entry.modid as string) ?? null,
       name: (entry.name as string) ?? (entry.modid as string) ?? 'Unknown mod',
-      version: (entry.version as string) ?? null,
+      version: realOrNull(entry.version as string),
       description: (entry.description as string) ?? null,
       authors: ((entry.authorList as string[]) ?? []).filter(Boolean),
       loaders: ['forge'],
       environment: 'both',
-      mcVersionRange: (entry.mcversion as string) ?? null,
+      mcVersionRange: realOrNull(entry.mcversion as string),
       loaderVersionRange: null,
       iconPath: (entry.logoFile as string) ?? null
     }
