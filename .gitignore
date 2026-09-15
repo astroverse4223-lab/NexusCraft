@@ -48,3 +48,24 @@ server/run/
 ember/.gradle/
 ember/build/
 ember/run/
+
+# Voice and Vigil, which had no rules at all.
+#
+# Both are Loom projects like the others, and both were committing everything
+# the others are ignored for: 190 jars apiece, a 82MB ONNX model, and Loom's
+# remapped copy of Minecraft itself.
+voice/.gradle/
+voice/build/
+voice/run/
+vigil/.gradle/
+vigil/build/
+vigil/run/
+
+# Purchased builds.
+#
+# The lobby under castle/ was bought, and a bought build is licensed to whoever
+# bought it rather than to everyone who can see this repository. It is already
+# tracked, which a gitignore does not undo - see the README note, or
+# `git rm -r --cached castle`.
+castle/
+
