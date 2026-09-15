@@ -292,9 +292,26 @@ public class Progression extends PersistentState {
     }
 
     public boolean maybeAdvance(long today) {
+        return maybeAdvance(today, 0);
+    }
+
+    /**
+     * Advances the act, sooner if he has been given a reason to.
+     *
+     * `hastened` is days he no longer feels he owes you. The arc is otherwise
+     * a calendar — helpful for three days, uneasy for five more — and a
+     * calendar cannot be provoked, which makes cruelty free. It should not be:
+     * the whole turn is about a thing deciding you are not worth being kind to,
+     * and being cruel to it is the most direct argument you can make for that.
+     *
+     * It only ever brings the turn forward. Nothing here can undo it, because a
+     * player who could apologise their way back would be negotiating with the
+     * plot rather than living in it.
+     */
+    public boolean maybeAdvance(long today, int hastened) {
         Act next = act.next();
         if (next == act) return false;
-        if (daysKnown(today) < next.daysRequired) return false;
+        if (daysKnown(today) + Math.max(0, hastened) < next.daysRequired) return false;
         if (beatsThisAct < 4) return false;
 
         act = next;

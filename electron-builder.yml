@@ -30,8 +30,22 @@ files:
   # minecraft-data ships the data files for every Minecraft version ever
   # released, on both editions. Bedrock accounts for 329MB of the 426MB and this
   # is a Java Edition launcher — mineflayer speaks the Java protocol only, and
-  # bedrock-protocol is not a dependency, so none of it is ever read.
+  # bedrock-protocol is not a dependency, so none of the per-version data is
+  # ever read.
+  #
+  # Four files in bedrock/common are the exception, and they are not optional:
+  # minecraft-data's own index.js and lib/supportsFeature.js require them at the
+  # top of the file, before anything has said which edition it wants. Dropping
+  # them made `require('minecraft-data')` throw outright — which took the Java
+  # data down with it and broke the Discover screen's version matching, the
+  # blueprint data version, and the companion bot, all in the packaged build
+  # only, because a source run reads the real node_modules. Every one of those
+  # callers wrapped the require in a silent catch and reported a plausible
+  # wrong answer instead.
+  #
+  # 156KB to keep. The 329MB saving is entirely in the per-version folders.
   - '!node_modules/minecraft-data/minecraft-data/data/bedrock/**'
+  - 'node_modules/minecraft-data/minecraft-data/data/bedrock/common/**'
 
   # The browser build of the runtime. Synthesis runs in the main process on the
   # node backend; the renderer never loads a model, by design.
@@ -54,11 +68,29 @@ extraResources:
   - from: build/icon.ico
     to: icon.ico
 
-  # The Hollow mod, shipped so it can be installed into an instance from the
-  # Mods screen. Built separately from `mod/` and copied in; the launcher only
-  # ever copies this file, it never compiles anything.
+  # The mods this launcher ships, so they can be installed into an instance
+  # from the Mods screen. Each is built separately from its own folder and
+  # copied into resources/; the launcher only ever copies these files, it
+  # never compiles anything.
+  #
+  # Every entry in BUNDLED_MODS needs a line here. Ember went without one for
+  # a while and the bug was invisible in development, where the jar is read
+  # out of the repo — only a packaged build could tell you the file was not
+  # there, and it reported the mod as simply unavailable rather than missing.
   - from: resources/hollow.jar
     to: hollow.jar
+
+  - from: resources/ember.jar
+    to: ember.jar
+
+  - from: resources/vigil.jar
+    to: vigil.jar
+
+  # The shared voice library. Not a card in the Mods tab — it does nothing on
+  # its own — but both companions declare it as a dependency, and Fabric
+  # refuses to load a mod whose dependency is missing.
+  - from: resources/nexusvoice.jar
+    to: nexusvoice.jar
 
 # "Install with NexusCraft" links and server invites.
 #

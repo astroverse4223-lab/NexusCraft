@@ -34,7 +34,7 @@ public final class PauseMenuButton {
             if (!(screen instanceof GameMenuScreen)) return;
 
             Screens.getButtons(screen).add(ButtonWidget.builder(
-                    Text.literal("◕ Hollow"),
+                    Text.literal("◕ Amos"),
                     button -> client.setScreen(new HollowSettingsScreen(screen))
             ).dimensions(6, height - 26, 74, 20).build());
         });

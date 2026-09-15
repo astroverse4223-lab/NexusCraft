@@ -38,8 +38,8 @@ public final class HollowCommand {
     private static final RandomGenerator RANDOM = RandomGenerator.getDefault();
 
     public static void register() {
-        CommandRegistrationCallback.EVENT.register((dispatcher, registry, environment) ->
-            dispatcher.register(CommandManager.literal("hollow")
+        CommandRegistrationCallback.EVENT.register((dispatcher, registry, environment) -> {
+            var amos = dispatcher.register(CommandManager.literal("amos")
                 /*
                  * Operators only. 1.21.11 replaced `hasPermissionLevel(int)`
                  * with a permission predicate, so the level-2 check is now
@@ -120,7 +120,19 @@ public final class HollowCommand {
                             ).formatted(Formatting.GRAY), false);
                             return happened ? 1 : 0;
                         })))
-            )
-        );
+            );
+
+            /*
+             * `/hollow` still does everything `/amos` does.
+             *
+             * He was renamed, not replaced, and a command that vanishes is the
+             * kind of change that costs somebody an evening working out whether
+             * the mod loaded. Brigadier redirects cost one node.
+             */
+            dispatcher.register(CommandManager.literal("hollow")
+                    .requires(source ->
+                            CommandManager.GAMEMASTERS_CHECK.allows(source.getPermissions()))
+                    .redirect(amos));
+        });
     }
 }

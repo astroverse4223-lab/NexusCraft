@@ -1,0 +1,58 @@
+plugins {
+    id 'fabric-loom' version '1.17.20'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    /*
+     * The neural voice, run in-process rather than asked for over HTTP.
+     *
+     * Bundled with `include` because it carries its own native libraries and
+     * there is no sane way to add those to a running classpath afterwards. It
+     * is 52MB, which is most of this mod's size and the entire reason this mod
+     * exists separately: two companions that each embedded their own copy would
+     * be 104MB of download to put two conflicting ONNX Runtimes on one
+     * classpath, which is a native library clash waiting to happen.
+     *
+     * The CPU build on purpose, not onnxruntime_gpu. Kokoro is 82M parameters
+     * and synthesises a sentence faster than it takes to say it, while the
+     * graphics card is already carrying Minecraft and, for anyone running a
+     * local language model, several gigabytes of that too. Speech is the one
+     * piece here that does not need to be on the GPU.
+     */
+    implementation "com.microsoft.onnxruntime:onnxruntime:${project.onnxruntime_version}"
+    include "com.microsoft.onnxruntime:onnxruntime:${project.onnxruntime_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+    it.options.encoding = "UTF-8"
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}

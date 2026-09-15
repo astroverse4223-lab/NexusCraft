@@ -1,5 +1,7 @@
 package dev.nexuscraft.ember.voice;
 
+import de.maxhenkel.voicechat.api.opus.OpusDecoder;
+import java.util.UUID;
 import de.maxhenkel.voicechat.api.VoicechatApi;
 import de.maxhenkel.voicechat.api.VoicechatPlugin;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
@@ -80,8 +82,42 @@ public class EmberVoicechatPlugin implements VoicechatPlugin {
                 Ember.LOG.info("hearing {} — Ember is listening", player.getUuid());
             }
 
-            Ears.hearPacket(player.getUuid(), event.getPacket().getOpusEncodedData());
+            hearPacket(player.getUuid(), event.getPacket().getOpusEncodedData());
         });
+    }
+
+    /**
+     * One decoder per speaker, kept because creating one per packet is waste.
+     *
+     * Decoding happens here rather than in the shared library on purpose: the
+     * library would otherwise need the voice chat API to compile, and so would
+     * depend on a mod that may not be installed, for the sake of these few
+     * lines.
+     */
+    private static final java.util.Map<UUID, OpusDecoder> DECODERS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static void hearPacket(UUID speaker, byte[] opus) {
+        if (opus == null || opus.length == 0) return;
+        if (!dev.nexuscraft.voice.Ears.enabled()) return;
+
+        try {
+            OpusDecoder decoder = DECODERS.computeIfAbsent(speaker, id -> api.createDecoder());
+            if (decoder == null) return;
+
+            dev.nexuscraft.voice.Ears.hear(speaker, decoder.decode(opus));
+        } catch (Exception e) {
+            // Twenty of these a second per speaker; one that will not decode is
+            // one packet, not a problem worth a line in the log at any level
+            // somebody reads.
+            Ember.LOG.debug("could not decode a voice packet: {}", e.getMessage());
+        }
+    }
+
+    /** Dropped when they leave, so a decoder is not kept for nobody. */
+    public static void forget(UUID speaker) {
+        DECODERS.remove(speaker);
+        dev.nexuscraft.voice.Ears.forget(speaker);
     }
 
     /** Null until the voice chat server is up, or forever if the mod is absent. */

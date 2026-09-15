@@ -11,6 +11,8 @@ base {
 
 repositories {
     mavenCentral()
+    // Simple Voice Chat's API.
+    maven { url = 'https://maven.maxhenkel.de/repository/public' }
 }
 
 dependencies {
@@ -18,6 +20,26 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    /*
+     * The shared voice, as a separate mod rather than bundled.
+     *
+     * compileOnly: NexusCraft Voice is its own jar at runtime and carries the
+     * 52MB ONNX Runtime once, for both companions. Embedding a copy here would
+     * put a second native runtime on the same classpath as Ember's, which is an
+     * UnsatisfiedLinkError halfway through a sentence.
+     *
+     * Build ../voice first; nothing resolves it for you.
+     */
+    compileOnly files("../voice/build/libs/nexusvoice-0.1.0.jar")
+
+    /*
+     * Compile-only on purpose: he works without Simple Voice Chat installed
+     * and simply cannot hear you. Bundling the API would put a second copy on
+     * the classpath next to the real mod's.
+     */
+    compileOnly "de.maxhenkel.voicechat:voicechat-api:2.6.20"
+
 }
 
 processResources {
@@ -37,3 +59,4 @@ java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }
+

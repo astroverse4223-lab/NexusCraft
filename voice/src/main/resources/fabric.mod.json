@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "nexusvoice",
+  "version": "${version}",
+  "name": "NexusCraft Voice",
+  "description": "A neural text-to-speech voice that runs inside Minecraft, with no server and nothing to install. Shared by Ember and Hollow; on its own it does nothing.",
+  "authors": [
+    "NexusCraft"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.nexuscraft.voice.NexusVoice"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16",
+    "minecraft": "~1.21.11",
+    "java": ">=21"
+  }
+}

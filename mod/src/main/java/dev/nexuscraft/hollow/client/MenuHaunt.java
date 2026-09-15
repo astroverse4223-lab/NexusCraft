@@ -112,6 +112,53 @@ public final class MenuHaunt {
         };
     }
 
+    private static final net.minecraft.util.Identifier FIGURE =
+            dev.nexuscraft.hollow.Hollow.id("textures/gui/menu_hollow.png");
+
+    private static final int FIGURE_W = 64;
+    private static final int FIGURE_H = 128;
+
+    /**
+     * Him, standing on the title screen.
+     *
+     * The haunt used to be a line of red text at the bottom of the menu, which
+     * says the right thing and shows nothing — and the whole point of the last
+     * act is that he stopped talking. So he is simply there instead.
+     *
+     * He fades in over eight seconds rather than appearing. Nobody who alt-tabs
+     * back to the menu sees him arrive; they look up at some point and he is
+     * already standing there, which is the difference between a jump scare and
+     * the feeling that you missed something.
+     *
+     * Drawn at the right, away from the buttons, and dark enough to be missed —
+     * against the panorama he is a shape you are not certain about until the
+     * eyes resolve. A clearly lit monster on the menu would be a poster.
+     */
+    private static void drawHim(DrawContext draw, int width, int height, long began, Act act) {
+        // Only once he has stopped pretending. Earlier acts get the text alone.
+        if (act != Act.WATCHING && act != Act.HOLLOW) return;
+
+        float age = (System.currentTimeMillis() - began) / 8000.0f;
+        float shown = Math.min(1.0f, age) * (act == Act.HOLLOW ? 0.92f : 0.55f);
+        if (shown < 0.02f) return;
+
+        /*
+         * Sized off the window, so he is the same height on any screen — a
+         * fixed pixel size makes him a postage stamp at 4K and a wall at 720p.
+         */
+        int tall = (int) (height * 0.62f);
+        int wide = tall * FIGURE_W / FIGURE_H;
+
+        int x = (int) (width * 0.80f) - wide / 2;
+        int y = height - tall - (int) (height * 0.06f);
+
+        int alpha = (int) (shown * 255.0f) << 24;
+
+        draw.drawTexture(net.minecraft.client.gl.RenderPipelines.GUI_TEXTURED, FIGURE,
+                x, y, 0.0f, 0.0f, wide, tall, FIGURE_W, FIGURE_H,
+                alpha | 0x00FFFFFF);
+    }
+
     public static void register() {
         ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
             if (!(screen instanceof TitleScreen)) return;
@@ -139,8 +186,13 @@ public final class MenuHaunt {
             String line = lines.get(RANDOM.nextInt(lines.size()));
             int colour = colourFor(act);
 
+            long began = System.currentTimeMillis();
+
             ScreenEvents.afterRender(screen).register((rendered, context, mouseX, mouseY, delta) -> {
                 DrawContext draw = context;
+
+                drawHim(draw, width, height, began, act);
+
                 // Bottom left, under the version string, where the eye goes last.
                 draw.drawTextWithShadow(
                         client.textRenderer,

@@ -74,10 +74,7 @@ public final class Speech {
 
         SPEAKING.submit(() -> {
             try {
-                byte[] audio = synthesise(config, line);
-                if (audio == null) return;
-
-                short[] samples = toSamples(audio);
+                short[] samples = config.speechLocal ? locally(config, line) : overHttp(config, line);
                 if (samples == null || samples.length == 0) return;
 
                 play(ember, samples);
@@ -85,6 +82,57 @@ public final class Speech {
                 Ember.LOG.warn("Ember could not speak aloud: {}", e.getMessage());
             }
         });
+    }
+
+    /**
+     * The voice, running inside this process. No server, nothing installed.
+     *
+     * The first line of a session pays for an 82MB download and loading the
+     * model; every line after that is a few seconds of arithmetic on two CPU
+     * threads. Both happen on this thread, which is not the server thread, so
+     * the game does not wait for either.
+     */
+    private static short[] locally(EmberConfig config, String line) throws Exception {
+        if (!dev.nexuscraft.voice.Models.ready(config.speechVoice)
+                && !dev.nexuscraft.voice.Models.fetch(config.speechVoice)) {
+            return null;
+        }
+
+        float[] audio = dev.nexuscraft.voice.KokoroVoice.speak(line, config.speechVoice, 1.0f);
+        if (audio == null || audio.length == 0) return null;
+
+        return resample(audio, dev.nexuscraft.voice.KokoroVoice.SAMPLE_RATE);
+    }
+
+    /** The voice, asked for over HTTP from whatever engine is running. */
+    private static short[] overHttp(EmberConfig config, String line) throws Exception {
+        byte[] audio = synthesise(config, line);
+        return audio == null ? null : toSamples(audio);
+    }
+
+    /**
+     * Kokoro's 24kHz floats as the 48kHz samples voice chat wants.
+     *
+     * Handed to the JDK's own converter rather than resampled here. Doubling a
+     * sample rate looks like it should be "repeat every sample", and doing that
+     * produces audible aliasing on sibilants — a voice that hisses. The audio
+     * pipeline already knows how to do this properly and is already being used
+     * for the HTTP path, so both routes end up sounding the same.
+     */
+    private static short[] resample(float[] audio, int sampleRate) throws Exception {
+        ByteBuffer pcm = ByteBuffer.allocate(audio.length * 2).order(ByteOrder.LITTLE_ENDIAN);
+        for (float sample : audio) {
+            float clamped = Math.max(-1.0f, Math.min(1.0f, sample));
+            pcm.putShort((short) Math.round(clamped * 32767.0f));
+        }
+
+        AudioFormat source = new AudioFormat(sampleRate, 16, 1, true, false);
+        try (AudioInputStream raw = new AudioInputStream(
+                new ByteArrayInputStream(pcm.array()), source, audio.length);
+             AudioInputStream converted = AudioSystem.getAudioInputStream(TARGET, raw)) {
+
+            return read(converted);
+        }
     }
 
     /** POST /v1/audio/speech — the shape every self-hosted engine copies. */
@@ -130,13 +178,18 @@ public final class Speech {
         try (AudioInputStream source = AudioSystem.getAudioInputStream(new ByteArrayInputStream(audio));
              AudioInputStream converted = AudioSystem.getAudioInputStream(TARGET, source)) {
 
-            byte[] raw = converted.readAllBytes();
-            ByteBuffer buffer = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
-
-            short[] samples = new short[raw.length / 2];
-            for (int i = 0; i < samples.length; i++) samples[i] = buffer.getShort();
-            return samples;
+            return read(converted);
         }
+    }
+
+    /** A converted stream, drained into samples. Shared by both routes. */
+    private static short[] read(AudioInputStream converted) throws Exception {
+        byte[] raw = converted.readAllBytes();
+        ByteBuffer buffer = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
+
+        short[] samples = new short[raw.length / 2];
+        for (int i = 0; i < samples.length; i++) samples[i] = buffer.getShort();
+        return samples;
     }
 
     /** Opens a channel on the entity and plays the samples through it. */

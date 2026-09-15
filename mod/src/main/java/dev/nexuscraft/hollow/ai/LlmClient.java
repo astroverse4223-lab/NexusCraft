@@ -36,7 +36,24 @@ public final class LlmClient {
     private final String apiKey;
     private final int timeoutSeconds;
 
+    /**
+     * Whether GLM is allowed to think before answering.
+     *
+     * A setting rather than a decision, because the trade is real in both
+     * directions and only the person playing can weigh it. Thinking costs about
+     * a second a line and twenty to forty tokens nobody reads; what it buys is
+     * a reply that has considered the question. On a companion whose entire job
+     * is what it says, that is not obviously a bad bargain.
+     */
+    private final boolean thinking;
+
     public LlmClient(String baseUrl, String model, String apiKey, int timeoutSeconds) {
+        this(baseUrl, model, apiKey, timeoutSeconds, true);
+    }
+
+    public LlmClient(String baseUrl, String model, String apiKey, int timeoutSeconds,
+                     boolean thinking) {
+        this.thinking = thinking;
         // Trailing slashes are the single most common way this is written wrong.
         this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
         this.model = model;
@@ -106,12 +123,40 @@ public final class LlmClient {
      * `stream` is left off on purpose: the companion speaks in whole lines in
      * chat, so a token stream would only be reassembled before use.
      */
+    /** Whether the endpoint is one that understands GLM's thinking switch. */
+    private boolean looksLikeGlm() {
+        String where = baseUrl == null ? "" : baseUrl.toLowerCase(java.util.Locale.ROOT);
+        String which = model == null ? "" : model.toLowerCase(java.util.Locale.ROOT);
+        return where.contains("z.ai") || where.contains("bigmodel") || which.startsWith("glm");
+    }
+
     public String chat(List<Message> messages, double temperature) throws LlmException {
         StringBuilder body = new StringBuilder();
         body.append('{');
         body.append("\"model\":").append(Json.string(model)).append(',');
         body.append("\"temperature\":").append(temperature).append(',');
         body.append("\"stream\":false,");
+
+        /*
+         * Ask GLM not to think first, when it has been asked not to.
+         *
+         * glm-5-turbo is a reasoning model: every reply is two generations, a
+         * private one where it works out what to say and the one you read.
+         * Measured against this endpoint that costs roughly a second on a
+         * trivial prompt and twenty to forty tokens nobody sees.
+         *
+         * It was switched off outright at one point, on the grounds that he is
+         * saying one conversational line rather than solving a problem. That is
+         * true and it is still not the whole story: what he says *is* the mod,
+         * and a model that has thought about the question answers it better.
+         * So it is a setting, on by default, and the person playing decides
+         * whether the second is worth it.
+         *
+         * Only ever sent to GLM. It is not a standard field, and OpenAI rejects
+         * requests carrying parameters it does not recognise, so a blanket
+         * addition would break every other endpoint this supports.
+         */
+        if (looksLikeGlm() && !thinking) body.append("\"thinking\":{\"type\":\"disabled\"},");
         body.append("\"messages\":[");
         for (int i = 0; i < messages.size(); i++) {
             Message message = messages.get(i);

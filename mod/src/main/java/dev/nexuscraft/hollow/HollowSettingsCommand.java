@@ -102,7 +102,7 @@ public final class HollowSettingsCommand {
                 }))
 
                 .then(setter("model", "model",
-                        "must match exactly — run /hollow settings models to see the list"))
+                        "must match exactly — run /amos settings models to see the list"))
 
                 .then(setter("endpoint", "baseUrl",
                         "for Ollama this must end in /v1, or every request comes back 404"))
@@ -153,7 +153,7 @@ public final class HollowSettingsCommand {
                                             Formatting.GRAY);
                                     tell(context.getSource(),
                                             "if it errors, your plan may use a different endpoint — "
-                                                    + "/hollow settings endpoint <url> to change it",
+                                                    + "/amos settings endpoint <url> to change it",
                                             Formatting.DARK_GRAY);
                                     return 1;
                                 })))

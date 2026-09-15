@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "equipment",
+  "ingredients": [
+    "hollow:flashlight",
+    "minecraft:glowstone_dust"
+  ],
+  "result": {
+    "id": "hollow:flashlight",
+    "count": 1
+  }
+}

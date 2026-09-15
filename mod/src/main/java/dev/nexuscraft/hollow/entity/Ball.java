@@ -63,11 +63,27 @@ public final class Ball {
      * be thrown and lost - and because on a client without the mod it is at
      * least still a small yellow ball.
      */
-    private static final net.minecraft.item.Item ITEM = net.minecraft.item.Items.MAGMA_CREAM;
+    /*
+     * The carved figure, not a magma cream.
+     *
+     * Anything already in an inventory from before this change is a magma
+     * cream and stays one — there is no migration, and picking him up again
+     * gives the figure. Worth the loose end: the alternative is every magma
+     * cream in the world turning into Hollow.
+     */
+    private static final net.minecraft.item.Item ITEM = dev.nexuscraft.hollow.Hollow.FIGURE;
 
-    /** Our own artwork, applied per stack rather than per item. */
+    /**
+     * Our own artwork, applied per stack rather than per item.
+     *
+     * Named for the model definition in assets/hollow/items, which is
+     * hollow_figure. It pointed at hollow_ball, left over from when he was one
+     * - and a model id with no file behind it does not fail, it draws the
+     * missing-texture chequer, so picking him up put a purple and black block
+     * in your hand.
+     */
     private static final net.minecraft.util.Identifier MODEL =
-            net.minecraft.util.Identifier.of("hollow", "hollow_ball");
+            net.minecraft.util.Identifier.of("hollow", "hollow_figure");
 
     /**
      * The tag that makes one of these actually him.
@@ -116,7 +132,7 @@ public final class Ball {
         stack.set(DataComponentTypes.ITEM_MODEL, MODEL);
         // Named so it is obvious in a hotbar what the odd item is, and so it
         // never stacks with an ordinary one of whatever it is built on.
-        stack.set(DataComponentTypes.CUSTOM_NAME, Text.literal("Hollow"));
+        stack.set(DataComponentTypes.CUSTOM_NAME, Text.literal("Amos"));
         return stack;
     }
 

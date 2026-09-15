@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "hollow",
   "version": "${version}",
-  "name": "Hollow",
-  "description": "A companion that helps you, until it doesn't. Powered by any OpenAI-compatible model — a local one through Ollama, or a hosted one.",
+  "name": "Amos",
+  "description": "Something is in a crate near where you woke up, and it is asking to be let out. It says its name is Amos. It is good company, for a while.",
   "authors": [
     "NexusCraft"
   ],
@@ -15,12 +15,19 @@
     ],
     "client": [
       "dev.nexuscraft.hollow.client.HollowClient"
+    ],
+    "voicechat": [
+      "dev.nexuscraft.hollow.voice.HollowVoicechatPlugin"
     ]
   },
   "depends": {
     "fabricloader": ">=0.16",
     "minecraft": "~1.21.11",
     "java": ">=21",
-    "fabric-api": "*"
+    "fabric-api": "*",
+    "nexusvoice": ">=0.1.0"
+  },
+  "suggests": {
+    "voicechat": ">=2.5.0"
   }
 }

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "vigil",
+  "version": "${version}",
+  "name": "Vigil",
+  "description": "Something followed you home. It cannot move while you are looking at it, and it has all night.",
+  "authors": [
+    "NexusCraft"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.nexuscraft.vigil.Vigil"
+    ],
+    "client": [
+      "dev.nexuscraft.vigil.client.VigilClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

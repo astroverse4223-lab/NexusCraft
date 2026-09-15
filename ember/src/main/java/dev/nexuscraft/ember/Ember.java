@@ -35,6 +35,9 @@ public class Ember implements ModInitializer {
     public static final Logger LOG = LoggerFactory.getLogger("Ember");
 
     /** Stamped at build time so a running game can be told from a stale one. */
+    /** Set while a world is open, so background threads can reach chat. */
+    private static volatile net.minecraft.server.MinecraftServer RUNNING;
+
     public static final String BUILD = "0.2.0-1712";
 
     /** One voice for the server, holding the short conversation history. */
@@ -81,6 +84,32 @@ public class Ember implements ModInitializer {
          * broken" against "the fix is installed", with both true at once.
          */
         LOG.info("Ember {} loaded", BUILD);
+
+        /*
+         * Where transcription happens, if it happens.
+         *
+         * Handed to the shared library rather than read by it, so the library
+         * stays a thing that listens rather than a thing that knows about this
+         * mod's config file.
+         */
+        EmberConfig listening = EmberConfig.get();
+        dev.nexuscraft.voice.Ears.configure(new dev.nexuscraft.voice.Ears.Listening(
+                listening.listen, listening.sttLocal, listening.sttUrl,
+                listening.sttModel, listening.sttKey, listening.sttLanguage));
+
+        /*
+         * And it says so in chat when it cannot hear, once.
+         *
+         * A microphone that does nothing looks exactly like a microphone that
+         * is not plugged in, and the log is not somewhere a player looks.
+         */
+        dev.nexuscraft.voice.Ears.onTrouble(what -> {
+            var running = RUNNING;
+            if (running == null) return;
+            running.execute(() -> running.getPlayerManager().broadcast(
+                    net.minecraft.text.Text.literal(what)
+                            .formatted(net.minecraft.util.Formatting.DARK_GRAY), false));
+        });
 
         FabricDefaultAttributeRegistry.register(EMBER, EmberEntity.createEmberAttributes());
 
@@ -150,9 +179,15 @@ public class Ember implements ModInitializer {
          * load and times out, which reads as the mod being broken rather than
          * as Ollama being cold.
          */
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> Warmth.warm());
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            RUNNING = server;
+            Warmth.warm();
+        });
         // And give it straight back when they stop playing.
-        ServerLifecycleEvents.SERVER_STOPPING.register(server -> Warmth.release());
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            RUNNING = null;
+            Warmth.release();
+        });
 
         /*
          * Deaths, written by the code rather than the model.
@@ -176,7 +211,7 @@ public class Ember implements ModInitializer {
                 });
         net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.DISCONNECT.register(
                 (handler, server) -> {
-                    dev.nexuscraft.ember.voice.Ears.forget(handler.getPlayer().getUuid());
+                    dev.nexuscraft.ember.voice.EmberVoicechatPlugin.forget(handler.getPlayer().getUuid());
                     Notices.forget(handler.getPlayer().getUuid());
                     VOICE.forget(handler.getPlayer().getUuid());
                 });
@@ -212,7 +247,7 @@ public class Ember implements ModInitializer {
              * this is where a finished sentence arrives, on the server thread,
              * and it is treated exactly as though it had been typed.
              */
-            dev.nexuscraft.ember.voice.Ears.tick((speaker, heard) -> server.execute(() -> {
+            dev.nexuscraft.voice.Ears.tick((speaker, heard) -> server.execute(() -> {
                 var player = server.getPlayerManager().getPlayer(speaker);
                 if (player == null) return;
 

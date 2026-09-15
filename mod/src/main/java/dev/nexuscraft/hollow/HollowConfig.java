@@ -50,6 +50,44 @@ public final class HollowConfig {
      * `POST /v1/audio/speech`, so choosing between them is a URL rather than a
      * code path, and anything else implementing that endpoint works too.
      */
+    /** True runs the voice inside the game; false asks a server for it. */
+    public final boolean speechLocal;
+    /**
+     * What burns in his eyes and mouth, by name.
+     *
+     * A name rather than a number, because a config file that says "violet" can
+     * be read by a person and one that says "5" cannot.
+     */
+    /** False leaves the game's own nights alone. */
+    public final boolean darkNights;
+    /** How black an unlit night gets, 0 to 1. */
+    public final double nightDarkness;
+    /** False hides the bar showing how he feels about you. */
+    public final boolean moodBar;
+
+    /**
+     * Whether a reasoning model may think before it answers.
+     *
+     * Only GLM understands this; everything else ignores the setting because
+     * the field is never sent to it.
+     */
+    public final boolean thinking;
+
+    /**
+     * Talking to him with a microphone instead of typing.
+     *
+     * Needs Simple Voice Chat installed, and something answering the OpenAI
+     * transcription endpoint. Off costs nothing and he keeps reading chat.
+     */
+    public final boolean listen;
+    /** True transcribes in this process; false sends it to sttUrl. */
+    public final boolean sttLocal;
+    public final String sttUrl;
+    public final String sttModel;
+    public final String sttKey;
+    /** Empty lets the service work the language out, which it does well. */
+    public final String sttLanguage;
+    public final String eyeColour;
     public final String speechUrl;
     public final String speechModel;
     public final String speechVoice;
@@ -63,7 +101,23 @@ public final class HollowConfig {
         this.timeoutSeconds = parseInt(properties.getProperty("timeoutSeconds"), 90, 5, 300);
         this.thinkEverySeconds = parseInt(properties.getProperty("thinkEverySeconds"), 90, 15, 3600);
         this.temperature = parseDouble(properties.getProperty("temperature"), 0.9);
-        this.voice = properties.getProperty("voice", "chirp").trim().toLowerCase();
+        this.voice = properties.getProperty("voice", "speech").trim().toLowerCase();
+        this.darkNights = !"false".equalsIgnoreCase(
+                properties.getProperty("darkNights", "true").trim());
+        this.nightDarkness = parseDouble(properties.getProperty("nightDarkness"), 0.94);
+        this.moodBar = !"false".equalsIgnoreCase(properties.getProperty("moodBar", "true").trim());
+        this.thinking = !"false".equalsIgnoreCase(properties.getProperty("thinking", "true").trim());
+
+        this.listen = !"false".equalsIgnoreCase(properties.getProperty("listen", "true").trim());
+        this.sttLocal = !"http".equalsIgnoreCase(
+                properties.getProperty("sttEngine", "local").trim());
+        this.sttUrl = properties.getProperty("sttUrl", "http://127.0.0.1:8880/v1").trim();
+        this.sttModel = properties.getProperty("sttModel", "whisper-1").trim();
+        this.sttKey = properties.getProperty("sttKey", "").trim();
+        this.sttLanguage = properties.getProperty("sttLanguage", "").trim();
+        this.eyeColour = properties.getProperty("eyeColour", "amber").trim().toLowerCase();
+        this.speechLocal = !"http".equalsIgnoreCase(
+                properties.getProperty("speechEngine", "local").trim());
         this.speechUrl = properties.getProperty("speechUrl", "http://127.0.0.1:8880/v1").trim();
         this.speechModel = properties.getProperty("speechModel", "kokoro").trim();
         this.speechVoice = properties.getProperty("speechVoice", "af_sky").trim();
@@ -155,7 +209,7 @@ public final class HollowConfig {
             #             up below. This is the good one.
             #   both      chirps and a voice together
             #   off       silent
-            voice=chirp
+            voice=speech
 
             # The speech engine, used when voice=speech or voice=both.
             #
@@ -186,6 +240,29 @@ public final class HollowConfig {
 
             # 0 to 1. Below the game's own sound, so it does not talk over it.
             speechVolume=0.9
+
+            # --- listening ------------------------------------------------------
+            #
+            # Talk to Amos with your microphone instead of typing. Needs Simple
+            # Voice Chat installed.
+            #
+            #   sttEngine=local  transcribe here, in the game, with nothing else
+            #                    running and nothing leaving the machine. The
+            #                    model is about forty megabytes and downloads
+            #                    itself the first time you speak.
+            #   sttEngine=http   send it to a service instead - anything
+            #                    answering OpenAI's /v1/audio/transcriptions.
+            #                    Your voice goes to the address below and
+            #                    nowhere else.
+            sttEngine=local
+
+            listen=true
+            sttUrl=http://127.0.0.1:8880/v1
+            sttModel=whisper-1
+            sttKey=
+
+            # Leave empty to let it work the language out for itself.
+            sttLanguage=
             """;
 
     /** Where the file lives, for saving as well as loading. */

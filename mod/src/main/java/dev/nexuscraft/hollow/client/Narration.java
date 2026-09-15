@@ -88,7 +88,20 @@ public final class Narration {
 
     public static void register() {
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-            if (!enabled || overlay) return;
+            if (overlay) return;
+
+            /*
+             * Either voice is reason enough to listen.
+             *
+             * This used to read `if (!enabled ...)`, where `enabled` is the
+             * *narrator's* flag — and the narrator is only switched on when a
+             * speech engine is absent. So choosing speech produced a deadlock
+             * that nothing logged: speech is on, therefore the narrator is off,
+             * therefore this listener returns immediately, therefore the line
+             * that would have been spoken never reaches Speech.say. Hollow could
+             * only ever talk out loud while set to the voice that is not his.
+             */
+            if (!enabled && !Speech.enabled()) return;
 
             String text = message.getString();
             if (text == null) return;

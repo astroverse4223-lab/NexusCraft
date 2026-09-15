@@ -48,7 +48,8 @@ public final class Director {
 
     public Director(HollowConfig config) {
         this.config = config;
-        this.llm = new LlmClient(config.baseUrl, config.model, config.apiKey, config.timeoutSeconds);
+        this.llm = new LlmClient(config.baseUrl, config.model, config.apiKey,
+                config.timeoutSeconds, config.thinking);
         warmUp();
     }
 
@@ -103,7 +104,14 @@ public final class Director {
      * Starts a thought on the worker. Returns false if one is already running,
      * or if the model is switched off.
      */
-    public boolean think(ServerPlayerEntity player, Act act, List<String> observations, String playerSaid) {
+    public boolean think(ServerPlayerEntity player, Act act, List<String> observations,
+                         String playerSaid) {
+        return think(player, act, observations, playerSaid, null);
+    }
+
+    /** The same, plus something he has just done, which he should speak to. */
+    public boolean think(ServerPlayerEntity player, Act act, List<String> observations,
+                         String playerSaid, String justHappened) {
         if (config.temperature <= 0) return false;
         if (!thinking.compareAndSet(false, true)) return false;
 
@@ -117,7 +125,8 @@ public final class Director {
             try {
                 String raw = llm.chat(List.of(
                         new LlmClient.Message("system", Prompt.system(act)),
-                        new LlmClient.Message("user", Prompt.situation(situation, observations, playerSaid, name))
+                        new LlmClient.Message("user", Prompt.situation(
+                                situation, observations, playerSaid, name, justHappened))
                 ), config.temperature);
                 ready.add(new Pending(who, Prompt.parse(raw), null));
             } catch (LlmClient.LlmException e) {

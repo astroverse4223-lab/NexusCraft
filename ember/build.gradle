@@ -28,6 +28,21 @@ dependencies {
      * on the classpath next to the real mod's.
      */
     compileOnly "de.maxhenkel.voicechat:voicechat-api:${project.voicechat_version}"
+
+    /*
+     * The shared voice, as a separate mod rather than bundled.
+     *
+     * compileOnly: NexusCraft Voice is its own jar at runtime and carries the
+     * 52MB ONNX Runtime once, for both companions. Embedding it here would put
+     * a second native runtime on the same classpath as Hollow's copy, which is
+     * an UnsatisfiedLinkError halfway through a sentence.
+     *
+     * Not `modImplementation` and not remapped, because nothing in the library
+     * touches a Minecraft class — it takes a string and gives back samples.
+     *
+     * Build ../voice first; there is no dependency resolution doing it for you.
+     */
+    compileOnly files("../voice/build/libs/nexusvoice-${project.nexusvoice_version}.jar")
 }
 
 processResources {

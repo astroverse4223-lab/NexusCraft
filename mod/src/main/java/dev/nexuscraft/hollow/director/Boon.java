@@ -189,7 +189,39 @@ public final class Boon {
         return Integer.parseInt(word);
     }
 
-    public record Answer(boolean granted, ItemStack stack, String reason) {}
+    /**
+     * What to do about a request.
+     *
+     * `understood` is the one that matters for how he sounds. A message can
+     * fail to produce an item for two completely different reasons: he will not
+     * give you one, or it was never a request for an item at all. "I need to
+     * get to bed" trips the same keyword as "I need iron", and answering it
+     * with "I can't make that one, sorry" is the single most robotic thing this
+     * mod did. Anything not understood is handed to the model as conversation.
+     */
+    public record Answer(boolean granted, boolean understood, ItemStack stack, String reason) {}
+
+    /**
+     * Whether they are asking for the flashlight.
+     *
+     * Deliberately generous - somebody who has just died in the dark is not
+     * going to be careful about what they call it. "light" is not on the list
+     * because it already means torches, and torches are the more likely thing
+     * to want a stack of.
+     */
+    private static boolean namesTheLamp(String[] words) {
+        for (String word : words) {
+            switch (word) {
+                case "flashlight", "flashlights", "torchlight", "lamp",
+                     "flash", "lantern" -> {
+                    return true;
+                }
+                default -> {
+                }
+            }
+        }
+        return false;
+    }
 
     /** Whether this is something it has decided never to produce. */
     public static boolean refuses(String itemName) {
@@ -209,7 +241,7 @@ public final class Boon {
         String cleaned = normalise(rawRequest);
 
         if (refuses(cleaned)) {
-            return new Answer(false, ItemStack.EMPTY, refusal(cleaned, act));
+            return new Answer(false, true, ItemStack.EMPTY, refusal(cleaned, act));
         }
 
         /*
@@ -225,6 +257,23 @@ public final class Boon {
         String[] words = cleaned.split("_");
         int asked = amountFrom(words);
 
+        /*
+         * The lamp he gave you, again.
+         *
+         * It arrives as a gift in the first minute and is then gone forever the
+         * first time you die holding it — which happens on exactly the night it
+         * matters, because a black night is what it is for. Asking him for
+         * another got "I can't make that one, sorry", which is the worst
+         * possible answer: he made this one.
+         *
+         * Handled before the allow-list because that list resolves against
+         * vanilla item ids, and this is the only thing he gives that is ours.
+         */
+        if (namesTheLamp(words)) {
+            return new Answer(true, true,
+                    new ItemStack(dev.nexuscraft.hollow.Hollow.FLASHLIGHT), null);
+        }
+
         Optional<Map.Entry<String, Integer>> match = Optional.empty();
         for (String word : words) {
             if (word.isBlank() || FILLER.contains(word)) continue;
@@ -238,20 +287,18 @@ public final class Boon {
             if (match.isPresent()) break;
         }
 
+        // Not a refusal - it was never a request. The caller talks instead.
         if (match.isEmpty()) {
-            return new Answer(false, ItemStack.EMPTY,
-                    act.atLeast(Act.WATCHING)
-                            ? "I don't have that. I have other things."
-                            : "I can't make that one, sorry.");
+            return new Answer(false, false, ItemStack.EMPTY, null);
         }
 
         Item item = Registries.ITEM.get(Identifier.ofVanilla(match.get().getKey()));
         if (item == Items.AIR) {
-            return new Answer(false, ItemStack.EMPTY, "That isn't a thing here.");
+            return new Answer(false, false, ItemStack.EMPTY, null);
         }
 
         int count = asked > 0 ? asked : match.get().getValue();
-        return new Answer(true, new ItemStack(item, count), null);
+        return new Answer(true, true, new ItemStack(item, count), null);
     }
 
     /**

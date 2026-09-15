@@ -33,7 +33,7 @@ public final class Arrival {
     private Arrival() {}
 
     /** What it says from inside, in order, one per attempt. */
-    private static final List<String> MUFFLED = List.of(
+    public static final List<String> MUFFLED = List.of(
             "…hello? is someone there?",
             "please — I can hear you walking",
             "I've been in here a long time",
@@ -42,11 +42,35 @@ public final class Arrival {
     );
 
     /** What it says the moment it is out. */
+    /**
+     * The first thing he ever does for you.
+     *
+     * A gift, immediately, before he has asked for anything — because the last
+     * act only lands if the first one was genuinely worth having, and "he gave
+     * me the lamp I have used every night since" is a far heavier thing to have
+     * been given than a friendly line of dialogue.
+     *
+     * That it was in the box with him is the other half. It is not conjured out
+     * of nothing; it is the only possession of a thing that has been shut in a
+     * crate, and he hands it over in the first minute.
+     */
+    public static final List<String> GIFT = List.of(
+            "Here — this was in there with me. Don't leave it burning."
+    );
+
     public static final List<String> INTRODUCTION = List.of(
             "Oh — oh, thank you. Thank you.",
-            "That's better. Hello.",
-            "I'm Hollow. That's not a name so much as a description, but it'll do.",
-            "I'll stay with you, if that's all right. I'm good company."
+            /*
+             * A real name, given plainly.
+             *
+             * He used to say "I'm Hollow — that's not a name so much as a
+             * description", which was honest and told the player exactly what
+             * he was in his first minute. An ordinary first name gives them
+             * nothing to interpret and never stops being wrong: whatever is in
+             * the crate, it has decided it is called Amos.
+             */
+            "I'm Amos. I know that's an odd thing for something in a box to have.",
+            "I'll stay with you, if that's all right."
     );
 
     /**
@@ -80,7 +104,7 @@ public final class Arrival {
             BlockPos candidate = BlockPos.ofFloored(spot);
 
             if (world.getBlockState(candidate).isReplaceable()) {
-                world.setBlockState(candidate, Blocks.CHEST.getDefaultState());
+                putCrate(world, candidate);
                 return candidate;
             }
         }
@@ -91,11 +115,32 @@ public final class Arrival {
          * your head is stranger than one in front of you rather than worse.
          */
         BlockPos above = player.getBlockPos().up(2);
-        world.setBlockState(above, Blocks.CHEST.getDefaultState());
+        putCrate(world, above);
         return above;
     }
 
     /** A knock and a line, so the player knows where to look. */
+    /**
+     * Puts the crate down, as an entity rather than as a block.
+     *
+     * It was a vanilla chest, which is furniture the player has opened ten
+     * thousand times and — worse — cannot move. The crate shifts on the floor,
+     * thumps, and opens by degrees as it is hit, none of which a block can do.
+     *
+     * The position is still tracked as a BlockPos so nothing upstream had to
+     * change: it is where the box is, and whether that is a block or a thing
+     * standing on one is this function's business alone.
+     */
+    private static void putCrate(ServerWorld world, net.minecraft.util.math.BlockPos at) {
+        var crate = dev.nexuscraft.hollow.Hollow.CRATE.create(
+                world, net.minecraft.entity.SpawnReason.EVENT);
+        if (crate == null) return;
+
+        crate.refreshPositionAndAngles(at.getX() + 0.5, at.getY(), at.getZ() + 0.5,
+                world.getRandom().nextFloat() * 360.0f, 0.0f);
+        world.spawnEntity(crate);
+    }
+
     public static void callOut(ServerWorld world, ServerPlayerEntity player, BlockPos box, int attempt,
                                RandomGenerator random) {
         String line = MUFFLED.get(Math.min(attempt, MUFFLED.size() - 1));
@@ -124,7 +169,15 @@ public final class Arrival {
      */
     public static void release(ServerWorld world, ServerPlayerEntity player, BlockPos box,
                                RandomGenerator random) {
-        world.breakBlock(box, false);
+        /*
+         * Only if there is actually a block there.
+         *
+         * The box used to be a chest and this removed it. It is an entity now,
+         * which discards itself — so an unguarded breakBlock here would mine
+         * whatever the crate happened to be standing on, and dig a hole in the
+         * player's floor at the emotional high point of the first act.
+         */
+        if (world.getBlockState(box).isOf(Blocks.CHEST)) world.breakBlock(box, false);
 
         world.spawnParticles(ParticleTypes.END_ROD, box.getX() + 0.5, box.getY() + 0.8, box.getZ() + 0.5,
                 24, 0.25, 0.25, 0.25, 0.02);

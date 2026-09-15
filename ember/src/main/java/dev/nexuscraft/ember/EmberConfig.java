@@ -32,6 +32,14 @@ public final class EmberConfig {
 
     /** False leaves it talking in chat without saying anything aloud. */
     public final boolean speak;
+    /**
+     * True runs the voice inside the game; false asks a server for it.
+     *
+     * Local is the default because it is the only one that works for somebody
+     * who installed the mod and nothing else. The HTTP route stays for anyone
+     * already running a speech engine they prefer.
+     */
+    public final boolean speechLocal;
     public final String speechUrl;
     public final String speechModel;
     public final String speechVoice;
@@ -41,6 +49,8 @@ public final class EmberConfig {
 
     /** False stops it listening to the microphone; chat still works. */
     public final boolean listen;
+    /** True transcribes in this process; false sends it to sttUrl. */
+    public final boolean sttLocal;
     public final String sttUrl;
     public final String sttModel;
     public final String sttKey;
@@ -57,6 +67,7 @@ public final class EmberConfig {
         this.giveLimit = parseInt(p.getProperty("giveLimit"), 64, 1, 640);
 
         this.speak = !"false".equalsIgnoreCase(p.getProperty("speak", "true").trim());
+        this.speechLocal = !"http".equalsIgnoreCase(p.getProperty("speechEngine", "local").trim());
         this.speechUrl = p.getProperty("speechUrl", "http://127.0.0.1:8880/v1").trim();
         this.speechModel = p.getProperty("speechModel", "kokoro").trim();
         this.speechVoice = p.getProperty("speechVoice", "af_sky").trim();
@@ -64,6 +75,7 @@ public final class EmberConfig {
         this.speechDistance = (float) parseDouble(p.getProperty("speechDistance"), 24.0);
 
         this.listen = !"false".equalsIgnoreCase(p.getProperty("listen", "true").trim());
+        this.sttLocal = !"http".equalsIgnoreCase(p.getProperty("sttEngine", "local").trim());
         this.sttUrl = p.getProperty("sttUrl", "http://127.0.0.1:8880/v1").trim();
         this.sttModel = p.getProperty("sttModel", "whisper-1").trim();
         this.sttKey = p.getProperty("sttKey", "").trim();
@@ -73,6 +85,48 @@ public final class EmberConfig {
     public static synchronized EmberConfig get() {
         if (current == null) current = load();
         return current;
+    }
+
+    /**
+     * Changes one setting and writes it back, keeping the rest of the file.
+     *
+     * Properties.store() would be one line and would throw away every comment
+     * in ember.properties — and the comments are most of what makes that file
+     * usable, since they are the only place the defaults are explained. So the
+     * line is edited in place and everything else is left exactly as the person
+     * left it.
+     */
+    public static synchronized void set(String key, String value) {
+        // Ensures the file exists before trying to edit it.
+        get();
+
+        Path path = file();
+        try {
+            java.util.List<String> lines = Files.exists(path)
+                    ? new java.util.ArrayList<>(Files.readAllLines(path, java.nio.charset.StandardCharsets.UTF_8))
+                    : new java.util.ArrayList<>();
+
+            boolean replaced = false;
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i).trim();
+                if (line.startsWith("#") || line.startsWith("!")) continue;
+
+                int equals = line.indexOf('=');
+                if (equals < 0 || !line.substring(0, equals).trim().equals(key)) continue;
+
+                lines.set(i, key + "=" + value);
+                replaced = true;
+                break;
+            }
+
+            if (!replaced) lines.add(key + "=" + value);
+
+            Files.write(path, lines, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            Ember.LOG.warn("could not write {} to ember.properties: {}", key, e.getMessage());
+        }
+
+        reload();
     }
 
     /** Forgets what was read, so an edited file takes effect without a restart. */
@@ -143,14 +197,28 @@ public final class EmberConfig {
 
             # --- speaking aloud -------------------------------------------------
             #
-            # Needs the Simple Voice Chat mod installed, and a speech engine
-            # answering the OpenAI /v1/audio/speech endpoint — Kokoro-FastAPI is
-            # the usual local one. Without either, Ember still talks in chat.
+            # Needs the Simple Voice Chat mod installed. Without it Ember still
+            # talks in chat.
             #
             # The voice comes from the lantern itself, so it fades with distance
             # and everyone nearby hears it.
 
             speak=true
+
+            # Where the voice comes from.
+            #
+            #   local  runs the voice inside the game, using NexusCraft Voice.
+            #          Nothing to install and nothing to leave running; the
+            #          first line of a session downloads an 82MB model once.
+            #
+            #   http   asks a speech engine for it over the network, using the
+            #          OpenAI /v1/audio/speech call that Kokoro-FastAPI and most
+            #          self-hosted engines implement. Use this if you already
+            #          have one running and prefer its voices.
+            #
+            # The settings below only apply to http.
+
+            speechEngine=local
             speechUrl=http://127.0.0.1:8880/v1
             speechModel=kokoro
             speechVoice=af_sky
@@ -162,10 +230,17 @@ public final class EmberConfig {
             # --- listening ------------------------------------------------------
             #
             # Talk to Ember with your microphone instead of typing. Needs Simple
-            # Voice Chat, and a speech-to-text service answering the OpenAI
-            # /v1/audio/transcriptions endpoint.
+            # Voice Chat installed.
             #
-            # Your voice is sent to whatever address is below and nowhere else.
+            #   sttEngine=local  transcribe here, in the game, with nothing else
+            #                    running and nothing leaving the machine. The
+            #                    model is about forty megabytes and downloads
+            #                    itself the first time you speak.
+            #   sttEngine=http   send it to a service instead - anything
+            #                    answering OpenAI's /v1/audio/transcriptions.
+            #                    Your voice goes to the address below and
+            #                    nowhere else.
+            sttEngine=local
 
             listen=true
             sttUrl=http://127.0.0.1:8880/v1

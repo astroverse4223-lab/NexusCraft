@@ -29,9 +29,14 @@ import java.util.random.RandomGenerator;
  * the horror the arc was building: not that it became a monster, but that it
  * stopped being on your side and never had to change shape to do it.
  *
- * A vex rather than a custom mob, and not only because a custom mob would need
- * a client install. A vex flies and a vex ignores walls, so the place you
- * decided was safe is not, and nothing had to explain that to you.
+ * A vex underneath, because a vex flies and a vex ignores walls, so the place
+ * you decided was safe is not and nothing had to explain that to you. It used
+ * to be a *plain* vex — a small blue imp — on the grounds that a custom mob
+ * would need a client install. That reasoning died the day this mod started
+ * shipping one, and it left the best idea in the arc wearing nothing.
+ *
+ * So the behaviour is still a vex and the appearance is {@link HunterEntity}:
+ * his silhouette, his light, stretched into something that never walked.
  *
  * It can be killed. That matters — a hunter you cannot fight is a cutscene, and
  * a player who dies to something unbeatable stops playing rather than gets
@@ -65,8 +70,8 @@ public final class Hunter {
     private static final double SPEED = 0.35;
 
     /** Whether something of ours is already after this player. */
-    public static VexEntity current(ServerWorld world, ServerPlayerEntity player) {
-        List<VexEntity> found = world.getEntitiesByClass(VexEntity.class,
+    public static HunterEntity current(ServerWorld world, ServerPlayerEntity player) {
+        List<HunterEntity> found = world.getEntitiesByClass(HunterEntity.class,
                 player.getBoundingBox().expand(96),
                 entity -> entity.getCommandTags().contains(TAG) && entity.isAlive());
         return found.isEmpty() ? null : found.get(0);
@@ -78,17 +83,29 @@ public final class Hunter {
      * Spawned behind and above, at a distance — far enough that the first thing
      * you get is the sound of it, not the thing itself.
      */
-    public static VexEntity release(ServerPlayerEntity player, RandomGenerator random) {
+    public static HunterEntity release(ServerPlayerEntity player, RandomGenerator random) {
         ServerWorld world = (ServerWorld) player.getEntityWorld();
 
         // Never two at once. Being hunted by a crowd is a different, worse game.
-        VexEntity existing = current(world, player);
+        HunterEntity existing = current(world, player);
         if (existing != null) return existing;
 
-        VexEntity hunter = EntityType.VEX.create(world, SpawnReason.EVENT);
+        HunterEntity hunter = dev.nexuscraft.hollow.Hollow.HUNTER.create(world, SpawnReason.EVENT);
         if (hunter == null) return null;
 
         hunter.addCommandTag(TAG);
+
+        /*
+         * It takes his light with it.
+         *
+         * Read off the companion standing next to the player rather than from
+         * the config, so if they changed his eyes an hour ago the thing that
+         * comes through the wall has the colour they chose — which is the whole
+         * reason to have the colour be a choice.
+         */
+        var beside = world.getEntitiesByClass(MaskEntity.class,
+                player.getBoundingBox().expand(48.0), any -> true);
+        hunter.setEyeColour(beside.isEmpty() ? 0 : beside.get(0).eyeColour());
         hunter.setCustomName(Text.literal("╳_╳").formatted(Formatting.DARK_RED));
         hunter.setCustomNameVisible(true);
 
@@ -122,7 +139,7 @@ public final class Hunter {
 
     /** Calls it off — used when the act is not the last one any more. */
     public static void recall(ServerWorld world, ServerPlayerEntity player) {
-        VexEntity hunter = current(world, player);
+        HunterEntity hunter = current(world, player);
         if (hunter != null) hunter.discard();
     }
 

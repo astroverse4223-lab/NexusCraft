@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Copy, Download, Pencil, Play, Plus, RefreshCw, Server, Star, Trash2, Users, Wifi } from 'lucide-react'
+import { chooseInstance } from '@shared/joinMatch'
 import type { LauncherErrorPayload, SavedServer, ServerStatus } from '@shared/types'
 import { api, toPayload } from '../api'
 import { useStore, selectedInstance } from '../store/useStore'
@@ -10,6 +11,7 @@ export function ServersScreen(): JSX.Element {
   const statuses = useStore((s) => s.serverStatuses)
   const instance = useStore(selectedInstance)
   const instances = useStore((s) => s.instances)
+  const refreshInstances = useStore((s) => s.refreshInstances)
   const navigate = useStore((s) => s.navigate)
   const pushToast = useStore((s) => s.pushToast)
 
@@ -17,6 +19,9 @@ export function ServersScreen(): JSX.Element {
   const [error, setError] = useState<LauncherErrorPayload | null>(null)
   const [editing, setEditing] = useState<SavedServer | 'new' | null>(null)
   const [deleting, setDeleting] = useState<SavedServer | null>(null)
+
+  /** A server whose version nothing installed can answer. */
+  const [missing, setMissing] = useState<{ server: SavedServer; wanted: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [pinging, setPinging] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -64,23 +69,85 @@ export function ServersScreen(): JSX.Element {
     }
   }
 
+  /*
+   * Which instance a server needs, rather than whichever was played last.
+   *
+   * The old behaviour launched the instance selected over on the Instances
+   * screen, so joining a 1.12.2 server after an evening on 1.21 sent 1.21 at
+   * it and the connection was refused with nothing on screen explaining why.
+   */
   async function join(server: SavedServer): Promise<void> {
-    const target = server.preferredInstanceId ? instances.find((i) => i.id === server.preferredInstanceId) : instance
-    if (!target) {
-      setError({
-        code: 'NOT_FOUND',
-        title: 'No instance to join with',
-        message: 'Create an instance first, then pick it as the one to join this server with.',
-        actions: ['Go to the Instances screen and create one'],
-        detail: null
-      })
+    const choice = chooseInstance(server, statuses[server.id], instances)
+
+    if (choice.kind === 'none') {
+      /*
+       * Offered rather than done. Making an instance downloads a version and
+       * takes a while, and doing that off the back of a Join press would be a
+       * surprise - so it asks, and says which version and why.
+       */
+      setMissing({ server, wanted: choice.wanted })
       return
     }
+
     try {
-      await api.launch.start(target.id, `${server.address}:${server.port}`)
+      await api.launch.start(choice.instance.id, `${server.address}:${server.port}`)
+
+      // Said only when it was worked out, since that is the part that is new.
+      if (choice.kind === 'matched') {
+        pushToast({
+          kind: 'info',
+          title: `Joining with ${choice.instance.name}`,
+          message: `It is the instance that matches this server's ${choice.version}.`
+        })
+      }
+
       navigate('play')
     } catch (err) {
       setError(toPayload(err))
+    }
+  }
+
+  /** Makes the instance a server needs, then joins with it. */
+  async function makeAndJoin(): Promise<void> {
+    if (!missing?.wanted) return
+
+    setBusy(true)
+    try {
+      const made = await api.instances.create({
+        name: `Minecraft ${missing.wanted}`,
+        minecraftVersion: missing.wanted,
+        loader: 'vanilla',
+        loaderVersion: null,
+        iconColor: '#5eead4'
+      })
+
+      await refreshInstances()
+
+      /*
+       * Remembered on the server, so this is a decision made once. Next time
+       * Join goes straight there without matching anything.
+       */
+      await api.servers.save({
+        id: missing.server.id,
+        name: missing.server.name,
+        address: missing.server.address,
+        port: missing.server.port,
+        notedVersion: missing.server.notedVersion,
+        description: missing.server.description,
+        favorite: missing.server.favorite,
+        preferredInstanceId: made.id
+      })
+      await load()
+
+      const address = `${missing.server.address}:${missing.server.port}`
+      setMissing(null)
+
+      await api.launch.start(made.id, address)
+      navigate('play')
+    } catch (err) {
+      setError(toPayload(err))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -208,6 +275,42 @@ export function ServersScreen(): JSX.Element {
         busy={busy}
         onConfirm={() => void remove()}
         onCancel={() => setDeleting(null)}
+      />
+
+      {/*
+        Two quite different situations share this dialog, and the difference is
+        whether the version is known. Knowing it means there is something to
+        offer; not knowing it means saying so plainly rather than making
+        something arbitrary and calling it a match.
+      */}
+      <ConfirmDialog
+        open={Boolean(missing)}
+        title={
+          missing?.wanted
+            ? `Nothing installed runs Minecraft ${missing.wanted}`
+            : 'Not sure which instance this server needs'
+        }
+        message={
+          missing?.wanted
+            ? `"${missing.server.name}" is on ${missing.wanted}. Make an instance for it and join? ` +
+              'It gets remembered, so Join goes straight there next time.'
+            : `"${missing?.server.name}" has not said which version it runs, and there is more than one ` +
+              'instance to choose from. Open it and pick the one to join with under "Join with".'
+        }
+        confirmLabel={missing?.wanted ? `Make it and join` : 'Pick one'}
+        busy={busy}
+        onConfirm={() => {
+          if (missing?.wanted) {
+            void makeAndJoin()
+            return
+          }
+
+          // Nothing to make, so it goes where the choice can be made instead.
+          const server = missing?.server ?? null
+          setMissing(null)
+          if (server) setEditing(server)
+        }}
+        onCancel={() => setMissing(null)}
       />
     </>
   )

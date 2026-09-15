@@ -97,6 +97,28 @@ public class HollowClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        /*
+         * The face, as geometry rather than as a name tag.
+         *
+         * Registered before anything else touches the client, because a mask
+         * that spawns without a renderer is an invisible entity and the failure
+         * looks exactly like the companion never arriving.
+         */
+        net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry.registerModelLayer(
+                HollowModelLayers.MASK, MaskModel::getTexturedModelData);
+        net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(
+                dev.nexuscraft.hollow.Hollow.MASK, MaskRenderer::new);
+
+        net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry.registerModelLayer(
+                HollowModelLayers.CRATE, CrateModel::getTexturedModelData);
+        net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(
+                dev.nexuscraft.hollow.Hollow.CRATE, CrateRenderer::new);
+
+        net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry.registerModelLayer(
+                HollowModelLayers.HUNTER, HunterModel::getTexturedModelData);
+        net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(
+                dev.nexuscraft.hollow.Hollow.HUNTER, HunterRenderer::new);
+
         known = ClientMemory.load();
         MenuHaunt.register();
         PauseMenuButton.register();
@@ -119,10 +141,10 @@ public class HollowClient implements ClientModInitializer {
          * costs nothing until he speaks, and then fails once, quietly, into the
          * log rather than into the player's face.
          */
-        if (config.voice.contains("speech") || config.voice.contains("both")) {
-            Speech.configure(config.speechUrl, config.speechModel, config.speechVoice,
-                    config.speechKey, config.speechVolume);
-        }
+        applyVoice(config);
+        NightFall.setEnabled(config.darkNights);
+        NightFall.setDarkest(config.nightDarkness);
+        MoodBar.setEnabled(config.moodBar);
 
         /*
          * The game's narrator, but only if nothing better is set up.
@@ -151,6 +173,56 @@ public class HollowClient implements ClientModInitializer {
         net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.world != null && client.world.getTime() % 200 == 0) followTheWorld(client);
         });
+
+        /*
+         * The dark, drawn under the HUD.
+         *
+         * Attached before the vanilla overlays so the hearts, the hotbar and
+         * everything else render on top of it at full brightness. Over the top
+         * it would dim the health bar too, which is not atmosphere — it is a
+         * bug you cannot read your own health through.
+         */
+        net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry.attachElementBefore(
+                net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements.MISC_OVERLAYS,
+                dev.nexuscraft.hollow.Hollow.id("nightfall"),
+                (context, tick) -> {
+                    NightFall.draw(context);
+
+                    /*
+                     * And his eyes over the top of it.
+                     *
+                     * Order matters and is the whole point: the darkness dims
+                     * everything drawn before it, so the one thing that must
+                     * survive is drawn after.
+                     */
+                    EyeShine.draw(context, NightFall.showing());
+
+                    // And how he feels, over the top of both.
+                    MoodBar.draw(context);
+                });
         Hollow.LOG.info("Hollow client ready (menu reflects {})", known.id);
+    }
+
+    /**
+     * Turns the chosen voice on, and anything else off.
+     *
+     * Called at startup and again whenever the settings screen saves, which is
+     * the whole point of it existing. Before this, the pause menu wrote the new
+     * choice into hollow.properties and nothing read it back — `reloadConfig`
+     * refreshes the model and the endpoint, not the voice — so changing the
+     * voice appeared to do nothing at all until the game was restarted, and the
+     * screen cheerfully said "Saved" either way.
+     *
+     * Switching *away* from speech matters as much as switching to it: the
+     * speech path claims every line it is enabled for, so leaving it on would
+     * mean picking "narrator" and still hearing nothing.
+     */
+    public static void applyVoice(dev.nexuscraft.hollow.HollowConfig config) {
+        if (config.voice.contains("speech") || config.voice.contains("both")) {
+            Speech.configure(config.speechUrl, config.speechModel, config.speechVoice,
+                    config.speechKey, config.speechVolume, config.speechLocal);
+        } else {
+            Speech.disable();
+        }
     }
 }

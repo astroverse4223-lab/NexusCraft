@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    "iig",
+    "rdg",
+    "iig"
+  ],
+  "key": {
+    "i": "minecraft:iron_ingot",
+    "g": "minecraft:glass_pane",
+    "r": "minecraft:redstone",
+    "d": "minecraft:glowstone_dust"
+  },
+  "result": {
+    "id": "hollow:flashlight",
+    "count": 1
+  }
+}
