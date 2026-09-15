@@ -1,5 +1,38 @@
 /* ------------------------------------------------------------------ tokens */
 
+/*
+ * Themes cross-fade rather than snap.
+ *
+ * A companion's mood can change the whole window several times a minute, and
+ * an instant repaint reads as a glitch rather than as a thing reacting. Only
+ * the surfaces move - text stays put, because fading type is how a screen
+ * becomes hard to read while it changes.
+ */
+body,
+.panel,
+.panel-pad,
+.btn,
+.pill,
+.tab-strip,
+.card {
+  transition:
+    background-color 420ms ease,
+    background 420ms ease,
+    border-color 420ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body,
+  .panel,
+  .panel-pad,
+  .btn,
+  .pill,
+  .tab-strip,
+  .card {
+    transition: none;
+  }
+}
+
 :root {
   /*
    * Surface ramp.

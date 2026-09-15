@@ -742,6 +742,10 @@ export const api = {
       call<BuiltPack>('resourcepack:build', { draft, minecraftVersion, path }),
     install: (instanceId: string, draft: ResourcePackDraft) =>
       call<BuiltPack>('resourcepack:install', { instanceId, draft }),
+    /** What the server is handing out now, and whether it outlives this machine. */
+    current: (serverId: string) =>
+      call<{ url: string; published: boolean }>('resourcepack:current', { serverId }),
+
     /** Whether this machine can upload to GitHub, and as whom. */
     githubStatus: () =>
       call<{ installed: boolean; account: string | null; canWrite: boolean; why: string | null }>(

@@ -381,6 +381,17 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
     why: string | null
   } | null>(null)
   const [publishing, setPublishing] = useState(false)
+
+  /*
+   * What the chosen server is handing out at the moment.
+   *
+   * Read so that "Build and serve it" can say what it is about to replace.
+   * Serving writes a plain http address that only answers while the launcher
+   * is open, and writing that over a published one has twice looked, from
+   * the outside, exactly like the pack breaking.
+   */
+  const [serving, setServing] = useState<{ url: string; published: boolean } | null>(null)
+  const [confirmServe, setConfirmServe] = useState(false)
   const [published, setPublished] = useState<{ url: string; reachable: boolean; bytes: number } | null>(null)
 
   const [targets, setTargets] = useState<Target[]>([])
@@ -1121,6 +1132,23 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
   }, [instance.name])
 
   const target = targets.find((t) => t.id === targetId) ?? null
+
+  useEffect(() => {
+    setConfirmServe(false)
+
+    if (!target || target.kind !== 'server') {
+      setServing(null)
+      return
+    }
+
+    void (async () => {
+      try {
+        setServing(await api.resourcePack.current(target.serverId as string))
+      } catch {
+        setServing(null)
+      }
+    })()
+  }, [target])
 
   /** The version whose textures are read and whose format is written. */
   const packVersion = target?.minecraftVersion ?? instance.minecraftVersion
@@ -2507,13 +2535,39 @@ export function PackMakerTab({ instance }: { instance: Instance }): JSX.Element 
                 className="btn btn-primary"
                 title={nothing ? 'There is nothing in the pack yet' : !target ? 'Pick where it goes first' : undefined}
                 disabled={busy || nothing || !target}
-                onClick={() => void install()}
+                style={confirmServe ? { color: 'var(--warning)' } : undefined}
+                onClick={() => {
+                  /*
+                   * One extra press, and only when there is something to lose.
+                   * Serving replaces the address in the server's config with
+                   * one that answers only while the launcher is open, so doing
+                   * it on top of a published pack quietly breaks it for
+                   * everybody who is not in this house.
+                   */
+                  if (serving?.published && !confirmServe) {
+                    setConfirmServe(true)
+                    return
+                  }
+                  setConfirmServe(false)
+                  void install()
+                }}
               >
                 {busy && <Spinner />}
                 {target?.kind === 'server' ? <Server size={14} /> : <Upload size={14} />}
-                {target?.kind === 'server' ? ' Build and serve it' : ' Build and install it'}
+                {target?.kind !== 'server'
+                  ? ' Build and install it'
+                  : confirmServe
+                    ? ' Replace the published pack \u2014 sure?'
+                    : ' Build and serve it'}
               </button>
             </div>
+
+            {target?.kind === 'server' && serving?.published && (
+              <p className="tiny" style={{ color: confirmServe ? 'var(--warning)' : 'var(--text-dim)' }}>
+                This server currently hands out a published pack, which works whether or not the launcher is open.
+                Serving replaces that with an address only this machine answers.
+              </p>
+            )}
 
             {target?.kind === 'server' && (
               <div className="panel panel-pad col gap-10" style={{ marginTop: 4 }}>

@@ -64,6 +64,7 @@ function defaults(): AppSettings {
      */
     clientId: (process.env.NEXUSCRAFT_CLIENT_ID?.trim() || BUNDLED_CLIENT_ID).trim(),
     animatedBackground: true,
+    companionMoodTheme: false,
     particles: true,
     theme: 'nexus',
     accentColor: '#5eead4',

@@ -298,6 +298,7 @@ export const IPC_CHANNELS = [
   'studio:export',
   'resourcepack:publish',
   'github:status',
+  'resourcepack:current',
   'host:sendCircuit',
   'host:setDomain',
   'host:checkDomain',

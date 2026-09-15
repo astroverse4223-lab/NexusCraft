@@ -360,6 +360,16 @@ export interface BackupInfo {
   sizeBytes: number
   createdAt: number
   worldName: string
+  /**
+   * What is inside, and therefore where it goes back to.
+   *
+   * "world" is the terrain, written by the launcher. "data" is the plugin's
+   * own folder - money, homes, claims, islands, vault, stats - written by the
+   * server as it shuts down. They land in the same folder and look alike in a
+   * list, and putting one back where the other belongs would delete a world
+   * and leave yaml files where it used to be.
+   */
+  kind: 'world' | 'data'
 }
 
 /* ------------------------------------------------------------------ servers */
@@ -1005,6 +1015,13 @@ export interface AppSettings {
   accentColor: string
   /** Which of THEMES the app is wearing. */
   theme: ThemeId
+  /**
+   * Let a running companion colour the window with how it is getting on.
+   *
+   * Off by default. Taking over somebody's chosen theme is not a thing to do
+   * uninvited, and the theme goes straight back the moment the bot stops.
+   */
+  companionMoodTheme: boolean
   onboardingComplete: boolean
   selectedInstanceId: string | null
   /** https JSON feed replacing the built-in public server list. Empty = built-in. */

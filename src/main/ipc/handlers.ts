@@ -53,6 +53,7 @@ import { writeMapArt, writeMapArtToServer } from '../services/content/mapArtServ
 import {
   installResourcePack,
   readResourcePack,
+  currentPackUrl,
   vanillaTexture,
   vanillaTextures,
   pointPluginAtPack,
@@ -2076,6 +2077,10 @@ export function registerIpcHandlers(): void {
    * a file nobody is ever told about.
    */
   handle('github:status', async () => await githubStatus())
+
+  handle('resourcepack:current', async (payload: { serverId: string }) =>
+    currentPackUrl(hostedServerDir(payload.serverId))
+  )
 
   /**
    * The pack, put somewhere it stays put.

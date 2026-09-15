@@ -188,6 +188,7 @@ export async function backupHostedServer(serverId: string, reason = 'manual'): P
     })
 
     const info: BackupInfo = {
+      kind: 'world',
       fileName,
       path: output,
       sizeBytes: result.bytes,
@@ -230,12 +231,22 @@ export async function listServerBackups(serverId: string): Promise<BackupInfo[]>
   for (const name of names) {
     try {
       const info = await stat(join(dir, name))
+      /*
+       * The plugin writes its data snapshots into this same folder, so the
+       * two kinds have to be told apart before either is offered as something
+       * to put back.
+       */
+      const data = name.startsWith('nexus-data-')
+
       backups.push({
+        kind: data ? 'data' : 'world',
         fileName: name,
         path: join(dir, name),
         sizeBytes: info.size,
         createdAt: info.mtimeMs,
-        worldName: name.replace(/_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.zip$/, '')
+        worldName: data
+          ? 'Player data'
+          : name.replace(/_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.zip$/, '')
       })
     } catch {
       /* skip anything unreadable */
@@ -281,7 +292,22 @@ export async function restoreServerBackup(serverId: string, fileName: string): P
   const archive = assertInside(dir, join(dir, fileName))
   if (!existsSync(archive)) throw new LauncherError('NOT_FOUND', 'that snapshot no longer exists')
 
-  const folder = await worldFolder(server)
+  /*
+   * Where this particular archive belongs.
+   *
+   * Decided by looking inside rather than by the file name, because the name
+   * is only a convention and the cost of being wrong is deleting a world to
+   * put yaml files in its place. A data snapshot holds nothing but the
+   * plugin's own folder, so that is the test.
+   */
+  const AdmZipEarly = (await import('adm-zip')).default
+  const { readFile: readEarly } = await import('node:fs/promises')
+  const peek = new AdmZipEarly(await readEarly(archive))
+
+  const names = peek.getEntries().map((entry) => entry.entryName)
+  const dataOnly = names.length > 0 && names.every((name) => name.startsWith('Nexus/'))
+
+  const folder = dataOnly ? 'plugins' : await worldFolder(server)
   const destination = join(hostedServerDir(serverId), folder)
 
   /*
@@ -301,7 +327,17 @@ export async function restoreServerBackup(serverId: string, fileName: string): P
     await backupHostedServer(serverId, 'before restore').catch((err) => {
       log.warn(`could not snapshot before restoring: ${(err as Error).message}`)
     })
-    await rm(destination, { recursive: true, force: true })
+
+    /*
+     * A world restore replaces the whole folder. A data restore replaces only
+     * the plugin's own folder inside `plugins`, because emptying `plugins`
+     * would take every other plugin's settings with it - and the jar.
+     */
+    if (dataOnly) {
+      await rm(join(destination, 'Nexus'), { recursive: true, force: true })
+    } else {
+      await rm(destination, { recursive: true, force: true })
+    }
   }
 
   await mkdir(destination, { recursive: true })
@@ -312,7 +348,7 @@ export async function restoreServerBackup(serverId: string, fileName: string): P
     await writeFile(target, entry.getData())
   }
 
-  log.info(`restored "${server.name}" from ${fileName}`)
+  log.info(`restored ${dataOnly ? 'player data' : 'the world'} of "${server.name}" from ${fileName}`)
 }
 
 /* ------------------------------------------------------------ scheduling */

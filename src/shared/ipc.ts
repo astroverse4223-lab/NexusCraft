@@ -934,6 +934,9 @@ export const IpcRequestSchemas: Record<IpcChannel, z.ZodTypeAny> = {
 
   'github:status': z.object({}),
 
+  /** What a server is handing out now, so nothing overwrites it unasked. */
+  'resourcepack:current': z.object({ serverId: id }),
+
   'studio:export': z.object({
     name: z.string().min(1).max(48),
     cells: z

@@ -386,6 +386,16 @@ export function SettingsScreen(): JSX.Element {
             <Toggle checked={settings.particles} onChange={(value) => void patch({ particles: value })} />
           </SettingRow>
 
+          <SettingRow
+            name="Companion sets the mood"
+            description="While a companion is running, the window takes its colour from how it is getting on — working, pleased with itself, or stuck. Your own theme comes straight back when it stops."
+          >
+            <Toggle
+              checked={settings.companionMoodTheme}
+              onChange={(value) => void patch({ companionMoodTheme: value })}
+            />
+          </SettingRow>
+
           {/*
             Swatches rather than a list of names, because "Amethyst" tells you
             nothing and three squares of the actual colours tell you everything.

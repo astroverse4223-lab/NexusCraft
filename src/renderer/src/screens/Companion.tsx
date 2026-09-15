@@ -16,62 +16,73 @@ import {
   Wrench,
   Zap
 } from 'lucide-react'
-import type { Companion, CompanionEvent, CompanionSettings, CompanionState, CompanionStatus , RoutineInfo, CompanionUsage, CompanionWork } from '@shared/companion'
+import type {
+  Companion,
+  CompanionEvent,
+  CompanionSettings,
+  CompanionState,
+  CompanionStatus,
+  RoutineInfo,
+  CompanionUsage,
+  CompanionWork
+} from '@shared/companion'
 import type { LauncherErrorPayload } from '@shared/types'
+import { MOOD_LOOK, nextMood, type MoodHold } from '@shared/mood'
 import { api, subscribe, toPayload } from '../api'
 import { say, hush, DEFAULT_VOICE, type VoiceSettings } from '../components/companionVoice'
 import { VoiceControls, loadVoiceSettings } from '../components/VoiceControls'
 import { MicButton } from '../components/MicButton'
 import { BotCam } from '../components/BotCam'
-import { useStore } from '../store/useStore'
+import { applyTheme, useStore } from '../store/useStore'
 import { ErrorView, SettingRow, Spinner, Toggle, useAutoScroll } from '../components/ui'
 import { CrewPanel } from '../components/CrewPanel'
 
-const PROVIDERS: Array<{ id: string; label: string; baseUrl: string; needsKey: boolean; model: string; hint: string }> = [
-  {
-    id: 'ollama',
-    label: 'Ollama (local)',
-    baseUrl: 'http://localhost:11434/v1',
-    needsKey: false,
-    model: 'llama3.1',
-    hint: 'Runs entirely on this PC. No key, no cost, and nothing leaves the machine.'
-  },
-  {
-    id: 'glm',
-    label: 'GLM (Zhipu AI)',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    needsKey: true,
-    model: 'glm-4.6',
-    hint: 'Uses your GLM API key. Press Load models — GLM retires model names, so any default here goes stale.'
-  },
-  {
-    id: 'glm-intl',
-    label: 'GLM (international)',
-    baseUrl: 'https://api.z.ai/api/paas/v4',
-    needsKey: true,
-    model: 'glm-4.6',
-    hint: 'Pay-as-you-go against your GLM wallet balance. Not the endpoint a Coding Plan subscription uses.'
-  },
-  {
-    id: 'glm-coding',
-    label: 'GLM Coding Plan',
-    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-    needsKey: true,
-    // A Coding Plan only pays for a call when the base URL and the model both
-    // qualify; otherwise the call silently falls through to the wallet balance
-    // and fails as "insufficient balance" even though the subscription is live.
-    model: 'glm-4.7',
-    hint: 'For a GLM Coding Plan subscription. Only GLM-4.7, GLM-5-Turbo and GLM-5.3 draw on the plan — anything else bills your wallet.'
-  },
-  {
-    id: 'openai',
-    label: 'Other OpenAI-compatible',
-    baseUrl: '',
-    needsKey: true,
-    model: '',
-    hint: 'Any endpoint implementing /chat/completions.'
-  }
-]
+const PROVIDERS: Array<{ id: string; label: string; baseUrl: string; needsKey: boolean; model: string; hint: string }> =
+  [
+    {
+      id: 'ollama',
+      label: 'Ollama (local)',
+      baseUrl: 'http://localhost:11434/v1',
+      needsKey: false,
+      model: 'llama3.1',
+      hint: 'Runs entirely on this PC. No key, no cost, and nothing leaves the machine.'
+    },
+    {
+      id: 'glm',
+      label: 'GLM (Zhipu AI)',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      needsKey: true,
+      model: 'glm-4.6',
+      hint: 'Uses your GLM API key. Press Load models — GLM retires model names, so any default here goes stale.'
+    },
+    {
+      id: 'glm-intl',
+      label: 'GLM (international)',
+      baseUrl: 'https://api.z.ai/api/paas/v4',
+      needsKey: true,
+      model: 'glm-4.6',
+      hint: 'Pay-as-you-go against your GLM wallet balance. Not the endpoint a Coding Plan subscription uses.'
+    },
+    {
+      id: 'glm-coding',
+      label: 'GLM Coding Plan',
+      baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+      needsKey: true,
+      // A Coding Plan only pays for a call when the base URL and the model both
+      // qualify; otherwise the call silently falls through to the wallet balance
+      // and fails as "insufficient balance" even though the subscription is live.
+      model: 'glm-4.7',
+      hint: 'For a GLM Coding Plan subscription. Only GLM-4.7, GLM-5-Turbo and GLM-5.3 draw on the plan — anything else bills your wallet.'
+    },
+    {
+      id: 'openai',
+      label: 'Other OpenAI-compatible',
+      baseUrl: '',
+      needsKey: true,
+      model: '',
+      hint: 'Any endpoint implementing /chat/completions.'
+    }
+  ]
 
 const STATUS_STYLE: Record<CompanionStatus, { label: string; className: string }> = {
   idle: { label: 'Stopped', className: 'pill' },
@@ -109,6 +120,19 @@ export function CompanionScreen(): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [settings, setSettings] = useState<CompanionSettings | null>(null)
   const [state, setState] = useState<CompanionState | null>(null)
+
+  /*
+   * The companion's mood, and the theme it puts on the window.
+   *
+   * Held rather than derived on the fly, because a mood has to settle: the
+   * rules in @shared/mood refuse to let a quieter mood replace a sharper one
+   * until the sharper one has been readable for a moment. Without that a bot
+   * that fails a step, recovers and fails again flicks the whole window red
+   * and back inside a second.
+   */
+  const [mood, setMood] = useState<MoodHold | null>(null)
+  const moodOn = useStore((s) => s.settings?.companionMoodTheme ?? false)
+  const chosenTheme = useStore((s) => s.settings?.theme ?? 'nexus')
 
   /*
    * The voice, and a ref that mirrors it.
@@ -203,7 +227,10 @@ export function CompanionScreen(): JSX.Element {
   useEffect(() => {
     // The scripted workers on offer, read from the main process so the list is
     // whatever actually exists rather than a copy that drifts.
-    void api.companion.routines().then(setRoutines).catch(() => setRoutines([]))
+    void api.companion
+      .routines()
+      .then(setRoutines)
+      .catch(() => setRoutines([]))
   }, [])
 
   useEffect(() => {
@@ -215,6 +242,50 @@ export function CompanionScreen(): JSX.Element {
   }, [load])
 
   // Live feed from the bot process.
+  /*
+   * Recomputed on a timer as well as on new events, because two of the things
+   * that change a mood are the passing of time rather than anything arriving:
+   * an old failure stops counting, and a mood that has been held long enough
+   * becomes replaceable.
+   */
+  useEffect(() => {
+    if (!moodOn) return
+
+    const look = (): void => {
+      setMood((held) =>
+        nextMood(held, {
+          status: state?.status ?? 'idle',
+          goal: state?.goal ?? null,
+          events: state?.events ?? [],
+          now: Date.now()
+        })
+      )
+    }
+
+    look()
+    const timer = setInterval(look, 1500)
+    return () => clearInterval(timer)
+  }, [moodOn, state?.status, state?.goal, state?.events])
+
+  /*
+   * Paint it, and put it back afterwards.
+   *
+   * The cleanup matters more than the effect: switching the feature off, or
+   * leaving the screen, or stopping the bot has to hand the window back to
+   * whatever theme was actually chosen - a borrowed theme that outlives the
+   * thing doing the borrowing just reads as the setting having changed itself.
+   */
+  useEffect(() => {
+    if (!moodOn || !mood) {
+      applyTheme(chosenTheme)
+      return
+    }
+
+    applyTheme(MOOD_LOOK[mood.mood].theme)
+
+    return () => applyTheme(chosenTheme)
+  }, [moodOn, mood, chosenTheme])
+
   useEffect(() => {
     const offList = subscribe('companion:list', (list: Companion[]) => setCompanions(list))
 
@@ -396,10 +467,10 @@ export function CompanionScreen(): JSX.Element {
         </div>
         <div className="row gap-8">
           {/*
-            * In the header rather than beside the feed. The feed only appears
-            * once a companion is selected and running, so a control placed
-            * there is invisible exactly when someone is looking for it.
-            */}
+           * In the header rather than beside the feed. The feed only appears
+           * once a companion is selected and running, so a control placed
+           * there is invisible exactly when someone is looking for it.
+           */}
           <VoiceControls settings={voice} onChange={setVoice} />
           <span className={status.className}>
             {state.status === 'playing' && <span className="dot online" />}
@@ -427,15 +498,17 @@ export function CompanionScreen(): JSX.Element {
         <div className="panel panel-pad row gap-12 mb-16">
           <Server size={16} className="dim" />
           <span className="small muted flex-1">{state.detail}</span>
+          {/* Named, so the colour the window just changed to is never a riddle. */}
+          {moodOn && mood && <span className="pill">{MOOD_LOOK[mood.mood].label}</span>}
           {state.connectedVersion && <span className="pill">{state.connectedVersion}</span>}
         </div>
       )}
 
       {/*
-        * One row per configured companion. Several can play at once — a local
-        * Ollama model and a hosted one side by side, say — so the screen has to
-        * show which is which rather than assuming a single bot.
-        */}
+       * One row per configured companion. Several can play at once — a local
+       * Ollama model and a hosted one side by side, say — so the screen has to
+       * show which is which rather than assuming a single bot.
+       */}
       <div className="row gap-8 wrap mb-16">
         {companions.map((companion) => {
           const status = statuses[companion.id] ?? (companion.id === selectedId ? state?.status : 'idle')
@@ -507,15 +580,22 @@ export function CompanionScreen(): JSX.Element {
       {tab === 'crew' ? (
         <CrewPanel companions={companions} statuses={statuses} />
       ) : tab === 'activity' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)',
+            gap: 16,
+            alignItems: 'start'
+          }}
+        >
           <div>
             {/*
-              * What it is doing, above the log rather than in it.
-              *
-              * A queued instruction and an ignored one looked identical before
-              * this: the only way to tell a busy companion from a stuck one was
-              * to watch the world and guess.
-              */}
+             * What it is doing, above the log rather than in it.
+             *
+             * A queued instruction and an ignored one looked identical before
+             * this: the only way to tell a busy companion from a stuck one was
+             * to watch the world and guess.
+             */}
             <div className="panel panel-pad row gap-8 mb-8" style={{ padding: 10 }}>
               {work?.current ? (
                 <>
@@ -526,8 +606,7 @@ export function CompanionScreen(): JSX.Element {
                     </div>
                     <div className="tiny dim">
                       {work.current.startsWith('[idle]') ? 'decided on its own' : 'you asked for this'} ·{' '}
-                      {Math.round(work.runningForMs / 1000)}s
-                      {work.queued > 0 ? ` · ${work.queued} waiting` : ''}
+                      {Math.round(work.runningForMs / 1000)}s{work.queued > 0 ? ` · ${work.queued} waiting` : ''}
                     </div>
                   </div>
                   <button
@@ -545,11 +624,11 @@ export function CompanionScreen(): JSX.Element {
               )}
 
               {/*
-                * What it has cost. A companion on autonomy calls the model every
-                * idle interval whether or not anything happened, so this is the
-                * difference between a bot that quietly spends and one that does
-                * it in the open.
-                */}
+               * What it has cost. A companion on autonomy calls the model every
+               * idle interval whether or not anything happened, so this is the
+               * difference between a bot that quietly spends and one that does
+               * it in the open.
+               */}
               {usage && usage.totalTokens > 0 && (
                 <span
                   className="pill"
@@ -582,9 +661,15 @@ export function CompanionScreen(): JSX.Element {
                     <span className="tiny dim mono" style={{ minWidth: 52, flexShrink: 0 }}>
                       {new Date(event.at).toLocaleTimeString(undefined, { hour12: false })}
                     </span>
-                    {event.kind === 'action' && <Wrench size={12} style={{ color: EVENT_COLOUR.action, marginTop: 3, flexShrink: 0 }} />}
-                    {event.kind === 'thought' && <Brain size={12} style={{ color: EVENT_COLOUR.thought, marginTop: 3, flexShrink: 0 }} />}
-                    {event.kind === 'chat' && <MessageSquare size={12} style={{ color: EVENT_COLOUR.chat, marginTop: 3, flexShrink: 0 }} />}
+                    {event.kind === 'action' && (
+                      <Wrench size={12} style={{ color: EVENT_COLOUR.action, marginTop: 3, flexShrink: 0 }} />
+                    )}
+                    {event.kind === 'thought' && (
+                      <Brain size={12} style={{ color: EVENT_COLOUR.thought, marginTop: 3, flexShrink: 0 }} />
+                    )}
+                    {event.kind === 'chat' && (
+                      <MessageSquare size={12} style={{ color: EVENT_COLOUR.chat, marginTop: 3, flexShrink: 0 }} />
+                    )}
                     <span style={{ color: EVENT_COLOUR[event.kind], flex: 1, minWidth: 0, wordBreak: 'break-word' }}>
                       {event.from && <strong style={{ color: 'var(--accent)' }}>{event.from}: </strong>}
                       {event.tool && <span className="mono tiny dim">{event.tool} → </span>}
@@ -623,7 +708,9 @@ export function CompanionScreen(): JSX.Element {
             <div className="row gap-8 mt-16">
               <input
                 className="input"
-                placeholder={running ? 'Tell it what to do — e.g. "build me a small cottage"' : 'Start the companion first'}
+                placeholder={
+                  running ? 'Tell it what to do — e.g. "build me a small cottage"' : 'Start the companion first'
+                }
                 value={instruction}
                 disabled={!running}
                 onChange={(event) => setInstruction(event.target.value)}
@@ -632,13 +719,17 @@ export function CompanionScreen(): JSX.Element {
                 }}
               />
               {/*
-                * Speaking puts the words in the box rather than sending them.
-                * Recognition mishears, and a misheard instruction that has
-                * already been acted on cannot be taken back — seeing it first
-                * costs a moment and saves the bot demolishing the wrong thing.
-                */}
+               * Speaking puts the words in the box rather than sending them.
+               * Recognition mishears, and a misheard instruction that has
+               * already been acted on cannot be taken back — seeing it first
+               * costs a moment and saves the bot demolishing the wrong thing.
+               */}
               <MicButton disabled={!running} onHeard={(text) => setInstruction(text)} />
-              <button className="btn btn-primary" disabled={!running || !instruction.trim()} onClick={() => void send()}>
+              <button
+                className="btn btn-primary"
+                disabled={!running || !instruction.trim()}
+                onClick={() => void send()}
+              >
                 <Send size={15} /> Send
               </button>
             </div>
@@ -674,7 +765,9 @@ export function CompanionScreen(): JSX.Element {
                     className="btn btn-ghost btn-icon"
                     title="Forget everything"
                     onClick={() => {
-                      void api.companion.clearMemory(selectedId!).then(() => setState((c) => (c ? { ...c, memory: [] } : c)))
+                      void api.companion
+                        .clearMemory(selectedId!)
+                        .then(() => setState((c) => (c ? { ...c, memory: [] } : c)))
                     }}
                   >
                     <Trash2 size={14} />
@@ -699,19 +792,26 @@ export function CompanionScreen(): JSX.Element {
           </div>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            gap: 16,
+            alignItems: 'start'
+          }}
+        >
           {/* --------------------------------------------- how it decides */}
           <div className="panel panel-pad" style={{ gridColumn: '1 / -1' }}>
             <div className="section-title">How this companion decides</div>
             {/*
-              * Think, or just work.
-              *
-              * A language model is worth its cost when the job is open-ended and
-              * wasted when it is not — chopping wood for an hour needs no
-              * judgement. Choosing a routine here swaps the model out entirely:
-              * no API key, no waiting on a reply, and the same behaviour every
-              * time. The two live side by side, one companion each.
-              */}
+             * Think, or just work.
+             *
+             * A language model is worth its cost when the job is open-ended and
+             * wasted when it is not — chopping wood for an hour needs no
+             * judgement. Choosing a routine here swaps the model out entirely:
+             * no API key, no waiting on a reply, and the same behaviour every
+             * time. The two live side by side, one companion each.
+             */}
             <div className="field">
               <select
                 className="input"
@@ -735,7 +835,6 @@ export function CompanionScreen(): JSX.Element {
                   : 'Thinking costs a request to the model for every decision. A routine costs nothing and never surprises you — good for gathering, farming, guarding and the like.'}
               </div>
             </div>
-
           </div>
 
           {/* ------------------------------------------------------ model */}
@@ -813,8 +912,8 @@ export function CompanionScreen(): JSX.Element {
                 </button>
               </div>
               <div className="field-hint">
-                Model names change often and each endpoint serves its own set. Load the list rather than guessing —
-                an unknown name is rejected with the provider's own wording, which is not always in English.
+                Model names change often and each endpoint serves its own set. Load the list rather than guessing — an
+                unknown name is rejected with the provider's own wording, which is not always in English.
               </div>
             </div>
 
@@ -825,18 +924,14 @@ export function CompanionScreen(): JSX.Element {
                 value={settings.toolSet ?? 'full'}
                 onChange={(event) => void patch({ toolSet: event.target.value as 'full' | 'core' })}
               >
-                <option value="full">
-                  Everything{toolSizes ? ` (${toolSizes.full} tools)` : ''}
-                </option>
-                <option value="core">
-                  Essentials only{toolSizes ? ` (${toolSizes.core} tools)` : ''}
-                </option>
+                <option value="full">Everything{toolSizes ? ` (${toolSizes.full} tools)` : ''}</option>
+                <option value="core">Essentials only{toolSizes ? ` (${toolSizes.core} tools)` : ''}</option>
               </select>
               <div className="field-hint">
                 The full set is roughly {toolSizes ? toolSizes.fullTokens.toLocaleString() : '—'} tokens of tool
-                descriptions on every request. Large hosted models handle it; a 7B local model given that many
-                choices tends to stall or invent tool names. Essentials covers looking, moving, gathering,
-                crafting, building, fighting and eating.
+                descriptions on every request. Large hosted models handle it; a 7B local model given that many choices
+                tends to stall or invent tool names. Essentials covers looking, moving, gathering, crafting, building,
+                fighting and eating.
               </div>
             </div>
 
@@ -940,8 +1035,8 @@ export function CompanionScreen(): JSX.Element {
               <p className="field-hint">
                 Leave empty to detect it. The bot protocol library currently reaches <strong>26.1</strong>. It is
                 volunteer-maintained and adds versions by hand, so it trails new Minecraft releases — sometimes by
-                months. Newer instances will not connect until it catches up. This limits only the companion, not
-                the game.
+                months. Newer instances will not connect until it catches up. This limits only the companion, not the
+                game.
               </p>
             </div>
 
@@ -1014,9 +1109,7 @@ export function CompanionScreen(): JSX.Element {
                   min={0}
                   step="0.01"
                   value={settings.pricePerMillionTokens ?? 0}
-                  onChange={(event) =>
-                    setSettings({ ...settings, pricePerMillionTokens: Number(event.target.value) })
-                  }
+                  onChange={(event) => setSettings({ ...settings, pricePerMillionTokens: Number(event.target.value) })}
                   onBlur={() => void patch({ pricePerMillionTokens: settings.pricePerMillionTokens ?? 0 })}
                 />
               </div>

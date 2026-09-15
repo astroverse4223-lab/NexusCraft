@@ -229,6 +229,8 @@ export async function backupWorld(instance: Instance, folderName: string): Promi
   log.info(`backup complete: ${fileName} (${result.entries} files, ${result.bytes} bytes)`)
 
   return {
+    // Instance world backups, which are only ever worlds.
+    kind: 'world',
     fileName,
     path: output,
     sizeBytes: result.bytes,
@@ -251,6 +253,7 @@ export async function listBackups(instance: Instance): Promise<BackupInfo[]> {
     try {
       const info = await stat(join(dir, name))
       backups.push({
+        kind: 'world',
         fileName: name,
         path: join(dir, name),
         sizeBytes: info.size,

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { crc32 } from 'node:zlib'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import AdmZip from 'adm-zip'
@@ -428,6 +428,34 @@ const pluginConfig = (serverDir: string): string => join(serverDir, 'plugins', '
  * Returns false when there is no plugin, which is how the caller knows to fall
  * back to server.properties.
  */
+/**
+ * What the server is handing out right now, and where it came from.
+ *
+ * Asked before anything overwrites it. Serving the pack from this machine
+ * writes a http address into the config, and doing that on top of a published
+ * one silently swaps a pack every player can fetch for one that only works
+ * while the launcher is open - which has already happened twice, and both
+ * times looked from the outside like the pack simply not working.
+ */
+export function currentPackUrl(serverDir: string): { url: string; published: boolean } {
+  const file = pluginConfig(serverDir)
+  if (!existsSync(file)) return { url: '', published: false }
+
+  try {
+    const doc = parseDocument(readFileSync(file, 'utf8'))
+    const url = String(doc.getIn(['resourcePack', 'url']) ?? '').trim()
+
+    /*
+     * "Published" means somewhere that outlives this machine, which in
+     * practice means https. The launcher only ever serves plain http from a
+     * local address, so the two cannot be confused.
+     */
+    return { url, published: /^https:\/\//i.test(url) }
+  } catch {
+    return { url: '', published: false }
+  }
+}
+
 export async function pointPluginAtPack(
   serverDir: string,
   pack: { url: string; required: boolean } | null,

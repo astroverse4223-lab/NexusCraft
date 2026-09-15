@@ -106,6 +106,16 @@ export async function zipDirectory(
   }
 
   const output = createWriteStream(outputFile)
+
+  /*
+   * A destroyed stream still has writes in flight, and those come back as an
+   * 'error' event with nobody listening - which on a stream is not a rejected
+   * promise but an uncaught exception, and takes the whole main process with
+   * it. The failure is already reported by the throw below; this only stops
+   * the wreckage arriving twice.
+   */
+  output.on('error', () => undefined)
+
   const central: CentralEntry[] = []
   let offset = 0
   let completed = 0
